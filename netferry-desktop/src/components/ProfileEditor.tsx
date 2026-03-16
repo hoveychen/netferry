@@ -263,8 +263,8 @@ export function ProfileEditor({ profile, onSave, onOpenImporter }: Props) {
             <label className="inline-flex items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
-                checked={local.disableIPv6}
-                onChange={(e) => setField("disableIPv6", e.target.checked)}
+                checked={local.disableIpv6}
+                onChange={(e) => setField("disableIpv6", e.target.checked)}
               />
               Disable IPv6
             </label>

@@ -25,7 +25,7 @@ function createEmptyProfile(): Profile {
     excludeSubnets: [],
     autoNets: false,
     method: "auto",
-    disableIPv6: false,
+    disableIpv6: false,
     notes: "",
   };
 }

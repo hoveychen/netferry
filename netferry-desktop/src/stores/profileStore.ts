@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { deleteProfile, listProfiles, saveProfile } from "@/api";
+import { deleteProfile, getDefaultIdentityFile, listProfiles, saveProfile } from "@/api";
 import type { Profile } from "@/types";
 
 const newProfile = (): Profile => ({
@@ -14,7 +14,7 @@ const newProfile = (): Profile => ({
   excludeSubnets: [],
   autoNets: false,
   method: "auto",
-  disableIPv6: false,
+  disableIpv6: false,
   notes: "",
 });
 
@@ -24,7 +24,7 @@ interface ProfileStore {
   loading: boolean;
   loadProfiles: () => Promise<void>;
   selectProfile: (id: string) => void;
-  createProfile: () => void;
+  createProfile: () => Promise<void>;
   updateProfile: (profile: Profile) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
 }
@@ -47,8 +47,12 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
     });
   },
   selectProfile: (id) => set({ selectedProfileId: id }),
-  createProfile: () => {
+  createProfile: async () => {
+    const defaultIdentityFile = await getDefaultIdentityFile().catch(() => null);
     const profile = newProfile();
+    if (defaultIdentityFile) {
+      profile.identityFile = defaultIdentityFile;
+    }
     set((s) => ({
       profiles: [...s.profiles, profile],
       selectedProfileId: profile.id,

@@ -20,9 +20,18 @@ export const useConnectionStore = create<ConnectionStore>((set) => ({
     set({ status });
   },
   connect: async (profile) => {
-    set({ status: { state: "connecting", profileId: profile.id } });
-    const status = await connectProfile(profile);
-    set({ status });
+    set({ status: { state: "connecting", profileId: profile.id }, logs: [] });
+    try {
+      const status = await connectProfile(profile);
+      set({ status });
+    } catch (e) {
+      set({
+        status: {
+          state: "error",
+          message: typeof e === "string" ? e : (e as Error)?.message ?? "Unknown error",
+        },
+      });
+    }
   },
   disconnect: async () => {
     const status = await disconnectProfile();

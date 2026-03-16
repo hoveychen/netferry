@@ -11,6 +11,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(sidecar::AppState::new())
         .setup(|app| {
+            // On Windows, sshuttle cannot self-elevate, so the whole app must
+            // run as Administrator.  Re-launch with UAC if needed.
+            #[cfg(target_os = "windows")]
+            sidecar::ensure_elevated(app.handle());
+
             tray::setup_tray(app.handle())?;
             Ok(())
         })
@@ -19,6 +24,7 @@ pub fn run() {
             commands::save_profile,
             commands::delete_profile,
             commands::import_ssh_hosts,
+            commands::get_default_identity_file,
             commands::connect_profile,
             commands::disconnect_profile,
             commands::get_connection_status

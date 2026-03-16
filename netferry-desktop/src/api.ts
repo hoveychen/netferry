@@ -17,6 +17,10 @@ export function importSshHosts() {
   return invoke<SshHostEntry[]>("import_ssh_hosts");
 }
 
+export function getDefaultIdentityFile() {
+  return invoke<string | null>("get_default_identity_file");
+}
+
 export function connectProfile(profile: Profile) {
   return invoke<ConnectionStatus>("connect_profile", { profile });
 }

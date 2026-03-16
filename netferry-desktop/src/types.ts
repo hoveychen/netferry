@@ -15,7 +15,7 @@ export interface Profile {
   method: string;
   remotePython?: string;
   extraSshOptions?: string;
-  disableIPv6: boolean;
+  disableIpv6: boolean;
   notes?: string;
 }
 

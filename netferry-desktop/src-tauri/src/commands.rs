@@ -23,6 +23,11 @@ pub fn import_ssh_hosts() -> Result<Vec<SshHostEntry>, String> {
 }
 
 #[tauri::command]
+pub fn get_default_identity_file() -> Option<String> {
+    ssh_config::get_default_identity_file()
+}
+
+#[tauri::command]
 pub fn connect_profile(
     app: AppHandle,
     state: State<'_, sidecar::AppState>,

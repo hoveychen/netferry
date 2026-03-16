@@ -16,10 +16,18 @@ jobs:
         include:
           - os: macos-latest
             rust_target: aarch64-apple-darwin
+            bundle_glob: |
+              netferry-desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - os: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
+            bundle_glob: |
+              netferry-desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              netferry-desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
+            bundle_glob: |
+              netferry-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+              netferry-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -76,7 +84,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: netferry-${{ matrix.rust_target }}
-          path: netferry-desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/**
+          path: ${{ matrix.bundle_glob }}
 
   publish:
     needs: build

@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 interface Props {
   profiles: Profile[];
   selectedProfileId: string | null;
-  onCreate: () => void;
+  onCreate: () => void | Promise<void>;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
 }
