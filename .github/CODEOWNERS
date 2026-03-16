@@ -1,0 +1,9 @@
+# Default owner for entire repository
+* @hoveychen
+
+# Desktop app
+netferry-desktop/ @hoveychen
+
+# Embedded upstream submodule pointer
+third_party/sshuttle @hoveychen
+

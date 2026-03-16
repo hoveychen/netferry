@@ -1,0 +1,42 @@
+# General
+.DS_Store
+*.log
+*.tmp
+*~
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Rust / Tauri
+target/
+netferry-desktop/src-tauri/target/
+netferry-desktop/src-tauri/gen/
+
+# Build artifacts
+dist/
+build/
+out/
+release/
+netferry-desktop/dist/
+netferry-desktop/.sidecar-build/
+
+# Local env / tooling
+.env
+.env.local
+.python-version
+.direnv/
+result

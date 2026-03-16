@@ -1,0 +1,53 @@
+# NetFerry
+
+NetFerry is a desktop tunneling tool built on top of `sshuttle`, with a modern management UI powered by `Tauri + React`.
+
+## What is NetFerry?
+
+![NetFerry in 4 panels](docs/assets/netferry_comic.png)
+
+> **In short:** Got blocked websites at work or abroad? NetFerry creates a secure tunnel through any SSH server you have access to — no technical knowledge needed. Just pick a profile and click Connect.
+
+
+## Repository Layout
+
+- `netferry-desktop`: Desktop application (`Tauri + React`)
+- `netferry`: Python wrapper entry (`python -m netferry`)
+- `third_party/sshuttle`: Upstream `sshuttle` submodule
+
+## Quick Start (Development)
+
+### 1) Initialize submodules
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2) Run desktop app in dev mode
+
+```bash
+cd netferry-desktop
+npm install
+npm run tauri dev
+```
+
+## Build Installers
+
+```bash
+cd netferry-desktop
+npm run build
+npm run build:sidecar
+npm run tauri build
+```
+
+Build artifacts are generated under `netferry-desktop/src-tauri/target/`.
+
+## Project Status
+
+This project is currently **proprietary**. See `LICENSE` for details.
+
+## Security and Feedback
+
+- Security reports: see `SECURITY.md`
+- Bugs / Features: submit via GitHub Issue templates
+
