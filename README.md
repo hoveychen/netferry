@@ -1,4 +1,15 @@
-# NetFerry
+<div align="center">
+  <img src="docs/assets/icon.png" width="96" alt="NetFerry icon" />
+
+  # NetFerry
+
+  [![GitHub Release](https://img.shields.io/github/v/release/hoveychen/netferry?style=flat-square&color=F5B932)](https://github.com/hoveychen/netferry/releases/latest)
+  [![Build](https://img.shields.io/github/actions/workflow/status/hoveychen/netferry/release.yml?style=flat-square&label=build)](https://github.com/hoveychen/netferry/actions/workflows/release.yml)
+  [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-2CC4D4?style=flat-square)](https://github.com/hoveychen/netferry/releases/latest)
+  [![License](https://img.shields.io/badge/license-Proprietary-slate?style=flat-square)](LICENSE)
+
+  **Secure tunneling for everyone — no terminal required.**
+</div>
 
 NetFerry is a desktop tunneling tool built on top of `sshuttle`, with a modern management UI powered by `Tauri + React`.
 
