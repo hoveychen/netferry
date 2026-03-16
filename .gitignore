@@ -40,3 +40,7 @@ netferry-desktop/.sidecar-build/
 .python-version
 .direnv/
 result
+.venv-build/
+
+# Sidecar binaries (built by make sidecar)
+netferry-desktop/src-tauri/binaries/

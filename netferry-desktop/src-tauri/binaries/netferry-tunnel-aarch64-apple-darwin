@@ -1,3 +1,0 @@
-#!/bin/sh
-echo "NetFerry sidecar missing. Run: python3 scripts/build_sidecar.py"
-exit 1

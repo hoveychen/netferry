@@ -36,10 +36,14 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
   loadProfiles: async () => {
     set({ loading: true });
     const profiles = await listProfiles();
-    set({
-      profiles,
-      selectedProfileId: profiles[0]?.id ?? null,
-      loading: false,
+    set((s) => {
+      const currentId = s.selectedProfileId;
+      const stillExists = profiles.some((p) => p.id === currentId);
+      return {
+        profiles,
+        selectedProfileId: stillExists ? currentId : (profiles[0]?.id ?? null),
+        loading: false,
+      };
     });
   },
   selectProfile: (id) => set({ selectedProfileId: id }),

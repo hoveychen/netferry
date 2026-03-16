@@ -21,6 +21,8 @@ export function SshConfigImporter({ open, onClose, onApply }: Props) {
   const [selectedHost, setSelectedHost] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string>("");
 
   useEffect(() => {
     if (!open) {
@@ -80,8 +82,11 @@ export function SshConfigImporter({ open, onClose, onApply }: Props) {
             ) : null}
           </>
         ) : null}
+        {applyError ? (
+          <p className="mb-2 text-sm text-rose-600">{applyError}</p>
+        ) : null}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={applying}>
             Cancel
           </Button>
           <Button
@@ -89,24 +94,32 @@ export function SshConfigImporter({ open, onClose, onApply }: Props) {
               if (!selected) {
                 return;
               }
-              const sshParts: string[] = [];
-              if (selected.proxyJump) {
-                sshParts.push(`-J ${selected.proxyJump}`);
+              setApplyError("");
+              setApplying(true);
+              try {
+                const sshParts: string[] = [];
+                if (selected.proxyJump) {
+                  sshParts.push(`-J ${selected.proxyJump}`);
+                }
+                if (selected.proxyCommand) {
+                  sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
+                }
+                await onApply({
+                  name: selected.host,
+                  remote: buildRemote(selected),
+                  identityFile: selected.identityFile ?? "",
+                  extraSshOptions: sshParts.join(" ") || undefined,
+                });
+                onClose();
+              } catch (e) {
+                setApplyError(String(e));
+              } finally {
+                setApplying(false);
               }
-              if (selected.proxyCommand) {
-                sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
-              }
-              await onApply({
-                name: selected.host,
-                remote: buildRemote(selected),
-                identityFile: selected.identityFile ?? "",
-                extraSshOptions: sshParts.join(" "),
-              });
-              onClose();
             }}
-            disabled={!selected}
+            disabled={!selected || applying}
           >
-            Import and Apply
+            {applying ? "Applying..." : "Import and Apply"}
           </Button>
         </div>
       </Card>
