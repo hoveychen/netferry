@@ -141,12 +141,12 @@ jobs:
 
       - name: Add stable filenames for latest-release URLs
         run: |
-          cp release-artifacts/netferry-aarch64-apple-darwin/NetFerry_macos_silicon_*.dmg release-artifacts/NetFerry_macos_silicon.dmg
-          cp release-artifacts/netferry-x86_64-apple-darwin/NetFerry_macos_intel_*.dmg release-artifacts/NetFerry_macos_intel.dmg
-          cp release-artifacts/netferry-x86_64-unknown-linux-gnu/NetFerry_linux_x64_*.deb release-artifacts/NetFerry_linux_x64.deb
-          cp release-artifacts/netferry-x86_64-unknown-linux-gnu/NetFerry_linux_x64_*.AppImage release-artifacts/NetFerry_linux_x64.AppImage
-          cp release-artifacts/netferry-x86_64-pc-windows-msvc/NetFerry_windows_x64_*.msi release-artifacts/NetFerry_windows_x64.msi
-          cp release-artifacts/netferry-x86_64-pc-windows-msvc/NetFerry_windows_x64_*.exe release-artifacts/NetFerry_windows_x64.exe
+          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon_*.dmg' -type f | head -1)" release-artifacts/NetFerry_macos_silicon.dmg
+          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel_*.dmg' -type f | head -1)" release-artifacts/NetFerry_macos_intel.dmg
+          cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)" release-artifacts/NetFerry_linux_x64.deb
+          cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.AppImage' -type f | head -1)" release-artifacts/NetFerry_linux_x64.AppImage
+          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.msi' -type f | head -1)" release-artifacts/NetFerry_windows_x64.msi
+          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.exe' -type f | head -1)" release-artifacts/NetFerry_windows_x64.exe
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2

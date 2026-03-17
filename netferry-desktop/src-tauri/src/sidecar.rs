@@ -4,6 +4,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 pub const STATUS_EVENT: &str = "connection-status";
 pub const LOG_EVENT: &str = "connection-log";
 
@@ -294,6 +297,9 @@ pub fn connect(
                 .map_err(|_| "sudo_helper lock is poisoned".to_string())?;
             *h = Some(helper);
         }
+        // Put the tunnel process in its own process group so we can kill the
+        // whole group on disconnect (sshuttle spawns SSH and other children).
+        cmd.process_group(0);
     }
 
     let mut child = cmd
@@ -339,10 +345,18 @@ pub fn connect(
                 }
             }
 
-            // stderr EOF means the process has exited.  Only emit an error if
-            // we hadn't already seen a clean "connected" state transition, or
-            // if the user hasn't triggered an intentional disconnect (in which
-            // case disconnect() will have already set the status itself).
+            // stderr EOF means the process has exited.  Clear state.child so
+            // that the next connect() can run (disconnect() may have already
+            // taken it; if not, we take and reap here).
+            if let Ok(mut g) = app_clone.state::<AppState>().child.lock() {
+                if let Some(mut c) = g.take() {
+                    let _ = c.wait();
+                }
+            }
+
+            // Only emit an error if we hadn't already seen a clean "connected"
+            // state transition, or if the user hasn't triggered an intentional
+            // disconnect (in which case disconnect() will have already set the status).
             let current = app_clone
                 .state::<AppState>()
                 .status
@@ -388,7 +402,17 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
         .lock()
         .map_err(|_| "Process lock is poisoned".to_string())?;
     if let Some(mut child) = lock.take() {
-        let _ = child.kill();
+        #[cfg(unix)]
+        {
+            // Kill the whole process group so sshuttle's child processes (e.g. SSH)
+            // are also terminated; otherwise they would remain as orphans.
+            let pid = child.id() as i32;
+            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
+        }
         let _ = child.wait();
     }
     drop(lock);
