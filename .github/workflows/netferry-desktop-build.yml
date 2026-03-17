@@ -2,6 +2,7 @@ name: netferry-desktop-build
 
 on:
   push:
+    branches: [main]
     paths:
       - "netferry-desktop/**"
       - ".github/workflows/netferry-desktop-build.yml"
