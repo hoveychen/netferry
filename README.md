@@ -19,6 +19,16 @@ NetFerry is a desktop tunneling tool built on top of `sshuttle`, with a modern m
 
 > **In short:** Got blocked websites at work or abroad? NetFerry creates a secure tunnel through any SSH server you have access to — no technical knowledge needed. Just pick a profile and click Connect.
 
+## Download (Latest Release)
+
+| Platform | Download |
+|----------|----------|
+| **macOS (Apple Silicon)** | [NetFerry_macos_silicon.dmg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_silicon.dmg) |
+| **macOS (Intel)** | [NetFerry_macos_intel.dmg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_intel.dmg) |
+| **Linux (x64)** | [.deb](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.deb) · [AppImage](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.AppImage) |
+| **Windows (x64)** | [.msi](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.msi) · [.exe](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.exe) |
+
+All links point to the **latest** release; older versions are on the [Releases](https://github.com/hoveychen/netferry/releases) page.
 
 ## Repository Layout
 
