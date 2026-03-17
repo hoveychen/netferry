@@ -1,7 +1,9 @@
-use crate::models::{ConnectionStatus, DnsMode, Profile};
+use crate::models::{ConnectionEvent, ConnectionStatus, DnsMode, Profile, TunnelError, now_ms};
+use crate::stats;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
@@ -9,6 +11,10 @@ use std::os::unix::process::CommandExt;
 
 pub const STATUS_EVENT: &str = "connection-status";
 pub const LOG_EVENT: &str = "connection-log";
+pub const CONNECTION_EVENT: &str = "tunnel-connection";
+pub const ERROR_EVENT: &str = "tunnel-error";
+
+// ── Unix: sudo wrapper via SUDO_ASKPASS ────────────────────────────────────────
 
 /// Temporary directory holding sudo/askpass wrapper scripts for Unix privilege elevation.
 /// Dropped (and thus deleted) when the tunnel disconnects.
@@ -31,34 +37,8 @@ impl SudoHelper {
         std::fs::create_dir_all(&dir).ok()?;
 
         // askpass: GUI dialog that echoes the entered password to stdout.
-        // macOS uses osascript; Linux tries zenity → kdialog → ssh-askpass in order.
         let askpass = dir.join("netferry-askpass");
-        #[cfg(target_os = "macos")]
-        let askpass_content = String::from(
-            "#!/bin/sh\n\
-             /usr/bin/osascript \\\n\
-             -e 'Tell application \"System Events\" to display dialog \
-                 \"NetFerry needs administrator privileges to configure network routing.\" \
-                 default answer \"\" with hidden answer with title \"NetFerry\"' \\\n\
-             -e 'text returned of result'\n",
-        );
-        #[cfg(not(target_os = "macos"))]
-        let askpass_content = String::from(
-            "#!/bin/sh\n\
-             MSG=\"NetFerry needs administrator privileges to configure network routing.\"\n\
-             if command -v zenity >/dev/null 2>&1; then\n\
-               zenity --password --title=\"NetFerry\"\n\
-             elif command -v kdialog >/dev/null 2>&1; then\n\
-               kdialog --password \"$MSG\" --title \"NetFerry\"\n\
-             elif command -v x11-ssh-askpass >/dev/null 2>&1; then\n\
-               x11-ssh-askpass \"$MSG\"\n\
-             elif command -v ssh-askpass >/dev/null 2>&1; then\n\
-               ssh-askpass \"$MSG\"\n\
-             else\n\
-               echo \"NetFerry: no GUI askpass helper found\" >&2\n\
-               exit 1\n\
-             fi\n",
-        );
+        let askpass_content = Self::askpass_script();
         std::fs::write(&askpass, askpass_content).ok()?;
         std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o755)).ok()?;
 
@@ -79,6 +59,43 @@ impl SudoHelper {
         Some(Self { dir })
     }
 
+    /// Platform-specific askpass script content.
+    fn askpass_script() -> String {
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: use osascript to show a native password dialog.
+            String::from(
+                "#!/bin/sh\n\
+                 /usr/bin/osascript -e '\n\
+                 set dialogResult to display dialog \"NetFerry needs administrator privileges to configure network routing.\" \
+                 default answer \"\" with hidden answer buttons {\"Cancel\", \"OK\"} default button \"OK\" \
+                 with title \"NetFerry\" with icon caution\n\
+                 return text returned of dialogResult\n\
+                 ' 2>/dev/null\n",
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Linux: try zenity → kdialog → x11-ssh-askpass → ssh-askpass.
+            String::from(
+                "#!/bin/sh\n\
+                 MSG=\"NetFerry needs administrator privileges to configure network routing.\"\n\
+                 if command -v zenity >/dev/null 2>&1; then\n\
+                   zenity --password --title=\"NetFerry\"\n\
+                 elif command -v kdialog >/dev/null 2>&1; then\n\
+                   kdialog --password \"$MSG\" --title \"NetFerry\"\n\
+                 elif command -v x11-ssh-askpass >/dev/null 2>&1; then\n\
+                   x11-ssh-askpass \"$MSG\"\n\
+                 elif command -v ssh-askpass >/dev/null 2>&1; then\n\
+                   ssh-askpass \"$MSG\"\n\
+                 else\n\
+                   echo \"NetFerry: no GUI askpass helper found\" >&2\n\
+                   exit 1\n\
+                 fi\n",
+            )
+        }
+    }
+
     fn dir_str(&self) -> String {
         self.dir.display().to_string()
     }
@@ -91,6 +108,8 @@ impl Drop for SudoHelper {
     }
 }
 
+// ── Windows: UAC elevation at startup ─────────────────────────────────────────
+
 /// On Windows, sshuttle does not implement its own privilege elevation and
 /// requires the process to already be running as Administrator.  We detect
 /// this early and ask the OS to re-launch the app with a UAC elevation prompt.
@@ -101,8 +120,8 @@ pub fn ensure_elevated(app: &tauri::AppHandle) {
     // `net session` succeeds only when the caller has admin rights.
     let is_admin = Command::new("net")
         .args(["session"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -124,9 +143,14 @@ pub fn ensure_elevated(app: &tauri::AppHandle) {
     }
 }
 
+// ── Shared application state ──────────────────────────────────────────────────
+
 pub struct AppState {
     pub child: Mutex<Option<Child>>,
     pub status: Mutex<ConnectionStatus>,
+    pub stats_stop: Mutex<Option<Arc<AtomicBool>>>,
+
+    /// Unix: per-connection sudo askpass wrapper; cleaned up on disconnect.
     #[cfg(unix)]
     sudo_helper: Mutex<Option<SudoHelper>>,
 }
@@ -140,11 +164,14 @@ impl AppState {
                 profile_id: None,
                 message: None,
             }),
+            stats_stop: Mutex::new(None),
             #[cfg(unix)]
             sudo_helper: Mutex::new(None),
         }
     }
 }
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
 fn emit_status(app: &AppHandle, status: &ConnectionStatus) {
     let _ = app.emit(STATUS_EVENT, status.clone());
@@ -203,9 +230,78 @@ fn resolve_sshuttle_exe() -> String {
     "netferry-tunnel".to_string()
 }
 
+/// Detect LAN subnets (/16) from all network interfaces with private IPv4 addresses.
+/// Returns deduplicated CIDR strings like "192.168.0.0/16".
+fn get_lan_subnets() -> Vec<String> {
+    use std::collections::HashSet;
+    let mut subnets: HashSet<String> = HashSet::new();
+
+    #[cfg(unix)]
+    {
+        use std::net::Ipv4Addr;
+        unsafe {
+            let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+            if libc::getifaddrs(&mut ifap) != 0 {
+                return vec![];
+            }
+            let mut ifa = ifap;
+            while !ifa.is_null() {
+                let addr_ptr = (*ifa).ifa_addr;
+                if !addr_ptr.is_null()
+                    && (*addr_ptr).sa_family as i32 == libc::AF_INET
+                {
+                    let sin = &*(addr_ptr as *const libc::sockaddr_in);
+                    // s_addr is in network byte order; convert to Ipv4Addr.
+                    let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                    let o = ip.octets();
+                    let is_private = o[0] == 10
+                        || (o[0] == 172 && (16..=31).contains(&o[1]))
+                        || (o[0] == 192 && o[1] == 168);
+                    if is_private {
+                        subnets.insert(format!("{}.{}.0.0/16", o[0], o[1]));
+                    }
+                }
+                ifa = (*ifa).ifa_next;
+            }
+            libc::freeifaddrs(ifap);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // Parse `ipconfig` output: lines like "IPv4 Address. . . . . . . . . . . : 192.168.1.100"
+        if let Ok(out) = std::process::Command::new("ipconfig").output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let line = line.trim();
+                if !line.to_lowercase().contains("ipv4 address") {
+                    continue;
+                }
+                if let Some(ip_str) = line.split(':').last().map(|s| s.trim()) {
+                    if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
+                        let o = ip.octets();
+                        let is_private = o[0] == 10
+                            || (o[0] == 172 && (16..=31).contains(&o[1]))
+                            || (o[0] == 192 && o[1] == 168);
+                        if is_private {
+                            subnets.insert(format!("{}.{}.0.0/16", o[0], o[1]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    subnets.into_iter().collect()
+}
+
 fn build_args(profile: &Profile) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut ssh_cmd_parts: Vec<String> = vec!["ssh".to_string()];
+
+    // Enable verbose output so sshuttle logs individual connections to stderr.
+    args.push("-v".to_string());
+
     args.push("--remote".to_string());
     args.push(profile.remote.clone());
 
@@ -217,10 +313,20 @@ fn build_args(profile: &Profile) -> Vec<String> {
     if profile.auto_nets {
         args.push("--auto-nets".to_string());
     }
-    for subnet in &profile.exclude_subnets {
-        if !subnet.trim().is_empty() {
-            args.push("--exclude".to_string());
-            args.push(subnet.clone());
+    {
+        use std::collections::HashSet;
+        let mut seen: HashSet<String> = HashSet::new();
+        let manual = profile.exclude_subnets.iter().map(|s| s.trim().to_string());
+        let auto_lan = if profile.auto_exclude_lan {
+            get_lan_subnets()
+        } else {
+            vec![]
+        };
+        for subnet in manual.chain(auto_lan) {
+            if !subnet.is_empty() && seen.insert(subnet.clone()) {
+                args.push("--exclude".to_string());
+                args.push(subnet);
+            }
         }
     }
     if !profile.identity_file.trim().is_empty() {
@@ -250,6 +356,10 @@ fn build_args(profile: &Profile) -> Vec<String> {
             args.push(to_ns.clone());
         }
     }
+    if let Some(size) = profile.latency_buffer_size {
+        args.push("--latency-buffer-size".to_string());
+        args.push(size.to_string());
+    }
     if let Some(extra) = &profile.extra_ssh_options {
         if !extra.trim().is_empty() {
             ssh_cmd_parts.push(extra.clone());
@@ -259,6 +369,39 @@ fn build_args(profile: &Profile) -> Vec<String> {
     args.push(ssh_cmd_parts.join(" "));
     args
 }
+
+/// Parse a sshuttle verbose "Accept TCP" line into a ConnectionEvent.
+/// Expected format: "c : Accept TCP: <src_ip>:<src_port> -> <dst_ip>:<dst_port>."
+fn parse_connection_event(line: &str) -> Option<ConnectionEvent> {
+    let after = line.split("Accept TCP:").nth(1)?.trim();
+    let after = after.trim_end_matches('.');
+    let mut parts = after.splitn(2, " -> ");
+    let src = parts.next()?.trim().to_string();
+    let dst = parts.next()?.trim().to_string();
+    Some(ConnectionEvent {
+        src_addr: src,
+        dst_addr: dst,
+        timestamp_ms: now_ms(),
+    })
+}
+
+/// Returns true if the line looks like an error or warning from sshuttle/SSH.
+fn is_error_line(line: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "fatal:",
+        "warning:",
+        "connection refused",
+        "connection reset",
+        "no route to host",
+        "ssh: connect to host",
+        "permission denied",
+        "host key verification failed",
+    ];
+    let lower = line.to_lowercase();
+    KEYWORDS.iter().any(|kw| lower.contains(kw))
+}
+
+// ── connect() ─────────────────────────────────────────────────────────────────
 
 pub fn connect(
     app: AppHandle,
@@ -281,11 +424,10 @@ pub fn connect(
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    // On Unix (macOS and Linux) the Tauri app has no controlling TTY, so sudo
-    // cannot prompt for a password the usual way.  We inject a thin wrapper
-    // named "sudo" at the front of PATH that re-invokes real sudo with -A,
-    // combined with an OS-appropriate SUDO_ASKPASS helper (osascript on macOS,
-    // zenity/kdialog/ssh-askpass on Linux).
+    // The Tauri app has no controlling TTY, so sudo cannot prompt for a password
+    // the usual way.  We inject a thin wrapper named "sudo" at the front of PATH
+    // that re-invokes real sudo with -A, combined with an OS-appropriate
+    // SUDO_ASKPASS helper (osascript dialog on macOS, zenity/kdialog on Linux).
     #[cfg(unix)]
     {
         if let Some(helper) = SudoHelper::create() {
@@ -308,6 +450,7 @@ pub fn connect(
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let child_pid = child.id();
 
     if let Some(out) = stdout {
         let app_clone = app.clone();
@@ -326,11 +469,6 @@ pub fn connect(
             let reader = BufReader::new(err);
             let mut tunnel_connected = false;
             for line in reader.lines().map_while(Result::ok) {
-                let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
-
-                // sshuttle prints "Connected to server." once the SSH tunnel is
-                // established and the remote helper is ready.  Use this as the
-                // signal to transition from "connecting" → "connected".
                 if !tunnel_connected && line.contains("Connected to server.") {
                     tunnel_connected = true;
                     let status = ConnectionStatus {
@@ -342,21 +480,45 @@ pub fn connect(
                     if let Ok(mut g) = app_clone.state::<AppState>().status.lock() {
                         *g = status;
                     }
+                    let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
+                    continue;
                 }
+
+                if line.contains("Accept TCP:") {
+                    if let Some(event) = parse_connection_event(&line) {
+                        let _ = app_clone.emit(CONNECTION_EVENT, event);
+                    }
+                    continue;
+                }
+
+                if is_error_line(&line) {
+                    let error = TunnelError {
+                        message: line.clone(),
+                        timestamp_ms: now_ms(),
+                    };
+                    let _ = app_clone.emit(ERROR_EVENT, error);
+                    let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
+                    continue;
+                }
+
+                let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
             }
 
             // stderr EOF means the process has exited.  Clear state.child so
-            // that the next connect() can run (disconnect() may have already
-            // taken it; if not, we take and reap here).
+            // that the next connect() can run.
             if let Ok(mut g) = app_clone.state::<AppState>().child.lock() {
                 if let Some(mut c) = g.take() {
                     let _ = c.wait();
                 }
             }
 
-            // Only emit an error if we hadn't already seen a clean "connected"
-            // state transition, or if the user hasn't triggered an intentional
-            // disconnect (in which case disconnect() will have already set the status).
+            // Stop bandwidth monitoring.
+            if let Ok(mut flag_guard) = app_clone.state::<AppState>().stats_stop.lock() {
+                if let Some(flag) = flag_guard.take() {
+                    stats::stop_stats_monitoring(&flag);
+                }
+            }
+
             let current = app_clone
                 .state::<AppState>()
                 .status
@@ -385,8 +547,12 @@ pub fn connect(
         *lock = Some(child);
     }
 
-    // Return "connecting" – the stderr watcher thread above will emit
-    // "connected" once sshuttle reports it is ready.
+    // Start bandwidth monitoring in a background thread.
+    let stop_flag = stats::start_stats_monitoring(app.clone(), child_pid);
+    if let Ok(mut flag_guard) = state.stats_stop.lock() {
+        *flag_guard = Some(stop_flag);
+    }
+
     let status = ConnectionStatus {
         state: "connecting".to_string(),
         profile_id: Some(profile.id),
@@ -395,6 +561,8 @@ pub fn connect(
     set_status(&app, &state, status.clone())?;
     Ok(status)
 }
+
+// ── disconnect() ──────────────────────────────────────────────────────────────
 
 pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     let mut lock = state
@@ -417,6 +585,13 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
     }
     drop(lock);
 
+    // Stop bandwidth monitoring thread.
+    if let Ok(mut flag_guard) = state.stats_stop.lock() {
+        if let Some(flag) = flag_guard.take() {
+            stats::stop_stats_monitoring(&flag);
+        }
+    }
+
     // Release the sudo helper temp directory now that the tunnel is gone.
     #[cfg(unix)]
     {
@@ -433,6 +608,8 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
     set_status(&app, &state, status.clone())?;
     Ok(status)
 }
+
+// ── current_status() ──────────────────────────────────────────────────────────
 
 pub fn current_status(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     let guard = state

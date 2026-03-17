@@ -8,7 +8,7 @@ import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { saveProfile } from "@/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
-import type { ConnectionStatus, Profile } from "@/types";
+import type { ConnectionEvent, ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
 
 const FIRST_LAUNCH_DISMISSED_KEY = "netferry_first_launch_dismissed";
 
@@ -27,6 +27,7 @@ function createEmptyProfile(): Profile {
     method: "auto",
     disableIpv6: false,
     notes: "",
+    autoExcludeLan: true,
   };
 }
 
@@ -43,8 +44,21 @@ function App() {
     updateProfile,
     removeProfile,
   } = useProfileStore();
-  const { status, logs, syncStatus, connect, disconnect, pushLog, setStatus } =
-    useConnectionStore();
+  const {
+    status,
+    logs,
+    tunnelStats,
+    connectionEvents,
+    tunnelErrors,
+    syncStatus,
+    connect,
+    disconnect,
+    pushLog,
+    setStatus,
+    setTunnelStats,
+    pushConnectionEvent,
+    pushTunnelError,
+  } = useConnectionStore();
 
   const selectedProfile = useMemo(
     () => profiles.find((p) => p.id === selectedProfileId) ?? null,
@@ -71,11 +85,23 @@ function App() {
     const offLog = listen<string>("connection-log", (event) => {
       pushLog(event.payload);
     });
+    const offStats = listen<TunnelStats>("tunnel-stats", (event) => {
+      setTunnelStats(event.payload);
+    });
+    const offConnection = listen<ConnectionEvent>("tunnel-connection", (event) => {
+      pushConnectionEvent(event.payload);
+    });
+    const offError = listen<TunnelError>("tunnel-error", (event) => {
+      pushTunnelError(event.payload);
+    });
     return () => {
       offStatus.then((fn) => fn());
       offLog.then((fn) => fn());
+      offStats.then((fn) => fn());
+      offConnection.then((fn) => fn());
+      offError.then((fn) => fn());
     };
-  }, [setStatus, pushLog]);
+  }, [setStatus, pushLog, setTunnelStats, pushConnectionEvent, pushTunnelError]);
 
   return (
     <main className="grid h-screen grid-cols-[280px_1fr_360px] gap-4 bg-slate-100 p-4">
@@ -95,6 +121,9 @@ function App() {
         status={status}
         activeProfile={selectedProfile}
         logs={logs}
+        tunnelStats={tunnelStats}
+        connectionEvents={connectionEvents}
+        tunnelErrors={tunnelErrors}
         onConnect={async () => {
           if (selectedProfile) {
             await connect(selectedProfile);

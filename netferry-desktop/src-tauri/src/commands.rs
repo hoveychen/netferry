@@ -9,12 +9,16 @@ pub fn list_profiles(app: AppHandle) -> Result<Vec<Profile>, String> {
 
 #[tauri::command]
 pub fn save_profile(app: AppHandle, profile: Profile) -> Result<Vec<Profile>, String> {
-    profiles::upsert_profile(&app, profile)
+    let result = profiles::upsert_profile(&app, profile)?;
+    tray::rebuild_tray_menu(&app);
+    Ok(result)
 }
 
 #[tauri::command]
 pub fn delete_profile(app: AppHandle, profile_id: String) -> Result<Vec<Profile>, String> {
-    profiles::remove_profile(&app, &profile_id)
+    let result = profiles::remove_profile(&app, &profile_id)?;
+    tray::rebuild_tray_menu(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -33,9 +37,7 @@ pub fn connect_profile(
     state: State<'_, sidecar::AppState>,
     profile: Profile,
 ) -> Result<ConnectionStatus, String> {
-    let status = sidecar::connect(app.clone(), state, profile.clone())?;
-    tray::update_tray_tooltip(&app, &format!("NetFerry: connected to {}", profile.name));
-    Ok(status)
+    sidecar::connect(app, state, profile)
 }
 
 #[tauri::command]
@@ -43,9 +45,7 @@ pub fn disconnect_profile(
     app: AppHandle,
     state: State<'_, sidecar::AppState>,
 ) -> Result<ConnectionStatus, String> {
-    let status = sidecar::disconnect(app.clone(), state)?;
-    tray::update_tray_tooltip(&app, "NetFerry: disconnected");
-    Ok(status)
+    sidecar::disconnect(app, state)
 }
 
 #[tauri::command]

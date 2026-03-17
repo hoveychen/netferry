@@ -17,6 +17,8 @@ export interface Profile {
   extraSshOptions?: string;
   disableIpv6: boolean;
   notes?: string;
+  autoExcludeLan: boolean;
+  latencyBufferSize?: number;
 }
 
 export interface SshHostEntry {
@@ -33,4 +35,22 @@ export interface ConnectionStatus {
   state: "disconnected" | "connecting" | "connected" | "error";
   profileId?: string;
   message?: string;
+}
+
+export interface TunnelStats {
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+  totalRxBytes: number;
+  totalTxBytes: number;
+}
+
+export interface ConnectionEvent {
+  srcAddr: string;
+  dstAddr: string;
+  timestampMs: number;
+}
+
+export interface TunnelError {
+  message: string;
+  timestampMs: number;
 }

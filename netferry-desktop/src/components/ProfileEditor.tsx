@@ -269,6 +269,35 @@ export function ProfileEditor({ profile, onSave, onOpenImporter }: Props) {
               Disable IPv6
             </label>
           </div>
+          <div className="col-span-2">
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={local.autoExcludeLan}
+                onChange={(e) => setField("autoExcludeLan", e.target.checked)}
+              />
+              <span>
+                Auto-exclude LAN
+                <span className="ml-1 text-slate-400 text-xs">
+                  (automatically exclude local network subnets /16 from the tunnel)
+                </span>
+              </span>
+            </label>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              Latency Buffer Size
+              <span className="ml-1 text-slate-400 text-xs">(bytes, default 32768)</span>
+            </label>
+            <Input
+              type="number"
+              value={local.latencyBufferSize ?? ""}
+              onChange={(e) =>
+                setField("latencyBufferSize", e.target.value ? Number(e.target.value) : undefined)
+              }
+              placeholder="2097152"
+            />
+          </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Remote Python</label>
             <Input

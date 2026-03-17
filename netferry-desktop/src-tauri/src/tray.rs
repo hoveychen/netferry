@@ -1,24 +1,101 @@
+use crate::models::ConnectionStatus;
+use crate::profiles;
 use crate::sidecar::{self, AppState};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 
-pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
-    let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
-    let disconnect_item = MenuItemBuilder::with_id("disconnect", "Disconnect").build(app)?;
-    let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&show_item)
-        .item(&disconnect_item)
-        .separator()
-        .item(&quit_item)
-        .build()?;
+fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+    let current_status = app
+        .state::<AppState>()
+        .status
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| ConnectionStatus {
+            state: "disconnected".to_string(),
+            profile_id: None,
+            message: None,
+        });
 
-    let app_handle = app.clone();
-    TrayIconBuilder::new()
+    let all_profiles = profiles::load_profiles(app).unwrap_or_default();
+
+    let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+    let is_active = matches!(current_status.state.as_str(), "connected" | "connecting");
+
+    if is_active {
+        let connected_id = current_status.profile_id.as_deref().unwrap_or("");
+        let connected_name = all_profiles
+            .iter()
+            .find(|p| p.id == connected_id)
+            .map(|p| p.name.as_str())
+            .unwrap_or("Unknown");
+        let label = if current_status.state == "connected" {
+            format!("Connected: {connected_name}")
+        } else {
+            format!("Connecting: {connected_name}")
+        };
+        let status_item = MenuItemBuilder::with_id("status_label", &label)
+            .enabled(false)
+            .build(app)?;
+        let disconnect_item =
+            MenuItemBuilder::with_id("disconnect", "Disconnect").build(app)?;
+        MenuBuilder::new(app)
+            .item(&status_item)
+            .item(&disconnect_item)
+            .separator()
+            .item(&show_item)
+            .separator()
+            .item(&quit_item)
+            .build()
+    } else {
+        // Build profile items first so they live long enough for the builder.
+        let profile_items: Result<Vec<_>, _> = all_profiles
+            .iter()
+            .map(|p| {
+                MenuItemBuilder::with_id(
+                    format!("connect:{}", p.id),
+                    format!("Connect: {}", p.name),
+                )
+                .build(app)
+            })
+            .collect();
+        let profile_items = profile_items?;
+
+        let mut builder = MenuBuilder::new(app);
+        if profile_items.is_empty() {
+            let no_profiles =
+                MenuItemBuilder::with_id("no_profiles", "No profiles configured")
+                    .enabled(false)
+                    .build(app)?;
+            builder = builder.item(&no_profiles);
+        } else {
+            for item in &profile_items {
+                builder = builder.item(item);
+            }
+        }
+        builder
+            .separator()
+            .item(&show_item)
+            .separator()
+            .item(&quit_item)
+            .build()
+    }
+}
+
+pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or(tauri::Error::InvalidWindowHandle)?;
+    let menu = build_menu(app)?;
+
+    TrayIconBuilder::with_id("main")
+        .icon(icon)
         .menu(&menu)
         .tooltip("NetFerry: disconnected")
-        .on_menu_event(move |app, event| match event.id().as_ref() {
+        .on_menu_event(|app, event| match event.id().as_ref() {
             "show_window" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -32,9 +109,20 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
             "quit" => {
                 app.exit(0);
             }
+            id if id.starts_with("connect:") => {
+                let profile_id = &id["connect:".len()..];
+                if let Ok(all_profiles) = profiles::load_profiles(app) {
+                    if let Some(profile) =
+                        all_profiles.into_iter().find(|p| p.id == profile_id)
+                    {
+                        let state = app.state::<AppState>();
+                        let _ = sidecar::connect(app.clone(), state, profile);
+                    }
+                }
+            }
             _ => {}
         })
-        .on_tray_icon_event(move |tray, event| {
+        .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -56,12 +144,20 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
         .build(app)?;
 
     // Emit an initial status event so the UI syncs immediately.
-    let state = app_handle.state::<AppState>();
+    let state = app.state::<AppState>();
     if let Ok(status) = sidecar::current_status(state) {
-        let _ = app_handle.emit(sidecar::STATUS_EVENT, status);
+        let _ = app.emit(sidecar::STATUS_EVENT, status);
     }
 
     Ok(())
+}
+
+pub fn rebuild_tray_menu(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(menu) = build_menu(app) {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
 }
 
 pub fn update_tray_tooltip(app: &AppHandle, text: &str) {

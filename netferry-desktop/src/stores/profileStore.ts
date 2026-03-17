@@ -16,6 +16,7 @@ const newProfile = (): Profile => ({
   method: "auto",
   disableIpv6: false,
   notes: "",
+  autoExcludeLan: true,
 });
 
 interface ProfileStore {
