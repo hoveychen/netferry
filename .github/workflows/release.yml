@@ -105,32 +105,88 @@ jobs:
 
           security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          # codesign: is required in addition to apple-tool:,apple: for codesign tool access
+          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
+            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import Apple Developer ID Certification Authority G2 intermediate cert.
+          # Our Developer ID cert is issued by G2, which may be absent from older runner images.
+          curl -fsSL http://certs.apple.com/devidg2.der -o $RUNNER_TEMP/devidg2.der
+          security import $RUNNER_TEMP/devidg2.der -A -t cert -k $KEYCHAIN_PATH || true
+
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build sidecar
         run: python scripts/build_sidecar.py --target ${{ matrix.rust_target }}
 
-      - name: Sign sidecar (macOS)
+      - name: Build bundle (app only, unsigned)
+        if: startsWith(matrix.os, 'macos')
+        # Do NOT pass APPLE_SIGNING_IDENTITY here. Tauri re-signs all binaries with
+        # codesign --force, which strips the disable-library-validation entitlement
+        # we need on the sidecar (tauri-apps/tauri#7381). We sign everything manually
+        # after the bundle is assembled.
+        run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles app
+
+      - name: Sign bundle (macOS)
         if: startsWith(matrix.os, 'macos')
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          # Tauri does not apply entitlements.plist to externalBin sidecars (tauri-apps/tauri#7381).
-          # PyInstaller --onefile extracts Python.framework at runtime; macOS Hardened Runtime
-          # rejects it when the sidecar's Team ID differs from Python.framework's Team ID.
-          # We must sign the sidecar with disable-library-validation before Tauri bundles it.
+          APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
+
+          # 1. Sign any frameworks/dylibs first (innermost → outermost)
+          if [ -d "$APP_PATH/Contents/Frameworks" ]; then
+            find "$APP_PATH/Contents/Frameworks" \( -name "*.dylib" -o -name "*.framework" \) \
+              | sort -r \
+              | xargs -I{} codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "{}" || true
+          fi
+
+          # 2. Sign the sidecar WITH disable-library-validation.
+          #    PyInstaller --onefile extracts libpython into a temp dir at runtime;
+          #    Hardened Runtime blocks dlopen unless library-validation is disabled.
           codesign --force --options runtime \
             --entitlements src-tauri/sidecar-entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
-            src-tauri/binaries/netferry-tunnel-${{ matrix.rust_target }}
+            "$APP_PATH/Contents/MacOS/netferry-tunnel"
 
-      - name: Build bundle
+          # 3. Sign the main executable
+          codesign --force --options runtime \
+            --entitlements src-tauri/entitlements.plist \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$APP_PATH/Contents/MacOS/netferry-desktop"
+
+          # 4. Sign the .app bundle
+          codesign --force --options runtime \
+            --entitlements src-tauri/entitlements.plist \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$APP_PATH"
+
+      - name: Create and sign DMG (macOS)
+        if: startsWith(matrix.os, 'macos')
         env:
-          # Only pass signing identity; notarization is handled separately below
-          # to avoid Tauri's Rust HTTP client network issues on GitHub runners.
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.os, 'macos') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
+          DMG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg"
+          mkdir -p "$DMG_DIR"
+
+          TMP_SRC=$(mktemp -d)
+          cp -R "$APP_PATH" "$TMP_SRC/"
+          ln -s /Applications "$TMP_SRC/Applications"
+
+          hdiutil create \
+            -volname "NetFerry" \
+            -srcfolder "$TMP_SRC" \
+            -ov -format UDZO \
+            "$DMG_DIR/NetFerry_${VERSION}_bundle.dmg"
+          rm -rf "$TMP_SRC"
+
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+            "$DMG_DIR/NetFerry_${VERSION}_bundle.dmg"
+
+      - name: Build bundle (non-macOS)
+        if: "!startsWith(matrix.os, 'macos')"
         run: npm run tauri build -- --target ${{ matrix.rust_target }}
 
       - name: Rename bundle to friendly name
@@ -232,8 +288,12 @@ jobs:
 
           security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
+            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          curl -fsSL http://certs.apple.com/devidg2.der -o $RUNNER_TEMP/devidg2.der
+          security import $RUNNER_TEMP/devidg2.der -A -t cert -k $KEYCHAIN_PATH || true
+
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Download DMG from release
