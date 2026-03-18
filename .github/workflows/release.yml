@@ -117,27 +117,14 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          # PyInstaller --onefile extracts Python.framework to a temp dir at runtime.
-          # macOS Hardened Runtime blocks loading dylibs with a different Team ID unless
-          # we grant the disable-library-validation entitlement to the sidecar binary.
-          SIDECAR="src-tauri/binaries/netferry-tunnel-${{ matrix.rust_target }}"
-          ENTITLEMENTS=$RUNNER_TEMP/sidecar-entitlements.plist
-          cat > "$ENTITLEMENTS" << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-              <true/>
-              <key>com.apple.security.cs.disable-library-validation</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          # Tauri does not apply entitlements.plist to externalBin sidecars (tauri-apps/tauri#7381).
+          # PyInstaller --onefile extracts Python.framework at runtime; macOS Hardened Runtime
+          # rejects it when the sidecar's Team ID differs from Python.framework's Team ID.
+          # We must sign the sidecar with disable-library-validation before Tauri bundles it.
           codesign --force --options runtime \
-            --entitlements "$ENTITLEMENTS" \
+            --entitlements src-tauri/sidecar-entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
-            "$SIDECAR"
+            src-tauri/binaries/netferry-tunnel-${{ matrix.rust_target }}
 
       - name: Build bundle
         env:

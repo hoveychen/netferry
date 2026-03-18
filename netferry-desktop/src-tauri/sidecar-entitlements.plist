@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- PyInstaller --onefile extracts Python.framework to a temp dir at runtime.
+         The extracted Python is signed with a different Team ID (Python.org / setup-python).
+         macOS Hardened Runtime blocks loading libraries with a mismatched Team ID unless
+         this entitlement is present on the process. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- PyInstaller's bootloader needs to map writable+executable memory pages
+         when bootstrapping the extracted Python runtime. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Network access for SSH tunneling -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+</dict>
+</plist>
