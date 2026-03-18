@@ -1,0 +1,81 @@
+name: notarize
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to notarize (e.g. v0.1.2)'
+        required: true
+
+jobs:
+  notarize:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            stable_name: NetFerry_macos_silicon
+          - os: macos-latest
+            stable_name: NetFerry_macos_intel
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - name: Import Apple certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Download DMG from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download ${{ inputs.tag }} \
+            --repo ${{ github.repository }} \
+            --pattern "${{ matrix.stable_name }}_*.dmg" \
+            --dir .
+          VERSIONED=$(ls ${{ matrix.stable_name }}_*.dmg | head -1)
+          echo "VERSIONED_DMG=$VERSIONED" >> $GITHUB_ENV
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$VERSIONED_DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$VERSIONED_DMG"
+          cp "$VERSIONED_DMG" "${{ matrix.stable_name }}.dmg"
+
+      - name: Upload notarized DMGs back to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload ${{ inputs.tag }} \
+            --repo ${{ github.repository }} \
+            --clobber \
+            "$VERSIONED_DMG" "${{ matrix.stable_name }}.dmg"
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true

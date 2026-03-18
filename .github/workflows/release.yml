@@ -119,22 +119,6 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.os, 'macos') && secrets.APPLE_SIGNING_IDENTITY || '' }}
         run: npm run tauri build -- --target ${{ matrix.rust_target }}
 
-      - name: Notarize and staple DMG
-        if: startsWith(matrix.os, 'macos')
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          DMG=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg -name '*.dmg' | head -1)
-          echo "Notarizing $DMG"
-          xcrun notarytool submit "$DMG" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple "$DMG"
-
       - name: Rename bundle to friendly name
         run: |
           VERSION=$(node -p "require('./package.json').version")
