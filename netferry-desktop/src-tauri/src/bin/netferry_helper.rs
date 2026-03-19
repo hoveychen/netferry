@@ -17,10 +17,15 @@
 //!   {"type":"exit","code":0}
 //!   {"type":"error","message":"..."}
 
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(unix)]
 use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::sync::mpsc;
 
 pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
@@ -51,6 +56,7 @@ enum Response {
     Error { message: String },
 }
 
+#[cfg(unix)]
 fn send(stream: &mut UnixStream, resp: &Response) -> bool {
     match serde_json::to_string(resp) {
         Ok(json) => writeln!(stream, "{json}").is_ok(),
@@ -60,6 +66,7 @@ fn send(stream: &mut UnixStream, resp: &Response) -> bool {
 
 // ── Connection handler ─────────────────────────────────────────────────────────
 
+#[cfg(unix)]
 fn handle_connection(stream: UnixStream) {
     let mut write_stream = match stream.try_clone() {
         Ok(s) => s,
@@ -189,6 +196,13 @@ fn handle_connection(stream: UnixStream) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("netferry-helper is not supported on this platform");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 fn main() {
     // Clean up any stale socket from a previous crash.
     let _ = std::fs::remove_file(SOCKET_PATH);
