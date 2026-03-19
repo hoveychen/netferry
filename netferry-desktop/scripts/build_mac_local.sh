@@ -98,9 +98,6 @@ cd "$DESKTOP_DIR"
 echo "==> Installing npm dependencies"
 npm ci
 
-echo "==> Installing PyInstaller"
-python -m pip install pyinstaller
-
 # ── Build sidecar (no signing yet) ───────────────────────────────────────────
 echo "==> Building sidecar"
 python scripts/build_sidecar.py --target "$RUST_TARGET"
@@ -162,13 +159,10 @@ codesign --force --options runtime \
   --sign "$APPLE_SIGNING_IDENTITY" \
   "$HELPER_DIR/com.hoveychen.netferry.helper"
 
-# ── Sign sidecar WITH disable-library-validation ──────────────────────────────
-# PyInstaller --onefile extracts libpython at runtime into a temp dir.
-# macOS Hardened Runtime blocks dlopen if the dylib Team ID != process Team ID.
-# disable-library-validation bypasses this check.
+# ── Sign sidecar ──────────────────────────────────────────────────────────────
 # Note: Tauri renames the sidecar to "netferry-tunnel" (no target suffix) inside the bundle.
 SIDECAR="$APP_PATH/Contents/MacOS/netferry-tunnel"
-echo "==> Signing sidecar with disable-library-validation: $SIDECAR"
+echo "==> Signing sidecar: $SIDECAR"
 codesign --force --options runtime \
   --entitlements "$DESKTOP_DIR/src-tauri/sidecar-entitlements.plist" \
   --sign "$APPLE_SIGNING_IDENTITY" \

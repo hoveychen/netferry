@@ -38,8 +38,6 @@ jobs:
         working-directory: netferry-desktop
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -84,9 +82,6 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Install PyInstaller
-        run: python -m pip install pyinstaller
-
       - name: Import Apple certificate
         if: startsWith(matrix.os, 'macos')
         env:
@@ -122,9 +117,8 @@ jobs:
       - name: Build bundle (app only, unsigned)
         if: startsWith(matrix.os, 'macos')
         # Do NOT pass APPLE_SIGNING_IDENTITY here. Tauri re-signs all binaries with
-        # codesign --force, which strips the disable-library-validation entitlement
-        # we need on the sidecar (tauri-apps/tauri#7381). We sign everything manually
-        # after the bundle is assembled.
+        # codesign --force, which would override our custom entitlements on the sidecar
+        # and helper (tauri-apps/tauri#7381). We sign everything manually after assembly.
         run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles app
 
       - name: Inject privileged helper into bundle (macOS)
@@ -162,9 +156,7 @@ jobs:
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper"
 
-          # 3. Sign the sidecar WITH disable-library-validation.
-          #    PyInstaller --onefile extracts libpython into a temp dir at runtime;
-          #    Hardened Runtime blocks dlopen unless library-validation is disabled.
+          # 3. Sign the sidecar (network client + server entitlements)
           codesign --force --options runtime \
             --entitlements src-tauri/sidecar-entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \

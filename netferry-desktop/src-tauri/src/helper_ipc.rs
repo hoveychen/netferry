@@ -99,29 +99,23 @@ fn wait_for_socket(timeout: Duration) -> Result<(), String> {
 /// Returns the live `UnixStream`; the caller should spawn a thread to read
 /// JSON event lines from it.  Dropping the stream signals the helper to kill
 /// the tunnel process.
-pub fn start_tunnel(sshuttle_bin: &str, args: &[String]) -> Result<UnixStream, String> {
+pub fn start_tunnel(tunnel_bin: &str, args: &[String]) -> Result<UnixStream, String> {
     let mut stream =
         UnixStream::connect(SOCKET_PATH).map_err(|e| format!("Helper socket: {e}"))?;
 
-    // Pass the real user's environment so the helper (running as root) looks at
-    // ~/.ssh/known_hosts and ~/.ssh/config of the actual user, not /var/root/.ssh.
+    // Pass the real user's environment so the helper (running as root) uses the
+    // correct SSH agent, known_hosts, and config from the actual user's HOME,
+    // not /var/root/.ssh.
     let mut env = serde_json::Map::new();
-    for key in &["HOME", "USER", "SSH_AUTH_SOCK", "SSH_AGENT_PID"] {
+    for key in &["HOME", "USER", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "PATH"] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), serde_json::Value::String(val));
         }
     }
-    // Prepend the SSH wrapper dir to PATH so that ProxyCommand's inner `ssh`
-    // calls also find the wrapper (which injects -F for the real user's config).
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    env.insert(
-        "PATH".to_string(),
-        serde_json::Value::String(format!("/tmp/com.hoveychen.netferry:{current_path}")),
-    );
 
     let req = serde_json::json!({
         "cmd": "connect",
-        "sshuttle_bin": sshuttle_bin,
+        "tunnel_bin": tunnel_bin,
         "args": args,
         "env": env,
     });

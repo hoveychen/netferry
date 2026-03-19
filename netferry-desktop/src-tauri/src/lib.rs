@@ -20,7 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(sidecar::AppState::new())
         .setup(|app| {
-            // On Windows, sshuttle cannot self-elevate, so the whole app must
+            // On Windows, the tunnel cannot self-elevate, so the whole app must
             // run as Administrator.  Re-launch with UAC if needed.
             #[cfg(target_os = "windows")]
             sidecar::ensure_elevated(app.handle());
@@ -40,7 +40,7 @@ pub fn run() {
                 });
             }
 
-            // Kill any sshuttle process group left over from a previous crash or
+            // Kill any tunnel process group left over from a previous crash or
             // force-quit (the PID file records the PGID written at connect time).
             sidecar::kill_stale_tunnel();
 
@@ -97,7 +97,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // On graceful exit (Cmd+Q, window close, tray quit), ensure the
-            // sshuttle process group is terminated and the PID file is removed.
+            // tunnel process group is terminated and the PID file is removed.
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<sidecar::AppState>();
                 let mut lock = state.child.lock().unwrap_or_else(|e| e.into_inner());

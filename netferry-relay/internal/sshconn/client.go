@@ -1,0 +1,168 @@
+package sshconn
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+const dialTimeout = 30 * time.Second
+
+// Dial establishes an *ssh.Client using HostConfig + AuthConfig.
+// It handles ProxyJump and ProxyCommand transparently.
+func Dial(hc *HostConfig, ac AuthConfig) (*ssh.Client, error) {
+	// Merge HostConfig overrides into AuthConfig.
+	if hc.IdentityFile != "" && ac.IdentityFile == "" {
+		ac.IdentityFile = hc.IdentityFile
+	}
+	if hc.UserKnownHostsFile != "" && ac.KnownHostsFile == "" {
+		ac.KnownHostsFile = hc.UserKnownHostsFile
+	}
+	if hc.StrictHostKeyChecking == "no" || strings.Contains(ac.ExtraOptions, "StrictHostKeyChecking=no") {
+		ac.StrictHostKeyChecking = false
+	} else {
+		ac.StrictHostKeyChecking = true
+	}
+
+	clientCfg, err := BuildSSHConfig(hc.User, ac)
+	if err != nil {
+		return nil, err
+	}
+
+	addr := net.JoinHostPort(hc.HostName, strconv.Itoa(hc.Port))
+
+	// ProxyCommand takes precedence over ProxyJump.
+	if hc.ProxyCommand != "" {
+		return dialViaProxyCommand(hc.ProxyCommand, hc.HostName, hc.Port, clientCfg)
+	}
+
+	if hc.ProxyJump != "" {
+		return dialViaProxyJump(hc.ProxyJump, addr, clientCfg, ac)
+	}
+
+	// Direct connection.
+	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
+	}
+	return sshClientFromConn(conn, addr, clientCfg)
+}
+
+// sshClientFromConn upgrades a raw net.Conn to an *ssh.Client.
+func sshClientFromConn(conn net.Conn, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("ssh handshake: %w", err)
+	}
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
+// dialViaProxyJump connects through one or more jump hosts.
+// jumpSpec may be a comma-separated list: "jump1,jump2,...,target" (OpenSSH style).
+func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, ac AuthConfig) (*ssh.Client, error) {
+	jumps := strings.Split(jumpSpec, ",")
+	if len(jumps) == 0 {
+		return nil, fmt.Errorf("empty ProxyJump")
+	}
+
+	var current net.Conn
+	var currentClient *ssh.Client
+
+	for i, jump := range jumps {
+		jumpHC, err := ParseSSHConfig(strings.TrimSpace(jump))
+		if err != nil {
+			return nil, fmt.Errorf("ProxyJump[%d] %q: %w", i, jump, err)
+		}
+		jumpAddr := net.JoinHostPort(jumpHC.HostName, strconv.Itoa(jumpHC.Port))
+
+		var conn net.Conn
+		if currentClient == nil {
+			conn, err = net.DialTimeout("tcp", jumpAddr, dialTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("ProxyJump dial %s: %w", jumpAddr, err)
+			}
+		} else {
+			// Dial next hop through the previous SSH client.
+			conn, err = currentClient.Dial("tcp", jumpAddr)
+			if err != nil {
+				return nil, fmt.Errorf("ProxyJump[%d] dial %s: %w", i, jumpAddr, err)
+			}
+		}
+
+		jumpAC := ac
+		if jumpHC.IdentityFile != "" {
+			jumpAC.IdentityFile = jumpHC.IdentityFile
+		}
+		jumpCfg, err := BuildSSHConfig(jumpHC.User, jumpAC)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		currentClient, err = sshClientFromConn(conn, jumpAddr, jumpCfg)
+		if err != nil {
+			return nil, err
+		}
+		current = conn
+	}
+	_ = current
+
+	// Final hop: dial target through last jump client.
+	finalConn, err := currentClient.Dial("tcp", targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("ProxyJump final dial %s: %w", targetAddr, err)
+	}
+	return sshClientFromConn(finalConn, targetAddr, targetCfg)
+}
+
+// dialViaProxyCommand runs the ProxyCommand and wraps its stdio as a net.Conn.
+func dialViaProxyCommand(proxyCmd, host string, port int, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	// Replace standard placeholders.
+	cmd := proxyCmd
+	cmd = strings.ReplaceAll(cmd, "%h", host)
+	cmd = strings.ReplaceAll(cmd, "%p", fmt.Sprintf("%d", port))
+
+	c := exec.Command("sh", "-c", cmd)
+	stdin, err := c.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("ProxyCommand stdin: %w", err)
+	}
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("ProxyCommand stdout: %w", err)
+	}
+	if err := c.Start(); err != nil {
+		return nil, fmt.Errorf("ProxyCommand start: %w", err)
+	}
+
+	conn := &proxyConn{r: stdout, w: stdin, cmd: c}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	return sshClientFromConn(conn, addr, cfg)
+}
+
+// proxyConn wraps a subprocess's stdin/stdout as net.Conn.
+type proxyConn struct {
+	r   io.ReadCloser
+	w   io.WriteCloser
+	cmd *exec.Cmd
+}
+
+func (p *proxyConn) Read(b []byte) (int, error)  { return p.r.Read(b) }
+func (p *proxyConn) Write(b []byte) (int, error) { return p.w.Write(b) }
+func (p *proxyConn) Close() error {
+	p.r.Close()
+	p.w.Close()
+	p.cmd.Wait()
+	return nil
+}
+func (p *proxyConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (p *proxyConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (p *proxyConn) SetDeadline(t time.Time) error    { return nil }
+func (p *proxyConn) SetReadDeadline(t time.Time) error { return nil }
+func (p *proxyConn) SetWriteDeadline(t time.Time) error { return nil }

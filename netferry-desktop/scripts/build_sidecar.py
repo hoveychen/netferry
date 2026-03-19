@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
-"""Build NetFerry tunnel sidecar and copy into Tauri binaries directory."""
+"""Build NetFerry tunnel sidecar (Go) and copy into Tauri binaries directory."""
 
 from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 
-TARGET_MAP = {
-    "aarch64-apple-darwin": "netferry-tunnel-aarch64-apple-darwin",
-    "x86_64-apple-darwin": "netferry-tunnel-x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu": "netferry-tunnel-x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu": "netferry-tunnel-aarch64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc": "netferry-tunnel-x86_64-pc-windows-msvc.exe",
+# Rust target triple → (GOOS, GOARCH, exe_suffix)
+TARGET_MAP: dict[str, tuple[str, str, str]] = {
+    "aarch64-apple-darwin":      ("darwin",   "arm64", ""),
+    "x86_64-apple-darwin":       ("darwin",   "amd64", ""),
+    "x86_64-unknown-linux-gnu":  ("linux",    "amd64", ""),
+    "aarch64-unknown-linux-gnu": ("linux",    "arm64", ""),
+    "x86_64-pc-windows-msvc":    ("windows",  "amd64", ".exe"),
 }
 
+# All remote-server cross-compilation targets (embedded in the tunnel binary).
+SERVER_TARGETS: list[tuple[str, str]] = [
+    ("linux",  "amd64"),
+    ("linux",  "arm64"),
+    ("linux",  "mipsle"),
+    ("darwin", "amd64"),
+    ("darwin", "arm64"),
+]
 
-def run(cmd: list[str], cwd: Path) -> None:
+
+def run(cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(cmd))
-    subprocess.run(cmd, cwd=cwd, check=True)
+    subprocess.run(cmd, cwd=cwd, check=True, env=env)
 
 
 def detect_target() -> str:
@@ -33,104 +42,69 @@ def detect_target() -> str:
     raise RuntimeError("Unable to parse host triple from rustc -Vv")
 
 
+def get_version(relay_dir: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(relay_dir.parent), "describe", "--tags", "--always", "--dirty"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return "dev"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", help="Rust target triple; defaults to current host")
-    parser.add_argument(
-        "--python",
-        default=sys.executable,
-        help="Python executable used to run PyInstaller",
-    )
     args = parser.parse_args()
 
     workspace = Path(__file__).resolve().parents[2]
     project = Path(__file__).resolve().parents[1]
+    relay_dir = workspace / "netferry-relay"
     binaries_dir = project / "src-tauri" / "binaries"
     binaries_dir.mkdir(parents=True, exist_ok=True)
 
     target = args.target or detect_target()
     if target not in TARGET_MAP:
-        raise RuntimeError(f"Unsupported target: {target}")
+        raise RuntimeError(
+            f"Unsupported target: {target}\n"
+            f"Supported: {', '.join(TARGET_MAP)}"
+        )
 
-    output_name = TARGET_MAP[target]
-    build_dir = project / ".sidecar-build"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-    build_dir.mkdir(parents=True, exist_ok=True)
+    goos_target, goarch_target, exe_suffix = TARGET_MAP[target]
+    version = get_version(relay_dir)
+    ldflags = f"-X main.Version={version} -s -w"
 
-    # Use our netferry package as the entry point so that the frozen binary
-    # gets the get_module_source() patch applied before main() is called.
-    entry = workspace / "netferry" / "__main__.py"
-    if not entry.exists():
-        raise RuntimeError(f"netferry entrypoint not found: {entry}")
+    base_env = {**os.environ, "CGO_ENABLED": "0"}
 
-    # sshuttle's core mechanism is to read its own Python source files and
-    # ship them over SSH to bootstrap the remote server.  PyInstaller normally
-    # compiles .py to bytecode and omits the source text, so we must:
-    #  (a) add all sshuttle .py files as data so they land in sys._MEIPASS
-    #      at runtime (our patched get_module_source reads them from there).
-    #  (b) list every module referenced only by string in get_module_source /
-    #      empackage as a hidden import so PyInstaller includes them.
-    sshuttle_pkg = workspace / "third_party" / "sshuttle" / "sshuttle"
-    sep = ";" if sys.platform == "win32" else ":"
-    add_data_args = ["--add-data", f"{sshuttle_pkg}{sep}sshuttle"]
+    # Step 1: Build all remote server binaries (embedded into the tunnel binary).
+    # These always run on Linux/macOS remotes, so we never build Windows server binaries.
+    # go:embed paths are relative to cmd/tunnel/, so binaries live under cmd/tunnel/binaries/.
+    relay_binaries = relay_dir / "cmd" / "tunnel" / "binaries"
+    relay_binaries.mkdir(parents=True, exist_ok=True)
 
-    hidden_imports = [
-        # Modules referenced only as strings in get_module_source()/empackage()
-        # in ssh.py — PyInstaller's static analysis cannot find these.
-        # Note: sshuttle.cmdline_options is intentionally omitted because
-        # empackage() is always called with explicit optdata for it, bypassing
-        # get_module_source().
-        "sshuttle.assembler",
-        "sshuttle.helpers",
-        "sshuttle.ssnet",
-        "sshuttle.hostwatch",
-        "sshuttle.server",
-        # Firewall method modules loaded dynamically via importlib
-        "sshuttle.methods.nat",
-        "sshuttle.methods.nft",
-        "sshuttle.methods.pf",
-        "sshuttle.methods.ipfw",
-        "sshuttle.methods.tproxy",
-        "sshuttle.methods.windivert",
-    ]
-    hidden_import_args: list[str] = []
-    for hi in hidden_imports:
-        hidden_import_args += ["--hidden-import", hi]
+    for goos, goarch in SERVER_TARGETS:
+        out_name = f"server-{goos}-{goarch}"
+        env = {**base_env, "GOOS": goos, "GOARCH": goarch}
+        run(
+            ["go", "build", f"-ldflags={ldflags}", "-o", str(relay_binaries / out_name), "./cmd/server"],
+            cwd=relay_dir,
+            env=env,
+        )
+        print(f"  built cmd/tunnel/binaries/{out_name}")
 
-    cmd = [
-        args.python,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onefile",
-        "--name",
-        "sshuttle",
-        *add_data_args,
-        *hidden_import_args,
-        str(entry),
-    ]
-    env = dict(os.environ)
-    # Both the netferry wrapper package and the upstream sshuttle must be on
-    # the module search path so PyInstaller can trace all dependencies.
-    env["PYTHONPATH"] = os.pathsep.join([
-        str(workspace),
-        str(workspace / "third_party" / "sshuttle"),
-    ])
-    print("+", " ".join(cmd))
-    subprocess.run(cmd, cwd=build_dir, env=env, check=True)
-
-    dist_name = "sshuttle.exe" if sys.platform == "win32" else "sshuttle"
-    built = build_dir / "dist" / dist_name
-    if not built.exists():
-        raise RuntimeError(f"PyInstaller output not found: {built}")
-
-    target_bin = binaries_dir / output_name
-    shutil.copy2(built, target_bin)
-    if not target_bin.name.endswith(".exe"):
-        target_bin.chmod(0o755)
-    print(f"Sidecar generated: {target_bin}")
+    # Step 2: Cross-compile the tunnel binary for the requested target.
+    tunnel_name = f"netferry-tunnel-{target}{exe_suffix}"
+    tunnel_out = binaries_dir / tunnel_name
+    env = {**base_env, "GOOS": goos_target, "GOARCH": goarch_target}
+    run(
+        ["go", "build", f"-ldflags={ldflags}", "-o", str(tunnel_out), "./cmd/tunnel"],
+        cwd=relay_dir,
+        env=env,
+    )
+    if not exe_suffix:
+        tunnel_out.chmod(0o755)
+    print(f"Sidecar generated: {tunnel_out}")
     return 0
 
 

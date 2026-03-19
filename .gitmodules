@@ -1,3 +1,0 @@
-[submodule "third_party/sshuttle"]
-	path = third_party/sshuttle
-	url = https://github.com/sshuttle/sshuttle.git

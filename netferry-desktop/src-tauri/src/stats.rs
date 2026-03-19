@@ -14,13 +14,13 @@ const SSH_FIND_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Start a background thread that polls the SSH child process's I/O stats once per second.
 /// Returns an `Arc<AtomicBool>` stop flag — call `stop_stats_monitoring` with it to halt the thread.
-pub fn start_stats_monitoring(app: AppHandle, sshuttle_pid: u32) -> Arc<AtomicBool> {
+pub fn start_stats_monitoring(app: AppHandle, tunnel_pid: u32) -> Arc<AtomicBool> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop_flag);
 
     std::thread::spawn(move || {
-        // Phase 1: find the SSH child PID spawned by sshuttle.
-        let ssh_pid = find_ssh_child_pid(sshuttle_pid, SSH_FIND_TIMEOUT);
+        // Phase 1: find the SSH child PID spawned by the tunnel.
+        let ssh_pid = find_ssh_child_pid(tunnel_pid, SSH_FIND_TIMEOUT);
         let target_pid = match ssh_pid {
             Some(p) => p,
             None => return, // Timed out — connection likely failed; stderr watcher handles that.
@@ -90,7 +90,7 @@ fn fmt_speed(bytes_per_sec: u64) -> String {
     }
 }
 
-/// Find the SSH child process spawned by sshuttle (identified by parent PID and name).
+/// Find the SSH child process spawned by the tunnel (identified by parent PID and name).
 /// Polls every 250 ms until found or `timeout` expires.
 fn find_ssh_child_pid(parent_pid: u32, timeout: Duration) -> Option<u32> {
     let deadline = std::time::Instant::now() + timeout;

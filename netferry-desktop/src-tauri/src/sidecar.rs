@@ -48,7 +48,7 @@ impl SudoHelper {
         std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o755)).ok()?;
 
         // sudo wrapper: re-invokes real sudo with -A so it uses SUDO_ASKPASS.
-        // sshuttle resolves `sudo` via which(), so placing our wrapper first in
+        // The tunnel resolves `sudo` via which(), so placing our wrapper first in
         // PATH is sufficient to intercept the call.
         let sudo_wrapper = dir.join("sudo");
         std::fs::write(
@@ -115,7 +115,7 @@ impl Drop for SudoHelper {
 
 // ── Windows: UAC elevation at startup ─────────────────────────────────────────
 
-/// On Windows, sshuttle does not implement its own privilege elevation and
+/// On Windows, the tunnel does not implement its own privilege elevation and
 /// requires the process to already be running as Administrator.  We detect
 /// this early and ask the OS to re-launch the app with a UAC elevation prompt.
 #[cfg(target_os = "windows")]
@@ -191,7 +191,7 @@ fn pid_file_path() -> std::path::PathBuf {
 }
 
 /// Called at app startup: if a stale PID file exists from a previous crash/kill,
-/// terminate the leftover sshuttle process group and remove the file.
+/// terminate the leftover tunnel process group and remove the file.
 pub fn kill_stale_tunnel() {
     #[cfg(unix)]
     {
@@ -227,7 +227,7 @@ fn set_status(
     Ok(())
 }
 
-fn resolve_sshuttle_exe() -> String {
+fn resolve_tunnel_exe() -> String {
     // Explicit overrides via environment variable take highest priority.
     for var in &["NETFERRY_TUNNEL_BIN", "NETFERRY_SSHUTTLE_BIN", "SSHUTTLE_BIN"] {
         if let Ok(path) = std::env::var(var) {
@@ -265,121 +265,35 @@ fn resolve_sshuttle_exe() -> String {
     "netferry-tunnel".to_string()
 }
 
-/// Detect LAN subnets (/16) from all network interfaces with private IPv4 addresses.
-/// Returns deduplicated CIDR strings like "192.168.0.0/16".
-fn get_lan_subnets() -> Vec<String> {
-    use std::collections::HashSet;
-    let mut subnets: HashSet<String> = HashSet::new();
-
-    #[cfg(unix)]
-    {
-        use std::net::Ipv4Addr;
-        unsafe {
-            let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
-            if libc::getifaddrs(&mut ifap) != 0 {
-                return vec![];
-            }
-            let mut ifa = ifap;
-            while !ifa.is_null() {
-                let addr_ptr = (*ifa).ifa_addr;
-                if !addr_ptr.is_null()
-                    && (*addr_ptr).sa_family as i32 == libc::AF_INET
-                {
-                    let sin = &*(addr_ptr as *const libc::sockaddr_in);
-                    // s_addr is in network byte order; convert to Ipv4Addr.
-                    let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
-                    let o = ip.octets();
-                    let is_private = o[0] == 10
-                        || (o[0] == 172 && (16..=31).contains(&o[1]))
-                        || (o[0] == 192 && o[1] == 168);
-                    if is_private {
-                        subnets.insert(format!("{}.{}.0.0/16", o[0], o[1]));
-                    }
-                }
-                ifa = (*ifa).ifa_next;
-            }
-            libc::freeifaddrs(ifap);
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        // Parse `ipconfig` output: lines like "IPv4 Address. . . . . . . . . . . : 192.168.1.100"
-        if let Ok(out) = std::process::Command::new("ipconfig").output() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines() {
-                let line = line.trim();
-                if !line.to_lowercase().contains("ipv4 address") {
-                    continue;
-                }
-                if let Some(ip_str) = line.split(':').last().map(|s| s.trim()) {
-                    if let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() {
-                        let o = ip.octets();
-                        let is_private = o[0] == 10
-                            || (o[0] == 172 && (16..=31).contains(&o[1]))
-                            || (o[0] == 192 && o[1] == 168);
-                        if is_private {
-                            subnets.insert(format!("{}.{}.0.0/16", o[0], o[1]));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    subnets.into_iter().collect()
-}
-
-fn build_args(profile: &Profile, ssh_cmd_base: &str) -> Vec<String> {
+fn build_args(profile: &Profile) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
-    let mut ssh_cmd_parts: Vec<String> = vec![ssh_cmd_base.to_string()];
 
-    // Enable verbose output so sshuttle logs individual connections to stderr.
+    // Verbose: tunnel logs individual connections to stderr (parsed by this process).
     args.push("-v".to_string());
 
     args.push("--remote".to_string());
     args.push(profile.remote.clone());
 
+    // Subnets are positional arguments.
     for subnet in &profile.subnets {
         if !subnet.trim().is_empty() {
             args.push(subnet.clone());
         }
     }
+
     if profile.auto_nets {
         args.push("--auto-nets".to_string());
     }
-    {
-        use std::collections::HashSet;
-        let mut seen: HashSet<String> = HashSet::new();
-        let manual = profile.exclude_subnets.iter().map(|s| s.trim().to_string());
-        let auto_lan = if profile.auto_exclude_lan {
-            get_lan_subnets()
-        } else {
-            vec![]
-        };
-        for subnet in manual.chain(auto_lan) {
-            if !subnet.is_empty() && seen.insert(subnet.clone()) {
-                args.push("--exclude".to_string());
-                args.push(subnet);
-            }
-        }
-    }
     if !profile.identity_file.trim().is_empty() {
-        ssh_cmd_parts.push("-i".to_string());
-        ssh_cmd_parts.push(profile.identity_file.clone());
+        args.push("--identity".to_string());
+        args.push(profile.identity_file.clone());
     }
     if !profile.method.trim().is_empty() {
         args.push("--method".to_string());
         args.push(profile.method.clone());
     }
     if profile.disable_ipv6 {
-        args.push("--disable-ipv6".to_string());
-    }
-    if let Some(py) = &profile.remote_python {
-        if !py.trim().is_empty() {
-            args.push("--python".to_string());
-            args.push(py.clone());
-        }
+        args.push("--no-ipv6".to_string());
     }
     match profile.dns {
         DnsMode::Off => {}
@@ -387,25 +301,20 @@ fn build_args(profile: &Profile, ssh_cmd_base: &str) -> Vec<String> {
     }
     if let Some(to_ns) = &profile.dns_target {
         if !to_ns.trim().is_empty() {
-            args.push("--to-ns".to_string());
+            args.push("--dns-target".to_string());
             args.push(to_ns.clone());
         }
     }
-    if let Some(size) = profile.latency_buffer_size {
-        args.push("--latency-buffer-size".to_string());
-        args.push(size.to_string());
-    }
     if let Some(extra) = &profile.extra_ssh_options {
         if !extra.trim().is_empty() {
-            ssh_cmd_parts.push(extra.clone());
+            args.push("--extra-ssh-opts".to_string());
+            args.push(extra.clone());
         }
     }
-    args.push("--ssh-cmd".to_string());
-    args.push(ssh_cmd_parts.join(" "));
     args
 }
 
-/// Parse a sshuttle verbose "Accept TCP" line into a ConnectionEvent.
+/// Parse a tunnel verbose "Accept TCP" line into a ConnectionEvent.
 /// Expected format: "c : Accept TCP: <src_ip>:<src_port> -> <dst_ip>:<dst_port>."
 fn parse_connection_event(line: &str) -> Option<ConnectionEvent> {
     let after = line.split("Accept TCP:").nth(1)?.trim();
@@ -420,7 +329,7 @@ fn parse_connection_event(line: &str) -> Option<ConnectionEvent> {
     })
 }
 
-/// Returns true if the line looks like an error or warning from sshuttle/SSH.
+/// Returns true if the line looks like an error or warning from the tunnel/SSH.
 fn is_error_line(line: &str) -> bool {
     const KEYWORDS: &[&str] = &[
         "fatal:",
@@ -577,7 +486,7 @@ pub fn connect(
         }
     }
 
-    let binary = resolve_sshuttle_exe();
+    let binary = resolve_tunnel_exe();
 
     // ── macOS 13+: route through the privileged helper daemon ─────────────────
     // On success the helper manages the tunnel process (running as root) and we
@@ -586,36 +495,9 @@ pub fn connect(
     #[cfg(target_os = "macos")]
     match helper_ipc::ensure_helper_running() {
         Ok(true) => {
-            // SSH running as root ignores HOME and uses /var/root/.ssh (pw_dir
-            // from passwd, not the HOME env var). Fix this by creating a thin
-            // wrapper script that always passes -F pointing at the real user's
-            // config. We also prepend the wrapper dir to PATH so that nested
-            // SSH calls inside ProxyCommand directives also find the wrapper
-            // (and thus also use the correct config).
-            let ssh_cmd_base = if let Ok(home) = std::env::var("HOME") {
-                let wrapper_dir = std::path::Path::new("/tmp/com.hoveychen.netferry");
-                let _ = std::fs::create_dir_all(wrapper_dir);
-                let wrapper = wrapper_dir.join("ssh");
-                let script = format!(
-                    "#!/bin/sh\nexec /usr/bin/ssh \
-                     -F {home}/.ssh/config \
-                     -o UserKnownHostsFile={home}/.ssh/known_hosts \
-                     \"$@\"\n"
-                );
-                if std::fs::write(&wrapper, script).is_ok() {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &wrapper,
-                        std::fs::Permissions::from_mode(0o755),
-                    );
-                    wrapper.to_string_lossy().into_owned()
-                } else {
-                    "ssh".to_string()
-                }
-            } else {
-                "ssh".to_string()
-            };
-            let args = build_args(&profile, &ssh_cmd_base);
+            // The Go tunnel reads SSH config natively and receives HOME/USER/SSH_AUTH_SOCK
+            // from the helper's env injection — no SSH wrapper script needed.
+            let args = build_args(&profile);
             let stream = helper_ipc::start_tunnel(&binary, &args)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
             // Give the event thread a cloned read end; keep the original for
@@ -644,31 +526,7 @@ pub fn connect(
         Err(e) => return Err(e),
     }
 
-    // ── Windows: fix .ssh/config path after UAC elevation ────────────────────
-    // After re-launching as Administrator via UAC, USERPROFILE may still point
-    // to the original user's directory, but OpenSSH for Windows may fall back
-    // to the Administrator profile in some configurations.  Explicitly pass -F
-    // so SSH always reads the correct config regardless of elevation state.
-    #[cfg(windows)]
-    let ssh_cmd_base = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(|h| {
-            // OpenSSH for Windows accepts forward slashes.
-            let h = h.replace('\\', "/");
-            let config = format!("{h}/.ssh/config");
-            let known = format!("{h}/.ssh/known_hosts");
-            // sshuttle splits --ssh-cmd with shlex; quote paths containing spaces.
-            if h.contains(' ') {
-                format!("ssh -F \"{config}\" -o \"UserKnownHostsFile={known}\"")
-            } else {
-                format!("ssh -F {config} -o UserKnownHostsFile={known}")
-            }
-        })
-        .unwrap_or_else(|_| "ssh".to_string());
-    #[cfg(not(windows))]
-    let ssh_cmd_base = "ssh".to_string();
-
-    let args = build_args(&profile, &ssh_cmd_base);
+    let args = build_args(&profile);
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -688,7 +546,7 @@ pub fn connect(
             *h = Some(helper);
         }
         // Put the tunnel process in its own process group so we can kill the
-        // whole group on disconnect (sshuttle spawns SSH and other children).
+        // whole group on disconnect (the tunnel spawns SSH and other children).
         cmd.process_group(0);
     }
 
@@ -697,7 +555,7 @@ pub fn connect(
         .spawn()
         .map_err(|e| format!("Failed to start tunnel process: {e}"))?;
 
-    // Record the process group ID so we can terminate any orphaned sshuttle
+    // Record the process group ID so we can terminate any orphaned tunnel
     // processes if the app is killed (SIGKILL) before a clean disconnect.
     #[cfg(unix)]
     {
@@ -843,7 +701,7 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
     if let Some(mut child) = lock.take() {
         #[cfg(unix)]
         {
-            // Kill the whole process group so sshuttle's child processes (e.g. SSH)
+            // Kill the whole process group so the tunnel's child processes (e.g. SSH)
             // are also terminated; otherwise they would remain as orphans.
             let pid = child.id() as i32;
             let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };

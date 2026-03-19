@@ -1,13 +1,13 @@
 //! NetFerry Privileged Helper Daemon
 //!
 //! This binary is installed as a macOS LaunchDaemon (root) via SMAppService.
-//! It listens on a Unix domain socket and executes sshuttle on behalf of the
+//! It listens on a Unix domain socket and executes the tunnel binary on behalf of the
 //! main (unprivileged) application, streaming stdout/stderr back as JSON lines.
 //!
 //! Protocol (newline-delimited JSON):
 //!
 //! Request  (main app → helper):
-//!   {"cmd":"connect","sshuttle_bin":"/path","args":[...]}
+//!   {"cmd":"connect","tunnel_bin":"/path","args":[...]}
 //!   {"cmd":"ping"}
 //!
 //! Response (helper → main app):
@@ -36,7 +36,7 @@ pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
 #[serde(tag = "cmd", rename_all = "lowercase")]
 enum Request {
     Connect {
-        sshuttle_bin: String,
+        tunnel_bin: String,
         args: Vec<String>,
         /// Caller's environment variables (HOME, USER, SSH_AUTH_SOCK, …) so that
         /// SSH uses the real user's ~/.ssh instead of /var/root/.ssh.
@@ -98,8 +98,8 @@ fn handle_connection(stream: UnixStream) {
             send(&mut write_stream, &Response::Pong);
         }
 
-        Request::Connect { sshuttle_bin, args, env } => {
-            let mut cmd = Command::new(&sshuttle_bin);
+        Request::Connect { tunnel_bin, args, env } => {
+            let mut cmd = Command::new(&tunnel_bin);
             cmd.args(&args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -110,7 +110,7 @@ fn handle_connection(stream: UnixStream) {
             }
 
             // Put the tunnel in its own process group so we can kill the whole
-            // group when the socket closes (sshuttle spawns SSH children).
+            // group when the socket closes (the tunnel spawns SSH children).
             unsafe {
                 use std::os::unix::process::CommandExt;
                 cmd.pre_exec(|| {

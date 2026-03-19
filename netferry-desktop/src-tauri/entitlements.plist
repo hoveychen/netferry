@@ -5,7 +5,7 @@
     <!-- Allow outbound network connections (SSH tunnel) -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <!-- Allow incoming connections (sshuttle local proxy) -->
+    <!-- Allow incoming connections (tunnel local proxy) -->
     <key>com.apple.security.network.server</key>
     <true/>
 </dict>

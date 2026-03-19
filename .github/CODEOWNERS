@@ -4,6 +4,6 @@
 # Desktop app
 netferry-desktop/ @hoveychen
 
-# Embedded upstream submodule pointer
-third_party/sshuttle @hoveychen
+# Go relay (server + tunnel)
+netferry-relay/ @hoveychen
 
