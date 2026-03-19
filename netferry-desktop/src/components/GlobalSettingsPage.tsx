@@ -26,22 +26,22 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-100">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-4">
+    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
         <button
           type="button"
-          className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800"
+          className="flex items-center gap-1.5 text-sm text-white/45 transition-colors hover:text-white/80"
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </button>
-        <span className="text-slate-300">/</span>
-        <h1 className="text-base font-semibold text-slate-800">Global Settings</h1>
+        <span className="text-white/20">/</span>
+        <h1 className="text-[15px] font-semibold text-white/90">Settings</h1>
         <div className="ml-auto">
           <Button size="sm" onClick={save} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving…" : "Save"}
           </Button>
         </div>
       </div>
@@ -49,15 +49,15 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
       {/* Form */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-2xl">
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
               Startup
-            </h2>
+            </p>
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
+              <label className="mb-1.5 block text-sm font-medium text-white/60">
                 Auto-connect on startup
               </label>
-              <p className="mb-2 text-xs text-slate-400">
+              <p className="mb-2.5 text-xs text-white/35">
                 Automatically connect to the selected profile when the app launches.
               </p>
               <Select

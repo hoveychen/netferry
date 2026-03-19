@@ -58,20 +58,22 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
-        <h3 className="mb-1 text-lg font-semibold text-slate-800">Import from ~/.ssh/config</h3>
-        <p className="mb-4 text-sm text-slate-500">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-white/[0.10] bg-[#2c2c2e] p-6 shadow-2xl shadow-black/60">
+        <h3 className="mb-1 text-[17px] font-semibold text-white/90">
+          Import from ~/.ssh/config
+        </h3>
+        <p className="mb-5 text-sm text-white/45">
           Select a host to pre-fill a new profile. You can review and edit before saving.
         </p>
 
-        {loading && <p className="text-sm text-slate-500">Loading…</p>}
-        {error && <p className="text-sm text-rose-600">{error}</p>}
+        {loading && <p className="text-sm text-white/40">Loading…</p>}
+        {error && <p className="text-sm text-[#ff453a]">{error}</p>}
 
         {!loading && !error && (
           <>
             <select
-              className="mb-3 h-9 w-full rounded-md border border-slate-300 px-2 text-sm"
+              className="mb-3.5 h-9 w-full rounded-lg border border-white/[0.10] bg-[#3a3a3c] px-3 py-2 text-sm text-white/90 outline-none transition-all focus:border-[#0a84ff]/60 focus:ring-2 focus:ring-[#0a84ff]/15 cursor-pointer"
               value={selectedHost}
               onChange={(e) => setSelectedHost(e.target.value)}
             >
@@ -83,22 +85,24 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
             </select>
 
             {selected && (
-              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                <div className="grid grid-cols-2 gap-1">
-                  <span className="text-slate-500">HostName</span>
-                  <span className="font-mono text-slate-800">{selected.hostName ?? "—"}</span>
-                  <span className="text-slate-500">User</span>
-                  <span className="font-mono text-slate-800">{selected.user ?? "—"}</span>
-                  <span className="text-slate-500">Port</span>
-                  <span className="font-mono text-slate-800">{selected.port ?? "—"}</span>
-                  <span className="text-slate-500">IdentityFile</span>
-                  <span className="font-mono text-slate-800 break-all">{selected.identityFile ?? "—"}</span>
-                  {selected.proxyJump && (
+              <div className="mb-5 rounded-xl border border-white/[0.07] bg-white/[0.04] p-4 text-sm">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  {(
+                    [
+                      ["HostName", selected.hostName],
+                      ["User", selected.user],
+                      ["Port", selected.port],
+                      ["IdentityFile", selected.identityFile],
+                      ...(selected.proxyJump ? [["ProxyJump", selected.proxyJump]] : []),
+                    ] as [string, string | number | undefined][]
+                  ).map(([label, value]) => (
                     <>
-                      <span className="text-slate-500">ProxyJump</span>
-                      <span className="font-mono text-slate-800">{selected.proxyJump}</span>
+                      <span key={`l-${label}`} className="text-white/40">{label}</span>
+                      <span key={`v-${label}`} className="truncate font-mono text-white/75">
+                        {value ?? "—"}
+                      </span>
                     </>
-                  )}
+                  ))}
                 </div>
               </div>
             )}

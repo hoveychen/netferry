@@ -63,35 +63,31 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-100">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-6 py-4">
+    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
         <button
           type="button"
-          className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800"
+          className="flex items-center gap-1.5 text-sm text-white/45 transition-colors hover:text-white/80"
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </button>
-        <span className="text-slate-300">/</span>
-        <h1 className="text-base font-semibold text-slate-800">
+        <span className="text-white/20">/</span>
+        <h1 className="text-[15px] font-semibold text-white/90">
           {isNew ? "New Profile" : draft.name || "Edit Profile"}
         </h1>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {!isNew && !confirmDelete && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 className="mr-1 h-4 w-4" />
+            <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="mr-1 h-3.5 w-3.5" />
               Delete
             </Button>
           )}
           {!isNew && confirmDelete && (
             <>
-              <span className="text-sm text-rose-600">Sure?</span>
+              <span className="text-sm text-[#ff453a]/80">Are you sure?</span>
               <Button
                 variant="danger"
                 size="sm"
@@ -102,36 +98,35 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               >
                 Yes, delete
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setConfirmDelete(false)}
-              >
+              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
                 Cancel
               </Button>
             </>
           )}
           <Button size="sm" onClick={save} disabled={saving || !validation.valid}>
-            {saving ? "Saving..." : isNew ? "Create" : "Save"}
+            {saving ? "Saving…" : isNew ? "Create" : "Save"}
           </Button>
         </div>
       </div>
 
       {/* Form */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto max-w-2xl space-y-4">
           {validation.errors.length > 0 && (
-            <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            <div className="rounded-xl border border-[#ff453a]/20 bg-[#ff453a]/[0.08] px-4 py-3 text-sm text-[#ff453a]">
               {validation.errors.map((e) => (
                 <p key={e}>{e}</p>
               ))}
             </div>
           )}
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
+          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+              Connection
+            </p>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">Name</label>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">Name</label>
                 <Input
                   value={draft.name}
                   onChange={(e) => setField("name", e.target.value)}
@@ -140,8 +135,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  SSH Remote <span className="text-slate-400">(user@host:port)</span>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  SSH Remote{" "}
+                  <span className="font-normal text-white/30">(user@host:port)</span>
                 </label>
                 <Input
                   value={draft.remote}
@@ -151,7 +147,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">
+                <label className="mb-1.5 block text-sm font-medium text-white/60">
                   Identity File
                 </label>
                 <Input
@@ -162,8 +158,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Include Subnets <span className="text-slate-400">(comma-separated)</span>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  Include Subnets{" "}
+                  <span className="font-normal text-white/30">(comma-separated CIDR)</span>
                 </label>
                 <Input
                   value={subnetsText}
@@ -180,7 +177,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">DNS Mode</label>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">DNS Mode</label>
                 <Select
                   value={draft.dns}
                   onChange={(e) => {
@@ -197,7 +194,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
               {draft.dns === "specific" && (
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
                     DNS Target
                   </label>
                   <Input
@@ -210,21 +207,26 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
             </div>
           </div>
 
-          {/* Advanced */}
+          {/* Advanced toggle */}
           <button
-            className="mt-4 text-sm font-medium text-slate-500 hover:text-slate-800"
+            className="flex items-center gap-2 text-sm font-medium text-white/35 transition-colors hover:text-white/60"
             type="button"
             onClick={() => setShowAdvanced((s) => !s)}
           >
-            {showAdvanced ? "Hide Advanced Options ▲" : "Show Advanced Options ▼"}
+            <span className="text-[10px]">{showAdvanced ? "▲" : "▼"}</span>
+            {showAdvanced ? "Hide Advanced Options" : "Show Advanced Options"}
           </button>
 
           {showAdvanced && (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-white p-6">
+            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                Advanced
+              </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Exclude Subnets <span className="text-slate-400">(comma-separated)</span>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                    Exclude Subnets{" "}
+                    <span className="font-normal text-white/30">(comma-separated)</span>
                   </label>
                   <Input
                     value={excludeSubnetsText}
@@ -240,7 +242,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Method</label>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">Method</label>
                   <Select value={draft.method} onChange={(e) => setField("method", e.target.value)}>
                     {["auto", "nat", "nft", "tproxy", "pf", "ipfw", "windivert"].map((m) => (
                       <option key={m} value={m}>
@@ -250,35 +252,38 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   </Select>
                 </div>
 
-                <div className="flex flex-col justify-end gap-2">
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <div className="flex flex-col justify-end gap-3">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
                     <input
                       type="checkbox"
                       checked={draft.autoNets}
                       onChange={(e) => setField("autoNets", e.target.checked)}
+                      className="accent-[#0a84ff]"
                     />
                     Auto-nets
                   </label>
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
                     <input
                       type="checkbox"
                       checked={draft.disableIpv6}
                       onChange={(e) => setField("disableIpv6", e.target.checked)}
+                      className="accent-[#0a84ff]"
                     />
                     Disable IPv6
                   </label>
                 </div>
 
                 <div className="col-span-2">
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
                     <input
                       type="checkbox"
                       checked={draft.autoExcludeLan}
                       onChange={(e) => setField("autoExcludeLan", e.target.checked)}
+                      className="accent-[#0a84ff]"
                     />
                     <span>
                       Auto-exclude LAN
-                      <span className="ml-1 text-xs text-slate-400">
+                      <span className="ml-1.5 text-xs text-white/30">
                         (exclude local /16 subnets from the tunnel)
                       </span>
                     </span>
@@ -286,9 +291,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
                     Latency Buffer Size
-                    <span className="ml-1 text-xs text-slate-400">(bytes, default 2097152)</span>
+                    <span className="ml-1.5 font-normal text-xs text-white/30">(bytes)</span>
                   </label>
                   <Input
                     type="number"
@@ -304,7 +309,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
                     Remote Python
                   </label>
                   <Input
@@ -315,7 +320,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
                     Extra SSH Options
                   </label>
                   <Input
@@ -326,7 +331,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">Notes</label>
                   <Textarea
                     value={draft.notes ?? ""}
                     onChange={(e) => setField("notes", e.target.value || undefined)}

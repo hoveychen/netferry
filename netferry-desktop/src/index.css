@@ -1,14 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "PingFang SC",
-    "Microsoft YaHei",
-    sans-serif;
+  font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -18,4 +13,32 @@
 body {
   margin: 0;
   min-width: 980px;
+  background-color: #1c1c1e;
+  color: rgba(255, 255, 255, 0.90);
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Green pulse animation for active connection */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 5px 1px rgba(48, 209, 88, 0.55); }
+  50% { opacity: 0.7; box-shadow: 0 0 10px 3px rgba(48, 209, 88, 0.25); }
+}
+
+.glow-pulse {
+  animation: pulse-glow 2s ease-in-out infinite;
 }

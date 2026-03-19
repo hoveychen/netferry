@@ -64,3 +64,18 @@ pub fn get_global_settings(app: AppHandle) -> Result<GlobalSettings, String> {
 pub fn save_global_settings(app: AppHandle, settings: GlobalSettings) -> Result<(), String> {
     crate::settings::save_settings(&app, &settings)
 }
+
+#[tauri::command]
+pub async fn lookup_geoip(host: String) -> Result<String, String> {
+    let url = format!("https://ipwho.is/{}", host);
+    eprintln!("[geoip] fetching: {}", url);
+    let resp = reqwest::get(&url).await.map_err(|e| {
+        eprintln!("[geoip] request error: {}", e);
+        e.to_string()
+    })?;
+    let status = resp.status();
+    eprintln!("[geoip] status: {}", status);
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    eprintln!("[geoip] body: {}", &body[..body.len().min(200)]);
+    Ok(body)
+}

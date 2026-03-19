@@ -85,15 +85,23 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
 }
 
 pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or(tauri::Error::InvalidWindowHandle)?;
+    // macOS：单色黑色轮廓，template image 让系统自动适配深色/浅色模式
+    // Windows/Linux：彩色图标，适合深色任务栏
+    #[cfg(target_os = "macos")]
+    let icon = tauri::include_image!("icons/tray-icon.png");
+    #[cfg(not(target_os = "macos"))]
+    let icon = tauri::include_image!("icons/tray-icon-win.png");
+
     let menu = build_menu(app)?;
 
-    TrayIconBuilder::with_id("main")
+    let builder = TrayIconBuilder::with_id("main")
         .icon(icon)
-        .menu(&menu)
+        .menu(&menu);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.icon_as_template(true);
+
+    builder
         .tooltip("NetFerry: disconnected")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show_window" => {

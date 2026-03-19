@@ -4,10 +4,10 @@ import { cn } from "@/lib/utils";
 type BadgeVariant = "gray" | "yellow" | "green" | "red";
 
 const styles: Record<BadgeVariant, string> = {
-  gray: "bg-slate-100 text-slate-800",
-  yellow: "bg-amber-100 text-amber-800",
-  green: "bg-emerald-100 text-emerald-800",
-  red: "bg-rose-100 text-rose-800",
+  gray: "bg-white/[0.08] text-white/50 ring-1 ring-white/[0.08]",
+  yellow: "bg-[#ffd60a]/[0.12] text-[#ffd60a] ring-1 ring-[#ffd60a]/25",
+  green: "bg-[#30d158]/[0.12] text-[#30d158] ring-1 ring-[#30d158]/25",
+  red: "bg-[#ff453a]/[0.12] text-[#ff453a] ring-1 ring-[#ff453a]/25",
 };
 
 export function Badge({
@@ -18,7 +18,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium",
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
         styles[variant],
         className,
       )}

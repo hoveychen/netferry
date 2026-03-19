@@ -87,7 +87,8 @@ pub fn run() {
             commands::disconnect_profile,
             commands::get_connection_status,
             commands::get_global_settings,
-            commands::save_global_settings
+            commands::save_global_settings,
+            commands::lookup_geoip
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

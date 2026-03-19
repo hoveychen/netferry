@@ -104,15 +104,19 @@ export async function getRegionInfo(remote: string): Promise<RegionInfo> {
   const cached = getCached(host);
   if (cached) return cached;
 
-  // Remote lookup via ipwho.is (free, HTTPS, supports hostnames)
+  // Remote lookup via ipwho.is through Rust backend (avoids WebView network restrictions)
   try {
-    const res = await fetch(`https://ipwho.is/${encodeURIComponent(host)}`);
-    const data = await res.json();
+    const { invoke } = await import("@tauri-apps/api/core");
+    const body = await invoke<string>("lookup_geoip", { host });
+    const data = JSON.parse(body);
     const info: RegionInfo =
       data.success && data.country_code
         ? { type: "country", countryCode: data.country_code }
         : { type: "unknown" };
-    setCache(host, info);
+    // Only cache successful lookups; don't cache "unknown" to allow retries
+    if (info.type !== "unknown") {
+      setCache(host, info);
+    }
     return info;
   } catch {
     return { type: "unknown" };
