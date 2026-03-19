@@ -664,7 +664,7 @@ pub fn connect(
                 format!("ssh -F {config} -o UserKnownHostsFile={known}")
             }
         })
-        .unwrap_or_else(|| "ssh".to_string());
+        .unwrap_or_else(|_| "ssh".to_string());
     #[cfg(not(windows))]
     let ssh_cmd_base = "ssh".to_string();
 
