@@ -72,6 +72,9 @@ pub fn run() {
                         _ => "NetFerry: disconnected".to_string(),
                     };
                     tray::update_tray_tooltip(&app_handle, &tooltip);
+                    if matches!(status.state.as_str(), "disconnected" | "error") {
+                        tray::update_tray_title(&app_handle, None);
+                    }
                 }
             });
 

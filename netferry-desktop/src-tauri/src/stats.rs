@@ -1,4 +1,5 @@
 use crate::models::TunnelStats;
+use crate::tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,6 +60,12 @@ pub fn start_stats_monitoring(app: AppHandle, sshuttle_pid: u32) -> Arc<AtomicBo
                     total_tx_bytes: total_tx,
                 };
                 let _ = app.emit(STATS_EVENT, stats);
+                let title = format!(
+                    "↓{} ↑{}",
+                    fmt_speed(rx_per_sec),
+                    fmt_speed(tx_per_sec)
+                );
+                tray::update_tray_title(&app, Some(&title));
             }
 
             std::thread::sleep(POLL_INTERVAL);
@@ -71,6 +78,16 @@ pub fn start_stats_monitoring(app: AppHandle, sshuttle_pid: u32) -> Arc<AtomicBo
 /// Signal the stats polling thread to stop.
 pub fn stop_stats_monitoring(flag: &Arc<AtomicBool>) {
     flag.store(true, Ordering::Relaxed);
+}
+
+fn fmt_speed(bytes_per_sec: u64) -> String {
+    if bytes_per_sec < 1024 {
+        format!("{}B", bytes_per_sec)
+    } else if bytes_per_sec < 1024 * 1024 {
+        format!("{:.1}K", bytes_per_sec as f64 / 1024.0)
+    } else {
+        format!("{:.1}M", bytes_per_sec as f64 / (1024.0 * 1024.0))
+    }
 }
 
 /// Find the SSH child process spawned by sshuttle (identified by parent PID and name).

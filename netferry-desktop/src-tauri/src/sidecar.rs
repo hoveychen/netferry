@@ -644,7 +644,31 @@ pub fn connect(
         Err(e) => return Err(e),
     }
 
-    let args = build_args(&profile, "ssh");
+    // ── Windows: fix .ssh/config path after UAC elevation ────────────────────
+    // After re-launching as Administrator via UAC, USERPROFILE may still point
+    // to the original user's directory, but OpenSSH for Windows may fall back
+    // to the Administrator profile in some configurations.  Explicitly pass -F
+    // so SSH always reads the correct config regardless of elevation state.
+    #[cfg(windows)]
+    let ssh_cmd_base = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(|h| {
+            // OpenSSH for Windows accepts forward slashes.
+            let h = h.replace('\\', "/");
+            let config = format!("{h}/.ssh/config");
+            let known = format!("{h}/.ssh/known_hosts");
+            // sshuttle splits --ssh-cmd with shlex; quote paths containing spaces.
+            if h.contains(' ') {
+                format!("ssh -F \"{config}\" -o \"UserKnownHostsFile={known}\"")
+            } else {
+                format!("ssh -F {config} -o UserKnownHostsFile={known}")
+            }
+        })
+        .unwrap_or_else(|| "ssh".to_string());
+    #[cfg(not(windows))]
+    let ssh_cmd_base = "ssh".to_string();
+
+    let args = build_args(&profile, &ssh_cmd_base);
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 

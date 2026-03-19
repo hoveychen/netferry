@@ -137,6 +137,10 @@ jobs:
              "$HELPER_DIR/com.hoveychen.netferry.helper"
           cp "src-tauri/com.hoveychen.netferry.helper.plist" \
              "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
+          # Tauri bundles all [[bin]] entries into Contents/MacOS/; remove the
+          # helper from there since its only home is Contents/Library/LaunchDaemons/.
+          # Leaving it unsigned in MacOS/ would cause codesign to fail on the bundle.
+          rm -f "$APP_PATH/Contents/MacOS/netferry-helper"
 
       - name: Sign bundle (macOS)
         if: startsWith(matrix.os, 'macos')

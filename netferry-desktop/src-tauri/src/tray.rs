@@ -1,7 +1,7 @@
 use crate::models::ConnectionStatus;
 use crate::profiles;
 use crate::sidecar::{self, AppState};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -31,19 +31,11 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
             .find(|p| p.id == connected_id)
             .map(|p| p.name.as_str())
             .unwrap_or("Unknown");
-        let label = if current_status.state == "connected" {
-            format!("Connected: {connected_name}")
-        } else {
-            format!("Connecting: {connected_name}")
-        };
-        let status_item = MenuItemBuilder::with_id("status_label", &label)
-            .enabled(false)
+        let toggle = CheckMenuItemBuilder::with_id("toggle", connected_name)
+            .checked(true)
             .build(app)?;
-        let disconnect_item =
-            MenuItemBuilder::with_id("disconnect", "Disconnect").build(app)?;
         MenuBuilder::new(app)
-            .item(&status_item)
-            .item(&disconnect_item)
+            .item(&toggle)
             .separator()
             .item(&show_item)
             .separator()
@@ -65,12 +57,22 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
 
         let mut builder = MenuBuilder::new(app);
         if profile_items.is_empty() {
-            let no_profiles =
-                MenuItemBuilder::with_id("no_profiles", "No profiles configured")
-                    .enabled(false)
-                    .build(app)?;
-            builder = builder.item(&no_profiles);
+            let toggle = CheckMenuItemBuilder::with_id("toggle", "Not connected")
+                .checked(false)
+                .enabled(false)
+                .build(app)?;
+            builder = builder.item(&toggle);
+        } else if profile_items.len() == 1 {
+            let toggle = CheckMenuItemBuilder::with_id("toggle", &all_profiles[0].name)
+                .checked(false)
+                .build(app)?;
+            builder = builder.item(&toggle);
         } else {
+            let toggle = CheckMenuItemBuilder::with_id("toggle", "Disconnected")
+                .checked(false)
+                .enabled(false)
+                .build(app)?;
+            builder = builder.item(&toggle).separator();
             for item in &profile_items {
                 builder = builder.item(item);
             }
@@ -110,9 +112,20 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
                     let _ = window.set_focus();
                 }
             }
-            "disconnect" => {
+            "toggle" => {
                 let state = app.state::<AppState>();
-                let _ = sidecar::disconnect(app.clone(), state);
+                let is_active = state
+                    .status
+                    .lock()
+                    .map(|g| matches!(g.state.as_str(), "connected" | "connecting"))
+                    .unwrap_or(false);
+                if is_active {
+                    let _ = sidecar::disconnect(app.clone(), state);
+                } else if let Ok(profiles) = profiles::load_profiles(app) {
+                    if profiles.len() == 1 {
+                        let _ = sidecar::connect(app.clone(), state, profiles.into_iter().next().unwrap());
+                    }
+                }
             }
             "quit" => {
                 app.exit(0);
@@ -171,5 +184,11 @@ pub fn rebuild_tray_menu(app: &AppHandle) {
 pub fn update_tray_tooltip(app: &AppHandle, text: &str) {
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(text));
+    }
+}
+
+pub fn update_tray_title(app: &AppHandle, title: Option<&str>) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(title);
     }
 }

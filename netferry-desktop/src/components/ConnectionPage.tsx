@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ConnectionEvent, ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
+import type { ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -8,12 +8,169 @@ interface Props {
   activeProfile: Profile | null;
   logs: string[];
   tunnelStats: TunnelStats | null;
-  connectionEvents: ConnectionEvent[];
   tunnelErrors: TunnelError[];
   onDisconnect: () => Promise<void>;
 }
 
-type Tab = "logs" | "connections" | "errors";
+type Tab = "speed" | "logs" | "errors";
+
+interface SpeedPoint {
+  rx: number;
+  tx: number;
+  t: number;
+}
+
+const MAX_HISTORY = 60;
+
+function SpeedChart({ history }: { history: SpeedPoint[] }) {
+  const W = 600;
+  const H = 180;
+  const PAD = { top: 16, right: 16, bottom: 28, left: 56 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+
+  const allVals = history.flatMap((p) => [p.rx, p.tx]);
+  const maxVal = Math.max(...allVals, 1024);
+  const yMax = Math.ceil(maxVal / 1024) * 1024;
+
+  function yScale(v: number) {
+    return PAD.top + innerH - (v / yMax) * innerH;
+  }
+
+  function xScale(i: number) {
+    const n = Math.max(history.length - 1, 1);
+    return PAD.left + (i / n) * innerW;
+  }
+
+  function toPath(vals: number[]) {
+    if (vals.length < 2) return "";
+    return vals
+      .map((v, i) => `${i === 0 ? "M" : "L"}${xScale(i).toFixed(1)},${yScale(v).toFixed(1)}`)
+      .join(" ");
+  }
+
+  function toFill(vals: number[]) {
+    if (vals.length < 2) return "";
+    const line = toPath(vals);
+    const last = vals.length - 1;
+    return `${line} L${xScale(last).toFixed(1)},${(PAD.top + innerH).toFixed(1)} L${PAD.left.toFixed(1)},${(PAD.top + innerH).toFixed(1)} Z`;
+  }
+
+  const rxVals = history.map((p) => p.rx);
+  const txVals = history.map((p) => p.tx);
+
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
+    v: yMax * f,
+    y: yScale(yMax * f),
+  }));
+
+  const xTicks = history
+    .map((p, i) => ({ i, t: p.t }))
+    .filter((_, i) => i % 10 === 0);
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full"
+      style={{ height: H }}
+      preserveAspectRatio="none"
+    >
+      <defs>
+        <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#30d158" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="#30d158" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.20" />
+          <stop offset="100%" stopColor="#0a84ff" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="chart-clip">
+          <rect x={PAD.left} y={PAD.top} width={innerW} height={innerH} />
+        </clipPath>
+      </defs>
+
+      {/* Grid lines */}
+      {yTicks.map(({ v, y }) => (
+        <line
+          key={v}
+          x1={PAD.left}
+          y1={y}
+          x2={PAD.left + innerW}
+          y2={y}
+          stroke="rgba(255,255,255,0.06)"
+          strokeWidth="1"
+        />
+      ))}
+
+      {/* Y labels */}
+      {yTicks.map(({ v, y }) => (
+        <text
+          key={v}
+          x={PAD.left - 6}
+          y={y + 4}
+          textAnchor="end"
+          fontSize="10"
+          fill="rgba(255,255,255,0.28)"
+          fontFamily="monospace"
+        >
+          {formatBytes(v)}
+        </text>
+      ))}
+
+      {/* X labels */}
+      {xTicks.map(({ i, t }) => (
+        <text
+          key={i}
+          x={xScale(i)}
+          y={PAD.top + innerH + 14}
+          textAnchor="middle"
+          fontSize="10"
+          fill="rgba(255,255,255,0.22)"
+          fontFamily="monospace"
+        >
+          {new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+        </text>
+      ))}
+
+      {/* Fill areas */}
+      <g clipPath="url(#chart-clip)">
+        {rxVals.length >= 2 && (
+          <path d={toFill(rxVals)} fill="url(#rxGrad)" />
+        )}
+        {txVals.length >= 2 && (
+          <path d={toFill(txVals)} fill="url(#txGrad)" />
+        )}
+
+        {/* Lines */}
+        {rxVals.length >= 2 && (
+          <path d={toPath(rxVals)} fill="none" stroke="#30d158" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        )}
+        {txVals.length >= 2 && (
+          <path d={toPath(txVals)} fill="none" stroke="#0a84ff" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        )}
+
+        {/* Latest dot */}
+        {rxVals.length >= 1 && (
+          <circle cx={xScale(rxVals.length - 1)} cy={yScale(rxVals[rxVals.length - 1])} r="3" fill="#30d158" />
+        )}
+        {txVals.length >= 1 && (
+          <circle cx={xScale(txVals.length - 1)} cy={yScale(txVals[txVals.length - 1])} r="3" fill="#0a84ff" />
+        )}
+      </g>
+
+      {/* Border */}
+      <rect
+        x={PAD.left}
+        y={PAD.top}
+        width={innerW}
+        height={innerH}
+        fill="none"
+        stroke="rgba(255,255,255,0.06)"
+        strokeWidth="1"
+      />
+    </svg>
+  );
+}
 
 function statusVariant(state: ConnectionStatus["state"]) {
   if (state === "connected") return "green";
@@ -48,13 +205,22 @@ export function ConnectionPage({
   activeProfile,
   logs,
   tunnelStats,
-  connectionEvents,
   tunnelErrors,
   onDisconnect,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>("logs");
+  const [activeTab, setActiveTab] = useState<Tab>("speed");
   const [disconnecting, setDisconnecting] = useState(false);
+  const [speedHistory, setSpeedHistory] = useState<SpeedPoint[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (tunnelStats) {
+      setSpeedHistory((prev) => [
+        ...prev.slice(-(MAX_HISTORY - 1)),
+        { rx: tunnelStats.rxBytesPerSec, tx: tunnelStats.txBytesPerSec, t: Date.now() },
+      ]);
+    }
+  }, [tunnelStats]);
 
   useEffect(() => {
     if (activeTab === "logs") {
@@ -120,7 +286,7 @@ export function ConnectionPage({
 
       {/* Stats */}
       {tunnelStats && (
-        <div className="grid grid-cols-4 gap-2.5 border-b border-white/[0.06] bg-[#1c1c1e] px-6 py-4">
+        <div className="grid grid-cols-3 gap-2.5 border-b border-white/[0.06] bg-[#1c1c1e] px-6 py-4">
           {[
             {
               label: "Download",
@@ -135,13 +301,6 @@ export function ConnectionPage({
               sub: "Total: " + formatBytes(tunnelStats.totalTxBytes),
               color: "text-[#0a84ff]",
               icon: "↑",
-            },
-            {
-              label: "Connections",
-              value: String(connectionEvents.length),
-              sub: "tunneled",
-              color: "text-white/80",
-              icon: null,
             },
             {
               label: "Errors",
@@ -176,14 +335,12 @@ export function ConnectionPage({
 
       {/* Tab bar (segmented control) */}
       <div className="flex items-center gap-1 border-b border-white/[0.06] bg-[#1c1c1e] px-4 py-2.5">
-        {(["logs", "connections", "errors"] as Tab[]).map((tab) => {
+        {(["speed", "logs", "errors"] as Tab[]).map((tab) => {
           const isActive = activeTab === tab;
           const badge =
-            tab === "connections" && connectionEvents.length > 0
-              ? connectionEvents.length
-              : tab === "errors" && tunnelErrors.length > 0
-                ? tunnelErrors.length
-                : null;
+            tab === "errors" && tunnelErrors.length > 0
+              ? tunnelErrors.length
+              : null;
           return (
             <button
               key={tab}
@@ -213,6 +370,35 @@ export function ConnectionPage({
 
       {/* Content area */}
       <div className="min-h-0 flex-1 overflow-hidden bg-[#141416]">
+        {activeTab === "speed" && (
+          <div className="h-full overflow-y-auto p-4">
+            {speedHistory.length === 0 ? (
+              <p className="text-white/25 text-sm">Waiting for speed data…</p>
+            ) : (
+              <>
+                <SpeedChart history={speedHistory} />
+                <div className="mt-4 flex items-center gap-6 px-1">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#30d158]" />
+                    <span className="text-xs text-white/40">Download</span>
+                    <span className="font-mono text-sm font-semibold text-[#30d158]">
+                      {formatBytes(speedHistory[speedHistory.length - 1].rx)}/s
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#0a84ff]" />
+                    <span className="text-xs text-white/40">Upload</span>
+                    <span className="font-mono text-sm font-semibold text-[#0a84ff]">
+                      {formatBytes(speedHistory[speedHistory.length - 1].tx)}/s
+                    </span>
+                  </div>
+                  <span className="ml-auto text-xs text-white/20">Last {speedHistory.length}s</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {activeTab === "logs" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs text-white/50">
             {logs.length === 0 ? (
@@ -225,23 +411,6 @@ export function ConnectionPage({
               ))
             )}
             <div ref={logEndRef} />
-          </div>
-        )}
-
-        {activeTab === "connections" && (
-          <div className="h-full overflow-y-auto p-4 font-mono text-xs">
-            {connectionEvents.length === 0 ? (
-              <p className="text-white/25">No connections tunneled yet.</p>
-            ) : (
-              [...connectionEvents].reverse().map((evt, idx) => (
-                <div key={idx} className="mb-1 border-b border-white/[0.04] pb-1">
-                  <span className="text-white/25">{formatTime(evt.timestampMs)}</span>{" "}
-                  <span className="text-[#30d158]/80">{evt.srcAddr}</span>
-                  <span className="text-white/20"> → </span>
-                  <span className="text-[#0a84ff]/80">{evt.dstAddr}</span>
-                </div>
-              ))
-            )}
           </div>
         )}
 

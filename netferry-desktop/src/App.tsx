@@ -9,7 +9,7 @@ import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { ConnectionEvent, ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
+import type { ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
 
 // Page state union
 type Page =
@@ -42,7 +42,6 @@ function App() {
     status,
     logs,
     tunnelStats,
-    connectionEvents,
     tunnelErrors,
     syncStatus,
     connect,
@@ -50,7 +49,6 @@ function App() {
     pushLog,
     setStatus,
     setTunnelStats,
-    pushConnectionEvent,
     pushTunnelError,
   } = useConnectionStore();
 
@@ -90,9 +88,6 @@ function App() {
     const offStats = listen<TunnelStats>("tunnel-stats", (event) => {
       setTunnelStats(event.payload);
     });
-    const offConnection = listen<ConnectionEvent>("tunnel-connection", (event) => {
-      pushConnectionEvent(event.payload);
-    });
     const offError = listen<TunnelError>("tunnel-error", (event) => {
       pushTunnelError(event.payload);
     });
@@ -100,10 +95,9 @@ function App() {
       offStatus.then((fn) => fn());
       offLog.then((fn) => fn());
       offStats.then((fn) => fn());
-      offConnection.then((fn) => fn());
       offError.then((fn) => fn());
     };
-  }, [setStatus, pushLog, setTunnelStats, pushConnectionEvent, pushTunnelError]);
+  }, [setStatus, pushLog, setTunnelStats, pushTunnelError]);
 
   // Disconnect goes back to list
   const handleDisconnect = async () => {
@@ -128,7 +122,6 @@ function App() {
         activeProfile={activeProfile}
         logs={logs}
         tunnelStats={tunnelStats}
-        connectionEvents={connectionEvents}
         tunnelErrors={tunnelErrors}
         onDisconnect={handleDisconnect}
       />
