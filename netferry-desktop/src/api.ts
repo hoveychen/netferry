@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, Profile, SshHostEntry } from "@/types";
+import type { ConnectionStatus, GlobalSettings, Profile, SshHostEntry } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -31,4 +31,12 @@ export function disconnectProfile() {
 
 export function getConnectionStatus() {
   return invoke<ConnectionStatus>("get_connection_status");
+}
+
+export function getGlobalSettings() {
+  return invoke<GlobalSettings>("get_global_settings");
+}
+
+export function saveGlobalSettings(settings: GlobalSettings) {
+  return invoke<void>("save_global_settings", { settings });
 }

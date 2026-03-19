@@ -9,6 +9,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(target_os = "macos")]
+use crate::helper_ipc;
+#[cfg(target_os = "macos")]
+use std::os::unix::net::UnixStream;
+
 pub const STATUS_EVENT: &str = "connection-status";
 pub const LOG_EVENT: &str = "connection-log";
 pub const CONNECTION_EVENT: &str = "tunnel-connection";
@@ -150,6 +155,11 @@ pub struct AppState {
     pub status: Mutex<ConnectionStatus>,
     pub stats_stop: Mutex<Option<Arc<AtomicBool>>>,
 
+    /// macOS 13+: live socket to the privileged helper daemon.
+    /// Dropping it signals the helper to kill the tunnel process.
+    #[cfg(target_os = "macos")]
+    pub helper_stream: Mutex<Option<UnixStream>>,
+
     /// Unix: per-connection sudo askpass wrapper; cleaned up on disconnect.
     #[cfg(unix)]
     sudo_helper: Mutex<Option<SudoHelper>>,
@@ -165,8 +175,33 @@ impl AppState {
                 message: None,
             }),
             stats_stop: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            helper_stream: Mutex::new(None),
             #[cfg(unix)]
             sudo_helper: Mutex::new(None),
+        }
+    }
+}
+
+// ── PID file helpers ──────────────────────────────────────────────────────────
+
+#[cfg(unix)]
+fn pid_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("netferry-tunnel.pid")
+}
+
+/// Called at app startup: if a stale PID file exists from a previous crash/kill,
+/// terminate the leftover sshuttle process group and remove the file.
+pub fn kill_stale_tunnel() {
+    #[cfg(unix)]
+    {
+        let path = pid_file_path();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(pgid) = content.trim().parse::<i32>() {
+                // Best-effort; the process may already be gone.
+                unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            }
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -295,9 +330,9 @@ fn get_lan_subnets() -> Vec<String> {
     subnets.into_iter().collect()
 }
 
-fn build_args(profile: &Profile) -> Vec<String> {
+fn build_args(profile: &Profile, ssh_cmd_base: &str) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
-    let mut ssh_cmd_parts: Vec<String> = vec!["ssh".to_string()];
+    let mut ssh_cmd_parts: Vec<String> = vec![ssh_cmd_base.to_string()];
 
     // Enable verbose output so sshuttle logs individual connections to stderr.
     args.push("-v".to_string());
@@ -401,6 +436,120 @@ fn is_error_line(line: &str) -> bool {
     KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
+// ── macOS: helper-IPC event thread ────────────────────────────────────────────
+
+/// Spawn a thread that reads JSON events from the helper socket and translates
+/// them into the same Tauri events that the direct-child path emits.
+/// The thread exits when the stream is closed (by either side).
+#[cfg(target_os = "macos")]
+fn spawn_helper_event_thread(
+    app: AppHandle,
+    stream: UnixStream,
+    profile_id: String,
+) {
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stream);
+        let mut tunnel_connected = false;
+
+        for line in reader.lines().map_while(Result::ok) {
+            let ev: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            match ev["type"].as_str() {
+                Some("started") => {
+                    // Start bandwidth stats once we know the tunnel PID.
+                    if let Some(pid) = ev["pid"].as_u64() {
+                        let stop_flag =
+                            stats::start_stats_monitoring(app.clone(), pid as u32);
+                        if let Ok(mut g) = app.state::<AppState>().stats_stop.lock() {
+                            *g = Some(stop_flag);
+                        }
+                    }
+                }
+
+                Some("log") => {
+                    let stream_name = ev["stream"].as_str().unwrap_or("stderr");
+                    let log_line = ev["line"].as_str().unwrap_or("").to_string();
+
+                    if !tunnel_connected && log_line.contains("Connected to server.") {
+                        tunnel_connected = true;
+                        let status = ConnectionStatus {
+                            state: "connected".to_string(),
+                            profile_id: Some(profile_id.clone()),
+                            message: Some("Tunnel established".to_string()),
+                        };
+                        let _ = app.emit(STATUS_EVENT, status.clone());
+                        if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                            *g = status;
+                        }
+                        let _ = app.emit(LOG_EVENT, format!("{stream_name}: {log_line}"));
+                        continue;
+                    }
+
+                    if log_line.contains("Accept TCP:") {
+                        if let Some(event) = parse_connection_event(&log_line) {
+                            let _ = app.emit(CONNECTION_EVENT, event);
+                        }
+                        continue;
+                    }
+
+                    if is_error_line(&log_line) {
+                        let error = TunnelError {
+                            message: log_line.clone(),
+                            timestamp_ms: now_ms(),
+                        };
+                        let _ = app.emit(ERROR_EVENT, error);
+                        let _ = app.emit(LOG_EVENT, format!("{stream_name}: {log_line}"));
+                        continue;
+                    }
+
+                    let _ = app.emit(LOG_EVENT, format!("{stream_name}: {log_line}"));
+                }
+
+                Some("error") => {
+                    let msg = ev["message"].as_str().unwrap_or("unknown error").to_string();
+                    let _ = app.emit(LOG_EVENT, format!("helper: {msg}"));
+                }
+
+                // "exit" or stream EOF: tunnel process has ended.
+                _ => {}
+            }
+        }
+
+        // ── Cleanup after stream closes ──────────────────────────────────────
+
+        if let Ok(mut h) = app.state::<AppState>().helper_stream.lock() {
+            *h = None;
+        }
+
+        if let Ok(mut flag_guard) = app.state::<AppState>().stats_stop.lock() {
+            if let Some(flag) = flag_guard.take() {
+                stats::stop_stats_monitoring(&flag);
+            }
+        }
+
+        let current = app
+            .state::<AppState>()
+            .status
+            .lock()
+            .map(|g| g.state.clone())
+            .unwrap_or_default();
+        if current == "connecting" || current == "connected" {
+            let status = ConnectionStatus {
+                state: "error".to_string(),
+                profile_id: None,
+                message: Some("Tunnel process exited unexpectedly".to_string()),
+            };
+            let _ = app.emit(STATUS_EVENT, status.clone());
+            if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                *g = status;
+            }
+        }
+    });
+}
+
 // ── connect() ─────────────────────────────────────────────────────────────────
 
 pub fn connect(
@@ -417,10 +566,85 @@ pub fn connect(
             return Err("A connection is already running".to_string());
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        let h = state
+            .helper_stream
+            .lock()
+            .map_err(|_| "helper_stream lock is poisoned".to_string())?;
+        if h.is_some() {
+            return Err("A connection is already running".to_string());
+        }
+    }
 
     let binary = resolve_sshuttle_exe();
-    let args = build_args(&profile);
 
+    // ── macOS 13+: route through the privileged helper daemon ─────────────────
+    // On success the helper manages the tunnel process (running as root) and we
+    // communicate via a Unix socket — no per-connection sudo prompt needed.
+    // Falls back to the sudo+askpass path on macOS ≤ 12.
+    #[cfg(target_os = "macos")]
+    match helper_ipc::ensure_helper_running() {
+        Ok(true) => {
+            // SSH running as root ignores HOME and uses /var/root/.ssh (pw_dir
+            // from passwd, not the HOME env var). Fix this by creating a thin
+            // wrapper script that always passes -F pointing at the real user's
+            // config. We also prepend the wrapper dir to PATH so that nested
+            // SSH calls inside ProxyCommand directives also find the wrapper
+            // (and thus also use the correct config).
+            let ssh_cmd_base = if let Ok(home) = std::env::var("HOME") {
+                let wrapper_dir = std::path::Path::new("/tmp/com.hoveychen.netferry");
+                let _ = std::fs::create_dir_all(wrapper_dir);
+                let wrapper = wrapper_dir.join("ssh");
+                let script = format!(
+                    "#!/bin/sh\nexec /usr/bin/ssh \
+                     -F {home}/.ssh/config \
+                     -o UserKnownHostsFile={home}/.ssh/known_hosts \
+                     \"$@\"\n"
+                );
+                if std::fs::write(&wrapper, script).is_ok() {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &wrapper,
+                        std::fs::Permissions::from_mode(0o755),
+                    );
+                    wrapper.to_string_lossy().into_owned()
+                } else {
+                    "ssh".to_string()
+                }
+            } else {
+                "ssh".to_string()
+            };
+            let args = build_args(&profile, &ssh_cmd_base);
+            let stream = helper_ipc::start_tunnel(&binary, &args)
+                .map_err(|e| format!("Helper IPC: {e}"))?;
+            // Give the event thread a cloned read end; keep the original for
+            // disconnect (dropping it signals the helper to kill the tunnel).
+            let read_stream = stream
+                .try_clone()
+                .map_err(|e| format!("Socket clone: {e}"))?;
+            spawn_helper_event_thread(app.clone(), read_stream, profile.id.clone());
+            {
+                let mut h = state
+                    .helper_stream
+                    .lock()
+                    .map_err(|_| "helper_stream lock is poisoned".to_string())?;
+                *h = Some(stream);
+            }
+            let status = ConnectionStatus {
+                state: "connecting".to_string(),
+                profile_id: Some(profile.id),
+                message: Some("Starting tunnel\u{2026}".to_string()),
+            };
+            return set_status(&app, &state, status.clone()).map(|_| status);
+        }
+        Ok(false) => {
+            // macOS < 13 or helper not available → fall through to sudo+askpass.
+        }
+        Err(e) => return Err(e),
+    }
+
+    let args = build_args(&profile, "ssh");
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -444,9 +668,18 @@ pub fn connect(
         cmd.process_group(0);
     }
 
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start tunnel process: {e}"))?;
+
+    // Record the process group ID so we can terminate any orphaned sshuttle
+    // processes if the app is killed (SIGKILL) before a clean disconnect.
+    #[cfg(unix)]
+    {
+        let pgid = child.id();
+        let _ = std::fs::write(pid_file_path(), pgid.to_string());
+    }
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -565,6 +798,20 @@ pub fn connect(
 // ── disconnect() ──────────────────────────────────────────────────────────────
 
 pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+    // ── macOS: close the helper socket ────────────────────────────────────────
+    // Dropping the socket signals the helper to kill the tunnel process group.
+    // Pre-set our status to "disconnected" so the event thread (which also
+    // watches for stream EOF) does not emit a spurious "error" event.
+    #[cfg(target_os = "macos")]
+    if let Ok(mut h) = state.helper_stream.lock() {
+        if h.is_some() {
+            if let Ok(mut g) = state.status.lock() {
+                g.state = "disconnected".to_string();
+            }
+            *h = None;
+        }
+    }
+
     let mut lock = state
         .child
         .lock()
@@ -576,6 +823,8 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
             // are also terminated; otherwise they would remain as orphans.
             let pid = child.id() as i32;
             let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+            // Clean up the PID file now that we've terminated the process group.
+            let _ = std::fs::remove_file(pid_file_path());
         }
         #[cfg(not(unix))]
         {

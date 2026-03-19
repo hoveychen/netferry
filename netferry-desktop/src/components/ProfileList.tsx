@@ -1,65 +1,125 @@
-import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Pencil, Plus, Settings } from "lucide-react";
 import type { Profile } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
 interface Props {
   profiles: Profile[];
-  selectedProfileId: string | null;
-  onCreate: () => void | Promise<void>;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onNew: () => void;
+  onConnect: (profile: Profile) => void;
+  onEdit: (id: string) => void;
+  onOpenSettings: () => void;
 }
 
-export function ProfileList({
-  profiles,
-  selectedProfileId,
-  onCreate,
-  onSelect,
-  onDelete,
-}: Props) {
-  return (
-    <Card className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-200 p-3">
-        <h2 className="text-sm font-semibold text-slate-700">Profiles</h2>
-        <Button size="sm" onClick={onCreate}>
-          <Plus className="mr-1 h-4 w-4" />
-          New
-        </Button>
+function ProfileAvatar({ profile, region }: { profile: Profile; region?: RegionInfo }) {
+  if (region?.type === "country") {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-xl">
+        {countryCodeToFlag(region.countryCode)}
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+    );
+  }
+  if (region?.type === "lan" || region?.type === "loopback") {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-lg">
+        🏠
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-sm font-bold text-white">
+      {profile.name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings }: Props) {
+  const [regionMap, setRegionMap] = useState<Record<string, RegionInfo>>({});
+
+  useEffect(() => {
+    for (const profile of profiles) {
+      getRegionInfo(profile.remote).then((info) => {
+        setRegionMap((prev) => ({ ...prev, [profile.id]: info }));
+      });
+    }
+  }, [profiles]);
+
+  return (
+    <div className="flex h-screen flex-col bg-slate-100">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+        <h1 className="text-xl font-bold text-slate-800">NetFerry</h1>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onOpenSettings}>
+            <Settings className="h-4 w-4" />
+          </Button>
+          <Button size="sm" onClick={onNew}>
+            <Plus className="mr-1 h-4 w-4" />
+            New
+          </Button>
+        </div>
+      </div>
+
+      {/* Profile grid */}
+      <div className="flex-1 overflow-y-auto p-6">
         {profiles.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-slate-500">No profiles yet. Click "New".</p>
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <p className="mb-2 text-lg font-medium text-slate-600">No profiles yet</p>
+            <p className="mb-6 text-sm text-slate-400">
+              Create a profile to start tunneling traffic via SSH.
+            </p>
+            <Button onClick={onNew}>
+              <Plus className="mr-1 h-4 w-4" />
+              Create Profile
+            </Button>
+          </div>
         ) : (
-          profiles.map((profile) => (
-            <button
-              key={profile.id}
-              type="button"
-              className={`mb-2 flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${
-                selectedProfileId === profile.id
-                  ? "border-slate-700 bg-slate-100"
-                  : "border-slate-200 hover:bg-slate-50"
-              }`}
-              onClick={() => onSelect(profile.id)}
-            >
-              <span className="truncate">{profile.name}</span>
-              <span
-                className="ml-2 h-2 w-2 rounded-full"
-                style={{ backgroundColor: profile.color }}
-              />
-              <span
-                className="ml-2 text-slate-400 hover:text-rose-600"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(profile.id);
-                }}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {profiles.map((profile) => (
+              <div
+                key={profile.id}
+                className="group relative flex cursor-pointer flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-slate-400 hover:shadow-md"
+                onClick={() => onConnect(profile)}
               >
-                <Trash2 className="h-4 w-4" />
-              </span>
-            </button>
-          ))
+                {/* Edit button */}
+                <button
+                  type="button"
+                  className="absolute right-3 top-3 rounded-md p-1.5 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(profile.id);
+                  }}
+                  title="Edit profile"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+
+                <div className="mb-3 flex items-center gap-3">
+                  <ProfileAvatar profile={profile} region={regionMap[profile.id]} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-slate-800">{profile.name}</p>
+                    <p className="truncate text-xs text-slate-400">{profile.remote || "No remote set"}</p>
+                  </div>
+                </div>
+
+                <div className="mt-auto pt-3 text-xs text-slate-400">
+                  <span className="rounded bg-slate-100 px-2 py-0.5 font-mono">
+                    DNS: {profile.dns}
+                  </span>
+                  {profile.autoExcludeLan && (
+                    <span className="ml-2 rounded bg-slate-100 px-2 py-0.5">LAN excluded</span>
+                  )}
+                </div>
+
+                <div className="mt-3 text-center text-xs font-medium text-slate-400 transition-colors group-hover:text-slate-600">
+                  Click to connect →
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }

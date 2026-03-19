@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hoveychen.netferry.helper</string>
+
+    <!-- Path to the helper binary relative to the app bundle root.
+         SMAppService copies the binary to the system location on registration. -->
+    <key>BundleProgram</key>
+    <string>Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper</string>
+
+    <!-- Start the daemon as soon as it is registered. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if it crashes. -->
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

@@ -2125,6 +2125,7 @@ dependencies = [
 name = "netferry-desktop"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "dirs",
  "libc",
  "serde",

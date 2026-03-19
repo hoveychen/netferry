@@ -1,5 +1,5 @@
-use crate::models::{ConnectionStatus, Profile, SshHostEntry};
-use crate::{profiles, sidecar, ssh_config, tray};
+use crate::models::{ConnectionStatus, GlobalSettings, Profile, SshHostEntry};
+use crate::{profiles, settings, sidecar, ssh_config, tray};
 use tauri::{AppHandle, State};
 
 #[tauri::command]
@@ -53,4 +53,14 @@ pub fn get_connection_status(
     state: State<'_, sidecar::AppState>,
 ) -> Result<ConnectionStatus, String> {
     sidecar::current_status(state)
+}
+
+#[tauri::command]
+pub fn get_global_settings(app: AppHandle) -> Result<GlobalSettings, String> {
+    settings::load_settings(&app)
+}
+
+#[tauri::command]
+pub fn save_global_settings(app: AppHandle, settings: GlobalSettings) -> Result<(), String> {
+    crate::settings::save_settings(&app, &settings)
 }

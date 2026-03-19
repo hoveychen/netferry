@@ -105,6 +105,10 @@ python -m pip install pyinstaller
 echo "==> Building sidecar"
 python scripts/build_sidecar.py --target "$RUST_TARGET"
 
+# ── Generate dev version ──────────────────────────────────────────────────────
+VERSION="$(date +%y).$((10#$(date +%m))).$((10#$(date +%d)))-$(date +%s)"
+echo "==> Version: v$VERSION"
+
 # ── Build Tauri .app bundle WITHOUT signing ───────────────────────────────────
 # Tauri auto-signs when APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY are present
 # in the environment. Unset them so Tauri produces an unsigned .app; we sign
@@ -113,13 +117,30 @@ echo "==> Building Tauri .app (unsigned)"
 env -u APPLE_CERTIFICATE \
     -u APPLE_CERTIFICATE_PASSWORD \
     -u APPLE_SIGNING_IDENTITY \
-    npm run tauri build -- --target "$RUST_TARGET" --bundles app
+    npm run tauri build -- --target "$RUST_TARGET" --bundles app --config "{\"version\":\"$VERSION\"}"
 
 APP_PATH="$DESKTOP_DIR/src-tauri/target/$RUST_TARGET/release/bundle/macos/NetFerry.app"
 if [[ ! -d "$APP_PATH" ]]; then
   echo "ERROR: .app bundle not found at $APP_PATH" >&2
   exit 1
 fi
+
+# ── Copy privileged helper + LaunchDaemon plist into the bundle ───────────────
+# SMAppService looks for the plist at Contents/Library/LaunchDaemons/ and
+# the helper binary at the path given by BundleProgram (relative to app root).
+HELPER_DIR="$APP_PATH/Contents/Library/LaunchDaemons"
+mkdir -p "$HELPER_DIR"
+
+HELPER_BIN="$DESKTOP_DIR/src-tauri/target/$RUST_TARGET/release/netferry-helper"
+if [[ ! -f "$HELPER_BIN" ]]; then
+  echo "ERROR: netferry-helper binary not found at $HELPER_BIN" >&2
+  echo "       Make sure 'cargo build --release --bin netferry-helper' ran." >&2
+  exit 1
+fi
+
+cp "$HELPER_BIN" "$HELPER_DIR/com.hoveychen.netferry.helper"
+cp "$DESKTOP_DIR/src-tauri/com.hoveychen.netferry.helper.plist" \
+   "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
 
 # ── Sign all Frameworks / dylibs first ───────────────────────────────────────
 echo "==> Signing frameworks and dylibs"
@@ -132,6 +153,14 @@ if [[ -d "$APP_PATH/Contents/Frameworks" ]]; then
 else
   echo "    (no Frameworks dir, skipping)"
 fi
+
+# ── Sign privileged helper ────────────────────────────────────────────────────
+# The helper runs as root (LaunchDaemon) — sign with its own entitlements.
+echo "==> Signing privileged helper"
+codesign --force --options runtime \
+  --entitlements "$DESKTOP_DIR/src-tauri/helper-entitlements.plist" \
+  --sign "$APPLE_SIGNING_IDENTITY" \
+  "$HELPER_DIR/com.hoveychen.netferry.helper"
 
 # ── Sign sidecar WITH disable-library-validation ──────────────────────────────
 # PyInstaller --onefile extracts libpython at runtime into a temp dir.
@@ -161,7 +190,6 @@ codesign --force --options runtime \
   "$APP_PATH"
 
 # ── Create DMG ────────────────────────────────────────────────────────────────
-VERSION=$(node -p "require('./package.json').version")
 DMG_DIR="$DESKTOP_DIR/src-tauri/target/$RUST_TARGET/release/bundle/dmg"
 mkdir -p "$DMG_DIR"
 
@@ -171,7 +199,7 @@ case "$RUST_TARGET" in
   *)                    ARCH_LABEL="$RUST_TARGET" ;;
 esac
 
-VERSION_US="${VERSION//./_}"
+VERSION_US="v${VERSION//./_}"
 DMG_PATH="$DMG_DIR/NetFerry_${ARCH_LABEL}_${VERSION_US}.dmg"
 
 echo "==> Creating DMG: $DMG_PATH"

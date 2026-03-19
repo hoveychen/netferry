@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { importSshHosts } from "@/api";
 import type { Profile, SshHostEntry } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { newProfile } from "@/stores/profileStore";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onApply: (next: Partial<Profile>) => Promise<void>;
+  /** Called with a fully built (unsaved) profile ready for the detail page. */
+  onImport: (profile: Profile) => void;
 }
 
 function buildRemote(entry: SshHostEntry): string {
@@ -16,19 +17,16 @@ function buildRemote(entry: SshHostEntry): string {
   return entry.port ? `${withUser}:${entry.port}` : withUser;
 }
 
-export function SshConfigImporter({ open, onClose, onApply }: Props) {
+export function SshConfigImporter({ open, onClose, onImport }: Props) {
   const [hosts, setHosts] = useState<SshHostEntry[]>([]);
   const [selectedHost, setSelectedHost] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string>("");
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
     setLoading(true);
+    setError("");
     importSshHosts()
       .then((items) => {
         setHosts(items);
@@ -38,19 +36,39 @@ export function SshConfigImporter({ open, onClose, onApply }: Props) {
       .finally(() => setLoading(false));
   }, [open]);
 
-  if (!open) {
-    return null;
-  }
+  if (!open) return null;
 
   const selected = hosts.find((h) => h.host === selectedHost);
 
+  const handleImport = () => {
+    if (!selected) return;
+    const sshParts: string[] = [];
+    if (selected.proxyJump) sshParts.push(`-J ${selected.proxyJump}`);
+    if (selected.proxyCommand) sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
+
+    const profile: Profile = {
+      ...newProfile(),
+      name: selected.host,
+      remote: buildRemote(selected),
+      identityFile: selected.identityFile ?? "",
+      extraSshOptions: sshParts.join(" ") || undefined,
+    };
+    onImport(profile);
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <Card className="w-full max-w-2xl p-4">
-        <h3 className="mb-3 text-lg font-semibold">Import from ~/.ssh/config</h3>
-        {loading ? <p className="text-sm text-slate-500">Loading...</p> : null}
-        {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-        {!loading && !error ? (
+      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
+        <h3 className="mb-1 text-lg font-semibold text-slate-800">Import from ~/.ssh/config</h3>
+        <p className="mb-4 text-sm text-slate-500">
+          Select a host to pre-fill a new profile. You can review and edit before saving.
+        </p>
+
+        {loading && <p className="text-sm text-slate-500">Loading…</p>}
+        {error && <p className="text-sm text-rose-600">{error}</p>}
+
+        {!loading && !error && (
           <>
             <select
               className="mb-3 h-9 w-full rounded-md border border-slate-300 px-2 text-sm"
@@ -63,66 +81,39 @@ export function SshConfigImporter({ open, onClose, onApply }: Props) {
                 </option>
               ))}
             </select>
-            {selected ? (
-              <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                <p>
-                  HostName: <span className="font-mono">{selected.hostName ?? "-"}</span>
-                </p>
-                <p>
-                  User: <span className="font-mono">{selected.user ?? "-"}</span>
-                </p>
-                <p>
-                  Port: <span className="font-mono">{selected.port ?? "-"}</span>
-                </p>
-                <p>
-                  IdentityFile:{" "}
-                  <span className="font-mono">{selected.identityFile ?? "-"}</span>
-                </p>
+
+            {selected && (
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                <div className="grid grid-cols-2 gap-1">
+                  <span className="text-slate-500">HostName</span>
+                  <span className="font-mono text-slate-800">{selected.hostName ?? "—"}</span>
+                  <span className="text-slate-500">User</span>
+                  <span className="font-mono text-slate-800">{selected.user ?? "—"}</span>
+                  <span className="text-slate-500">Port</span>
+                  <span className="font-mono text-slate-800">{selected.port ?? "—"}</span>
+                  <span className="text-slate-500">IdentityFile</span>
+                  <span className="font-mono text-slate-800 break-all">{selected.identityFile ?? "—"}</span>
+                  {selected.proxyJump && (
+                    <>
+                      <span className="text-slate-500">ProxyJump</span>
+                      <span className="font-mono text-slate-800">{selected.proxyJump}</span>
+                    </>
+                  )}
+                </div>
               </div>
-            ) : null}
+            )}
           </>
-        ) : null}
-        {applyError ? (
-          <p className="mb-2 text-sm text-rose-600">{applyError}</p>
-        ) : null}
+        )}
+
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose} disabled={applying}>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            onClick={async () => {
-              if (!selected) {
-                return;
-              }
-              setApplyError("");
-              setApplying(true);
-              try {
-                const sshParts: string[] = [];
-                if (selected.proxyJump) {
-                  sshParts.push(`-J ${selected.proxyJump}`);
-                }
-                if (selected.proxyCommand) {
-                  sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
-                }
-                await onApply({
-                  name: selected.host,
-                  remote: buildRemote(selected),
-                  identityFile: selected.identityFile ?? "",
-                  extraSshOptions: sshParts.join(" ") || undefined,
-                });
-                onClose();
-              } catch (e) {
-                setApplyError(String(e));
-              } finally {
-                setApplying(false);
-              }
-            }}
-            disabled={!selected || applying}
-          >
-            {applying ? "Applying..." : "Import and Apply"}
+          <Button onClick={handleImport} disabled={!selected || loading}>
+            Import
           </Button>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

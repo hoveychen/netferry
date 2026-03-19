@@ -2,22 +2,23 @@ import { create } from "zustand";
 import { deleteProfile, getDefaultIdentityFile, listProfiles, saveProfile } from "@/api";
 import type { Profile } from "@/types";
 
-const newProfile = (): Profile => ({
-  id: crypto.randomUUID(),
-  name: "New Profile",
-  color: "#334155",
-  remote: "",
-  identityFile: "",
-  subnets: ["0.0.0.0/0"],
-  dns: "off",
-  autoConnect: false,
-  excludeSubnets: [],
-  autoNets: false,
-  method: "auto",
-  disableIpv6: false,
-  notes: "",
-  autoExcludeLan: true,
-});
+export function newProfile(): Profile {
+  return {
+    id: crypto.randomUUID(),
+    name: "New Profile",
+    remote: "",
+    identityFile: "",
+    subnets: ["0.0.0.0/0"],
+    dns: "all",
+    excludeSubnets: [],
+    autoNets: false,
+    method: "auto",
+    disableIpv6: false,
+    notes: "",
+    autoExcludeLan: true,
+    latencyBufferSize: 2097152,
+  };
+}
 
 interface ProfileStore {
   profiles: Profile[];
@@ -25,7 +26,8 @@ interface ProfileStore {
   loading: boolean;
   loadProfiles: () => Promise<void>;
   selectProfile: (id: string) => void;
-  createProfile: () => Promise<void>;
+  buildBlankProfile: () => Promise<Profile>;
+  buildProfileFromSsh: (partial: Partial<Profile>) => Profile;
   updateProfile: (profile: Profile) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
 }
@@ -48,16 +50,16 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
     });
   },
   selectProfile: (id) => set({ selectedProfileId: id }),
-  createProfile: async () => {
+  buildBlankProfile: async () => {
     const defaultIdentityFile = await getDefaultIdentityFile().catch(() => null);
     const profile = newProfile();
     if (defaultIdentityFile) {
       profile.identityFile = defaultIdentityFile;
     }
-    set((s) => ({
-      profiles: [...s.profiles, profile],
-      selectedProfileId: profile.id,
-    }));
+    return profile;
+  },
+  buildProfileFromSsh: (partial) => {
+    return { ...newProfile(), ...partial };
   },
   updateProfile: async (profile) => {
     const profiles = await saveProfile(profile);
@@ -66,7 +68,6 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
   },
   removeProfile: async (id) => {
     const profiles = await deleteProfile(id);
-    const nextSelected = profiles[0]?.id ?? null;
-    set({ profiles, selectedProfileId: nextSelected });
+    set({ profiles, selectedProfileId: profiles[0]?.id ?? null });
   },
 }));

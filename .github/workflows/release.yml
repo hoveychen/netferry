@@ -127,6 +127,17 @@ jobs:
         # after the bundle is assembled.
         run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles app
 
+      - name: Inject privileged helper into bundle (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
+          HELPER_DIR="$APP_PATH/Contents/Library/LaunchDaemons"
+          mkdir -p "$HELPER_DIR"
+          cp "src-tauri/target/${{ matrix.rust_target }}/release/netferry-helper" \
+             "$HELPER_DIR/com.hoveychen.netferry.helper"
+          cp "src-tauri/com.hoveychen.netferry.helper.plist" \
+             "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
+
       - name: Sign bundle (macOS)
         if: startsWith(matrix.os, 'macos')
         env:
@@ -141,7 +152,13 @@ jobs:
               | xargs -I{} codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "{}" || true
           fi
 
-          # 2. Sign the sidecar WITH disable-library-validation.
+          # 2. Sign the privileged helper daemon
+          codesign --force --options runtime \
+            --entitlements src-tauri/helper-entitlements.plist \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper"
+
+          # 3. Sign the sidecar WITH disable-library-validation.
           #    PyInstaller --onefile extracts libpython into a temp dir at runtime;
           #    Hardened Runtime blocks dlopen unless library-validation is disabled.
           codesign --force --options runtime \
@@ -149,13 +166,13 @@ jobs:
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/MacOS/netferry-tunnel"
 
-          # 3. Sign the main executable
+          # 4. Sign the main executable
           codesign --force --options runtime \
             --entitlements src-tauri/entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/MacOS/netferry-desktop"
 
-          # 4. Sign the .app bundle
+          # 5. Sign the .app bundle
           codesign --force --options runtime \
             --entitlements src-tauri/entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \

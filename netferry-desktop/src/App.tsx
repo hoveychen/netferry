@@ -1,49 +1,43 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ConnectionPanel } from "@/components/ConnectionPanel";
-import { FirstLaunchWizard } from "@/components/FirstLaunchWizard";
-import { ProfileEditor } from "@/components/ProfileEditor";
+import { ConnectionPage } from "@/components/ConnectionPage";
+import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
+import { NewProfileDialog } from "@/components/NewProfileDialog";
+import { ProfileDetailPage } from "@/components/ProfileDetailPage";
 import { ProfileList } from "@/components/ProfileList";
 import { SshConfigImporter } from "@/components/SshConfigImporter";
-import { saveProfile } from "@/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type { ConnectionEvent, ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
 
-const FIRST_LAUNCH_DISMISSED_KEY = "netferry_first_launch_dismissed";
-
-function createEmptyProfile(): Profile {
-  return {
-    id: crypto.randomUUID(),
-    name: "New Profile",
-    color: "#334155",
-    remote: "",
-    identityFile: "",
-    subnets: ["0.0.0.0/0"],
-    dns: "off",
-    autoConnect: false,
-    excludeSubnets: [],
-    autoNets: false,
-    method: "auto",
-    disableIpv6: false,
-    notes: "",
-    autoExcludeLan: true,
-  };
-}
+// Page state union
+type Page =
+  | { kind: "list" }
+  | { kind: "detail"; profile: Profile; isNew: boolean }
+  | { kind: "connected" }
+  | { kind: "settings" };
 
 function App() {
-  const [importerOpen, setImporterOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
+  const [page, setPage] = useState<Page>({ kind: "list" });
+  const [newProfileDialogOpen, setNewProfileDialogOpen] = useState(false);
+  const [sshImporterOpen, setSshImporterOpen] = useState(false);
+
   const {
     profiles,
-    selectedProfileId,
-    loading,
+    loading: profilesLoading,
     loadProfiles,
-    selectProfile,
-    createProfile,
+    buildBlankProfile,
     updateProfile,
     removeProfile,
   } = useProfileStore();
+
+  const {
+    settings,
+    loadSettings,
+    updateSettings,
+  } = useSettingsStore();
+
   const {
     status,
     logs,
@@ -60,24 +54,32 @@ function App() {
     pushTunnelError,
   } = useConnectionStore();
 
-  const selectedProfile = useMemo(
-    () => profiles.find((p) => p.id === selectedProfileId) ?? null,
-    [profiles, selectedProfileId],
-  );
-
+  // Initial load
   useEffect(() => {
     loadProfiles();
+    loadSettings();
     syncStatus();
-  }, [loadProfiles, syncStatus]);
+  }, [loadProfiles, loadSettings, syncStatus]);
 
+  // Auto-connect on startup
   useEffect(() => {
-    if (loading) {
-      return;
-    }
-    const dismissed = localStorage.getItem(FIRST_LAUNCH_DISMISSED_KEY) === "1";
-    setWizardOpen(profiles.length === 0 && !dismissed);
-  }, [profiles.length, loading]);
+    if (profilesLoading) return;
+    if (status.state !== "disconnected") return;
+    const profileId = settings.autoConnectProfileId;
+    if (!profileId) return;
+    const profile = profiles.find((p) => p.id === profileId);
+    if (!profile) return;
+    connect(profile).then(() => setPage({ kind: "connected" }));
+  }, [profilesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // If we're connected but not on the connected page, navigate there
+  useEffect(() => {
+    if (status.state === "connected" || status.state === "connecting") {
+      setPage({ kind: "connected" });
+    }
+  }, [status.state]);
+
+  // Tauri event listeners
   useEffect(() => {
     const offStatus = listen<ConnectionStatus>("connection-status", (event) => {
       setStatus(event.payload);
@@ -103,67 +105,98 @@ function App() {
     };
   }, [setStatus, pushLog, setTunnelStats, pushConnectionEvent, pushTunnelError]);
 
-  return (
-    <main className="grid h-screen grid-cols-[280px_1fr_360px] gap-4 bg-slate-100 p-4">
-      <ProfileList
-        profiles={profiles}
-        selectedProfileId={selectedProfileId}
-        onCreate={createProfile}
-        onSelect={selectProfile}
-        onDelete={(id) => removeProfile(id)}
-      />
-      <ProfileEditor
-        profile={selectedProfile}
-        onSave={updateProfile}
-        onOpenImporter={() => setImporterOpen(true)}
-      />
-      <ConnectionPanel
+  // Disconnect goes back to list
+  const handleDisconnect = async () => {
+    await disconnect();
+    setPage({ kind: "list" });
+  };
+
+  // Connect navigates to connection page
+  const handleConnect = async (profile: Profile) => {
+    setPage({ kind: "connected" });
+    await connect(profile);
+  };
+
+  // Find the active profile by profileId from status
+  const activeProfile =
+    status.profileId ? profiles.find((p) => p.id === status.profileId) ?? null : null;
+
+  if (page.kind === "connected") {
+    return (
+      <ConnectionPage
         status={status}
-        activeProfile={selectedProfile}
+        activeProfile={activeProfile}
         logs={logs}
         tunnelStats={tunnelStats}
         connectionEvents={connectionEvents}
         tunnelErrors={tunnelErrors}
-        onConnect={async () => {
-          if (selectedProfile) {
-            await connect(selectedProfile);
-          }
-        }}
-        onDisconnect={disconnect}
+        onDisconnect={handleDisconnect}
       />
+    );
+  }
+
+  if (page.kind === "settings") {
+    return (
+      <GlobalSettingsPage
+        settings={settings}
+        profiles={profiles}
+        onBack={() => setPage({ kind: "list" })}
+        onSave={updateSettings}
+      />
+    );
+  }
+
+  if (page.kind === "detail") {
+    return (
+      <ProfileDetailPage
+        profile={page.profile}
+        isNew={page.isNew}
+        onBack={() => setPage({ kind: "list" })}
+        onSave={async (saved) => {
+          await updateProfile(saved);
+          await loadProfiles();
+          setPage({ kind: "list" });
+        }}
+        onDelete={async (id) => {
+          await removeProfile(id);
+          setPage({ kind: "list" });
+        }}
+      />
+    );
+  }
+
+  // Default: list page
+  return (
+    <>
+      <ProfileList
+        profiles={profiles}
+        onNew={() => setNewProfileDialogOpen(true)}
+        onConnect={handleConnect}
+        onEdit={(id) => {
+          const profile = profiles.find((p) => p.id === id);
+          if (profile) setPage({ kind: "detail", profile, isNew: false });
+        }}
+        onOpenSettings={() => setPage({ kind: "settings" })}
+      />
+
+      <NewProfileDialog
+        open={newProfileDialogOpen}
+        onClose={() => setNewProfileDialogOpen(false)}
+        onBlank={async () => {
+          const profile = await buildBlankProfile();
+          setPage({ kind: "detail", profile, isNew: true });
+        }}
+        onImportSsh={() => setSshImporterOpen(true)}
+      />
+
       <SshConfigImporter
-        open={importerOpen}
-        onClose={() => setImporterOpen(false)}
-        onApply={async (partial) => {
-          const base = selectedProfile ?? createEmptyProfile();
-          const next = { ...base, ...partial };
-          await saveProfile(next);
-          await loadProfiles();
-          selectProfile(next.id);
-          localStorage.setItem(FIRST_LAUNCH_DISMISSED_KEY, "1");
-          setWizardOpen(false);
+        open={sshImporterOpen}
+        onClose={() => setSshImporterOpen(false)}
+        onImport={(profile) => {
+          setPage({ kind: "detail", profile, isNew: true });
         }}
       />
-      <FirstLaunchWizard
-        open={wizardOpen}
-        onImportFromSshConfig={() => {
-          setWizardOpen(false);
-          setImporterOpen(true);
-        }}
-        onCreateEmpty={async () => {
-          const profile = createEmptyProfile();
-          await saveProfile(profile);
-          await loadProfiles();
-          selectProfile(profile.id);
-          localStorage.setItem(FIRST_LAUNCH_DISMISSED_KEY, "1");
-          setWizardOpen(false);
-        }}
-        onSkip={() => {
-          localStorage.setItem(FIRST_LAUNCH_DISMISSED_KEY, "1");
-          setWizardOpen(false);
-        }}
-      />
-    </main>
+    </>
   );
 }
 

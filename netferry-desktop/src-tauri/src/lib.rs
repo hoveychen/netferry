@@ -1,12 +1,18 @@
 mod commands;
+#[cfg(target_os = "macos")]
+mod helper_ipc;
 mod models;
 mod profiles;
+mod settings;
 mod sidecar;
 mod ssh_config;
 mod stats;
 mod tray;
 
-use tauri::Listener;
+#[cfg(unix)]
+extern crate libc;
+
+use tauri::{Listener, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +24,25 @@ pub fn run() {
             // run as Administrator.  Re-launch with UAC if needed.
             #[cfg(target_os = "windows")]
             sidecar::ensure_elevated(app.handle());
+
+            // macOS 13+: register the privileged helper daemon via SMAppService.
+            // On first launch this shows the native one-time authorisation dialog.
+            // The call is idempotent on subsequent launches (returns immediately).
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = helper_ipc::ensure_helper_running() {
+                        // Non-fatal: we fall back to sudo+askpass on connect.
+                        eprintln!("NetFerry: helper registration: {e}");
+                        let _ = handle; // keep handle alive
+                    }
+                });
+            }
+
+            // Kill any sshuttle process group left over from a previous crash or
+            // force-quit (the PID file records the PGID written at connect time).
+            sidecar::kill_stale_tunnel();
 
             tray::setup_tray(app.handle())?;
 
@@ -60,8 +85,33 @@ pub fn run() {
             commands::get_default_identity_file,
             commands::connect_profile,
             commands::disconnect_profile,
-            commands::get_connection_status
+            commands::get_connection_status,
+            commands::get_global_settings,
+            commands::save_global_settings
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On graceful exit (Cmd+Q, window close, tray quit), ensure the
+            // sshuttle process group is terminated and the PID file is removed.
+            if let tauri::RunEvent::Exit = event {
+                let state = app_handle.state::<sidecar::AppState>();
+                let mut lock = state.child.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(mut child) = lock.take() {
+                    #[cfg(unix)]
+                    {
+                        let pid = child.id() as i32;
+                        let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+                        let _ = std::fs::remove_file(
+                            std::env::temp_dir().join("netferry-tunnel.pid"),
+                        );
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = child.kill();
+                    }
+                    let _ = child.wait();
+                }
+            }
+        });
 }

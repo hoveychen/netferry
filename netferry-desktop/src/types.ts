@@ -3,12 +3,10 @@ export type DnsMode = "off" | "all" | "specific";
 export interface Profile {
   id: string;
   name: string;
-  color: string;
   remote: string;
   identityFile: string;
   subnets: string[];
   dns: DnsMode;
-  autoConnect: boolean;
   excludeSubnets: string[];
   autoNets: boolean;
   dnsTarget?: string;
@@ -19,6 +17,10 @@ export interface Profile {
   notes?: string;
   autoExcludeLan: boolean;
   latencyBufferSize?: number;
+}
+
+export interface GlobalSettings {
+  autoConnectProfileId: string | null;
 }
 
 export interface SshHostEntry {
