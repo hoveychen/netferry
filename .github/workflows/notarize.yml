@@ -59,12 +59,61 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          echo "=== DMG file info ==="
+          ls -la "$VERSIONED_DMG"
+          file "$VERSIONED_DMG"
+          codesign -dvvv --strict "$VERSIONED_DMG" 2>&1 || echo "(DMG itself may not be signed, checking contents...)"
+
+          echo "=== Mounting DMG to inspect contents ==="
+          MOUNT_DIR=$(hdiutil attach "$VERSIONED_DMG" -nobrowse | tail -1 | awk '{print $NF}')
+          echo "Mounted at: $MOUNT_DIR"
+          ls -laR "$MOUNT_DIR"
+          APP_PATH=$(find "$MOUNT_DIR" -name "*.app" -maxdepth 2 | head -1)
+          if [ -n "$APP_PATH" ]; then
+            echo "=== App bundle signature ==="
+            codesign -dvvv --strict "$APP_PATH" 2>&1 || true
+            echo "=== Verify deep signature ==="
+            codesign --verify --deep --strict --verbose=4 "$APP_PATH" 2>&1 || true
+            echo "=== Check entitlements ==="
+            codesign -d --entitlements - "$APP_PATH" 2>&1 || true
+            echo "=== Spctl assessment ==="
+            spctl --assess --type execute --verbose=4 "$APP_PATH" 2>&1 || true
+          fi
+          hdiutil detach "$MOUNT_DIR" || true
+
+          echo "=== Submitting to notary service ==="
           xcrun notarytool submit "$VERSIONED_DMG" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait
+            --wait \
+            --output-format json | tee /tmp/notarize_result.json || true
+
+          SUBMISSION_ID=$(cat /tmp/notarize_result.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+          STATUS=$(cat /tmp/notarize_result.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+
+          echo "=== Submission ID: $SUBMISSION_ID ==="
+          echo "=== Status: $STATUS ==="
+
+          if [ -n "$SUBMISSION_ID" ]; then
+            echo "=== Fetching notarization log ==="
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              /tmp/notarize_log.json 2>&1 || true
+            echo "=== Notarization log ==="
+            cat /tmp/notarize_log.json 2>/dev/null || echo "No log available"
+          fi
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization failed with status: $STATUS"
+            exit 1
+          fi
+
           xcrun stapler staple "$VERSIONED_DMG"
+          echo "=== Staple verification ==="
+          xcrun stapler validate "$VERSIONED_DMG"
           cp "$VERSIONED_DMG" "${{ matrix.stable_name }}.dmg"
 
       - name: Upload notarized DMGs back to release
