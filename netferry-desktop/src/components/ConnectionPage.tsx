@@ -77,8 +77,7 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
     <svg
       viewBox={`0 0 ${W} ${H}`}
       className="w-full"
-      style={{ height: H }}
-      preserveAspectRatio="none"
+      preserveAspectRatio="xMidYMid meet"
     >
       <defs>
         <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">

@@ -3,6 +3,7 @@ package sshconn
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -27,6 +28,9 @@ type JumpHostSpec struct {
 // It handles ProxyJump and ProxyCommand transparently.
 // If jumpHosts is non-empty, they are used instead of HostConfig.ProxyJump.
 func Dial(hc *HostConfig, ac AuthConfig, jumpHosts ...JumpHostSpec) (*ssh.Client, error) {
+	log.Printf("ssh-dial: target=%s@%s:%d identityFile=%q jumpHosts=%d",
+		hc.User, hc.HostName, hc.Port, ac.IdentityFile, len(jumpHosts))
+
 	// Merge HostConfig overrides into AuthConfig.
 	if hc.IdentityFile != "" && ac.IdentityFile == "" {
 		ac.IdentityFile = hc.IdentityFile
@@ -136,6 +140,7 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 	var currentClient *ssh.Client
 
 	for i, jh := range jumps {
+		log.Printf("jump[%d]: remote=%q identityFile=%q", i, jh.Remote, jh.IdentityFile)
 		user, host := splitUserHost(jh.Remote)
 		port := 22
 		if idx := strings.LastIndex(host, ":"); idx >= 0 {
@@ -167,6 +172,7 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 				return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
 			}
 		}
+		log.Printf("jump[%d]: TCP connected to %s", i, jumpAddr)
 
 		jumpAC := ac
 		if jh.IdentityFile != "" {
@@ -181,6 +187,7 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 		if err != nil {
 			return nil, fmt.Errorf("jump[%d] handshake: %w", i, err)
 		}
+		log.Printf("jump[%d]: SSH handshake succeeded", i)
 	}
 
 	// Final hop: dial target through last jump client.

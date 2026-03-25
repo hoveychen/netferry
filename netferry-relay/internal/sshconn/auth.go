@@ -2,6 +2,7 @@ package sshconn
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,12 +23,17 @@ type AuthConfig struct {
 
 // BuildSSHConfig builds an *ssh.ClientConfig from AuthConfig + user name.
 func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
+	log.Printf("ssh-auth: building config for user=%q identityFile=%q", user, ac.IdentityFile)
+
 	// Build auth methods — priority: agent → explicit key → default keys.
 	var authMethods []ssh.AuthMethod
 
 	// 1. SSH Agent
 	if agentAuth := agentAuthMethod(); agentAuth != nil {
 		authMethods = append(authMethods, agentAuth)
+		log.Printf("ssh-auth: added SSH agent auth method")
+	} else {
+		log.Printf("ssh-auth: no SSH agent available (SSH_AUTH_SOCK=%q)", os.Getenv("SSH_AUTH_SOCK"))
 	}
 
 	// 2. Explicit identity file
@@ -36,6 +42,13 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 		signers, err := signersFromFile(expanded)
 		if err != nil {
 			return nil, fmt.Errorf("identity file %q: %w", expanded, err)
+		}
+		if len(signers) == 0 {
+			log.Printf("ssh-auth: identity file %q not found or empty", expanded)
+		} else {
+			log.Printf("ssh-auth: loaded key from %q type=%s fingerprint=%s",
+				expanded, signers[0].PublicKey().Type(),
+				ssh.FingerprintSHA256(signers[0].PublicKey()))
 		}
 		authMethods = append(authMethods, ssh.PublicKeys(signers...))
 	}
@@ -46,10 +59,13 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 			path := filepath.Join(expandHome("~"), ".ssh", name)
 			signers, err := signersFromFile(path)
 			if err == nil && len(signers) > 0 {
+				log.Printf("ssh-auth: loaded default key %q type=%s", path, signers[0].PublicKey().Type())
 				authMethods = append(authMethods, ssh.PublicKeys(signers...))
 			}
 		}
 	}
+
+	log.Printf("ssh-auth: total auth methods: %d", len(authMethods))
 
 	if len(authMethods) == 0 {
 		return nil, fmt.Errorf("no SSH authentication methods available (no agent and no key found)")
