@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"syscall"
+	"time"
 )
 
 // Watch opens a BSD routing socket (AF_ROUTE) and blocks until a network
@@ -19,6 +20,10 @@ func Watch(done <-chan struct{}) error {
 		return fmt.Errorf("netmon: open routing socket: %w", err)
 	}
 	defer syscall.Close(fd)
+
+	// Skip network events during the first few seconds after startup to
+	// avoid reacting to route changes caused by our own firewall setup.
+	startup := time.Now()
 
 	buf := make([]byte, 4096)
 	for {
@@ -47,6 +52,11 @@ func Watch(done <-chan struct{}) error {
 			continue
 		}
 
+		// Ignore events during the grace period after startup.
+		if time.Since(startup) < 5*time.Second {
+			continue
+		}
+
 		// Parse the routing message type (offset 3 in the rt_msghdr).
 		msgType := buf[3]
 		if isRelevantChange(msgType) {
@@ -57,20 +67,22 @@ func Watch(done <-chan struct{}) error {
 }
 
 // isRelevantChange returns true for routing message types that indicate
-// a meaningful network topology change (not just ARP/metric updates).
+// a meaningful network topology change.
+//
+// RTM_ADD / RTM_DELETE / RTM_CHANGE are intentionally excluded: they fire
+// on routine route-table updates (ARP, tunnel's own firewall rules, etc.)
+// and would cause false-positive reconnects. We only care about interface
+// state changes and address add/remove, which reliably indicate a real
+// network switch (WiFi change, cable unplug, VPN up/down).
 func isRelevantChange(msgType byte) bool {
 	const (
-		RTM_ADD      = 0x1
-		RTM_DELETE   = 0x2
-		RTM_CHANGE   = 0x3
 		RTM_NEWADDR  = 0xc
 		RTM_DELADDR  = 0xd
 		RTM_IFINFO   = 0xe
 		RTM_IFINFO2  = 0x12
 	)
 	switch msgType {
-	case RTM_ADD, RTM_DELETE, RTM_CHANGE,
-		RTM_NEWADDR, RTM_DELADDR,
+	case RTM_NEWADDR, RTM_DELADDR,
 		RTM_IFINFO, RTM_IFINFO2:
 		return true
 	}

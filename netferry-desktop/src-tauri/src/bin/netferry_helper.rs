@@ -241,6 +241,10 @@ fn handle_connection(stream: UnixStream) {
                 .unwrap_or(-1);
             log::info!("Tunnel exited with code={code}");
             send(&mut write_stream, &Response::Exit { code });
+            // Shutdown the socket so the app sees EOF immediately.
+            // The watchdog thread still holds a read fd, which would keep
+            // the socket alive and prevent the app from detecting the exit.
+            let _ = write_stream.shutdown(std::net::Shutdown::Both);
         }
     }
 }

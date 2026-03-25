@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -17,18 +18,23 @@ func Watch(done <-chan struct{}) error {
 	}
 	defer syscall.Close(fd)
 
-	// Subscribe to link, address, and route change groups.
+	// Subscribe to link and address change groups only.
+	// Route groups (RTNLGRP_IPV4_ROUTE, RTNLGRP_IPV6_ROUTE) are excluded
+	// because they fire on routine route-table updates (nft/iptables rules,
+	// tunnel's own setup) and cause false-positive reconnects.
 	addr := &syscall.SockaddrNetlink{
 		Family: syscall.AF_NETLINK,
 		Groups: (1 << (syscall.RTNLGRP_LINK - 1)) |
 			(1 << (syscall.RTNLGRP_IPV4_IFADDR - 1)) |
-			(1 << (syscall.RTNLGRP_IPV6_IFADDR - 1)) |
-			(1 << (syscall.RTNLGRP_IPV4_ROUTE - 1)) |
-			(1 << (syscall.RTNLGRP_IPV6_ROUTE - 1)),
+			(1 << (syscall.RTNLGRP_IPV6_IFADDR - 1)),
 	}
 	if err := syscall.Bind(fd, addr); err != nil {
 		return fmt.Errorf("netmon: bind netlink: %w", err)
 	}
+
+	// Skip network events during the first few seconds after startup to
+	// avoid reacting to route changes caused by our own firewall setup.
+	startup := time.Now()
 
 	buf := make([]byte, 4096)
 	for {
@@ -55,6 +61,11 @@ func Watch(done <-chan struct{}) error {
 			continue
 		}
 
+		// Ignore events during the grace period after startup.
+		if time.Since(startup) < 5*time.Second {
+			continue
+		}
+
 		// Parse netlink message header.
 		hdr := (*syscall.NlMsghdr)(unsafe.Pointer(&buf[0]))
 		if isRelevantChange(hdr.Type) {
@@ -67,8 +78,7 @@ func Watch(done <-chan struct{}) error {
 func isRelevantChange(msgType uint16) bool {
 	switch msgType {
 	case syscall.RTM_NEWLINK, syscall.RTM_DELLINK,
-		syscall.RTM_NEWADDR, syscall.RTM_DELADDR,
-		syscall.RTM_NEWROUTE, syscall.RTM_DELROUTE:
+		syscall.RTM_NEWADDR, syscall.RTM_DELADDR:
 		return true
 	}
 	return false

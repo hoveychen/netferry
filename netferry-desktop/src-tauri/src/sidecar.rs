@@ -611,7 +611,13 @@ fn spawn_helper_event_thread(
                     let _ = app.emit(LOG_EVENT, format!("helper: {msg}"));
                 }
 
-                // "exit" or stream EOF: tunnel process has ended.
+                Some("exit") => {
+                    let code = ev["code"].as_i64().unwrap_or(-1);
+                    log::info!("Tunnel process exited with code={code}");
+                    let _ = app.emit(LOG_EVENT, format!("helper: tunnel exited (code {code})"));
+                    break;
+                }
+
                 _ => {}
             }
         }
