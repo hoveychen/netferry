@@ -237,12 +237,14 @@ func (p *proxyConn) SetDeadline(t time.Time) error    { return nil }
 func (p *proxyConn) SetReadDeadline(t time.Time) error { return nil }
 func (p *proxyConn) SetWriteDeadline(t time.Time) error { return nil }
 
-// setTCPKeepAlive enables TCP keepalive on the connection with a short
-// interval so that dead connections (e.g. after a WiFi switch) are detected
-// quickly by the OS rather than waiting for the default 2-hour idle timeout.
+// setTCPOpts enables TCP keepalive and disables Nagle's algorithm on the
+// connection. NoDelay ensures that small control frames (WINDOW_UPDATE,
+// PING/PONG) are sent immediately without waiting to coalesce with data,
+// which is critical for flow control responsiveness.
 func setTCPKeepAlive(conn net.Conn) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		tc.SetKeepAlive(true)
 		tc.SetKeepAlivePeriod(15 * time.Second)
+		tc.SetNoDelay(true)
 	}
 }

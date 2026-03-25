@@ -74,13 +74,14 @@ const (
 
 	// DEFAULT_INITIAL_WINDOW is the per-channel send window in bytes.
 	// The sender can transmit this many bytes before needing a WINDOW_UPDATE
-	// from the receiver. 256 KB balances latency and throughput.
-	DEFAULT_INITIAL_WINDOW = 256 * 1024
+	// from the receiver. 4 MB allows high throughput even at moderate RTTs
+	// (e.g. 100ms RTT → theoretical max ~40 MB/s per channel).
+	DEFAULT_INITIAL_WINDOW = 4 * 1024 * 1024
 
 	// WINDOW_UPDATE_THRESHOLD controls when the receiver sends a
 	// WINDOW_UPDATE back to the sender. Once consumed bytes exceed this
-	// fraction of the initial window, a WINDOW_UPDATE is sent. This avoids
-	// sending a WINDOW_UPDATE for every tiny Read().
+	// threshold, a WINDOW_UPDATE is sent. This avoids sending a
+	// WINDOW_UPDATE for every tiny Read() while keeping the window open.
 	WINDOW_UPDATE_THRESHOLD = DEFAULT_INITIAL_WINDOW / 4
 )
 
@@ -115,8 +116,48 @@ func WriteFrame(w io.Writer, f Frame) error {
 // NewBufferedWriter wraps w with a bufio.Writer sized for typical mux frames.
 // The writer goroutine should call Flush() after each batch of frames.
 func NewBufferedWriter(w io.Writer) *bufio.Writer {
-	// 128 KB buffer: fits ~2 full-size frames or many small frames.
-	return bufio.NewWriterSize(w, 128*1024)
+	// 256 KB buffer: fits ~4 full-size frames for better batching.
+	return bufio.NewWriterSize(w, 256*1024)
+}
+
+// drainAndFlush writes all immediately available frames from priority and out
+// channels, then flushes once. This batches multiple frames into fewer system
+// calls, improving throughput. The caller must have already written at least
+// one frame before calling this.
+func drainAndFlush(bw *bufio.Writer, priority <-chan Frame, out <-chan Frame, errCh chan<- error) error {
+	for {
+		// Priority frames first.
+		select {
+		case f, ok := <-priority:
+			if !ok {
+				return fmt.Errorf("priority channel closed")
+			}
+			if err := WriteFrame(bw, f); err != nil {
+				errCh <- err
+				return err
+			}
+			continue
+		default:
+		}
+		// Then normal frames, non-blocking.
+		select {
+		case f, ok := <-out:
+			if !ok {
+				return fmt.Errorf("out channel closed")
+			}
+			if err := WriteFrame(bw, f); err != nil {
+				errCh <- err
+				return err
+			}
+		default:
+			// No more frames queued — flush the batch.
+			if err := bw.Flush(); err != nil {
+				errCh <- err
+				return err
+			}
+			return nil
+		}
+	}
 }
 
 // ReadFrame reads exactly one frame from r.

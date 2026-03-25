@@ -175,24 +175,7 @@ func (c *MuxClient) reader() {
 func (c *MuxClient) writer() {
 	bw := NewBufferedWriter(c.w)
 	for {
-		// Drain all priority frames first.
-		select {
-		case f, ok := <-c.priorityOut:
-			if !ok {
-				return
-			}
-			if err := WriteFrame(bw, f); err != nil {
-				c.err <- err
-				return
-			}
-			if err := bw.Flush(); err != nil {
-				c.err <- err
-				return
-			}
-			continue
-		default:
-		}
-		// Select from both; priority still checked first via nested select.
+		// Block until at least one frame is available.
 		select {
 		case f, ok := <-c.priorityOut:
 			if !ok {
@@ -211,10 +194,9 @@ func (c *MuxClient) writer() {
 				return
 			}
 		}
-		// Flush after each frame. The bufio.Writer coalesces the header
-		// and data writes within WriteFrame into a single system call.
-		if err := bw.Flush(); err != nil {
-			c.err <- err
+		// Drain all queued frames (priority first) before flushing,
+		// so multiple frames are coalesced into fewer system calls.
+		if err := drainAndFlush(bw, c.priorityOut, c.out, c.err); err != nil {
 			return
 		}
 	}
