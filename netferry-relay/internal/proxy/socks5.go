@@ -12,6 +12,7 @@ import (
 	"net"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
 // SOCKS5 protocol constants (RFC 1928).
@@ -29,7 +30,7 @@ const (
 // ListenSOCKS5 starts a SOCKS5 proxy on the given port and forwards all
 // CONNECT requests through the mux tunnel. Blocks until the listener closes.
 // This is the primary proxy mode on Windows.
-func ListenSOCKS5(port int, client *mux.MuxClient) error {
+func ListenSOCKS5(port int, client *mux.MuxClient, counters *stats.Counters) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("socks5 listen :%d: %w", port, err)
@@ -42,12 +43,12 @@ func ListenSOCKS5(port int, client *mux.MuxClient) error {
 		if err != nil {
 			return err
 		}
-		go handleSOCKS5(conn, client)
+		go handleSOCKS5(conn, client, counters)
 	}
 }
 
 // handleSOCKS5 performs the SOCKS5 handshake and then proxies data.
-func handleSOCKS5(conn net.Conn, client *mux.MuxClient) {
+func handleSOCKS5(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
 	defer conn.Close()
 
 	dstIP, dstPort, err := socks5Handshake(conn)
@@ -64,7 +65,18 @@ func handleSOCKS5(conn net.Conn, client *mux.MuxClient) {
 	}
 
 	srcAddr := conn.RemoteAddr().String()
-	log.Printf("c : Accept TCP: %s -> %s:%d.", srcAddr, dstIP, dstPort)
+	dstAddr := fmt.Sprintf("%s:%d", dstIP, dstPort)
+	// For SOCKS5 domain addresses, dstIP is the hostname itself.
+	host := ""
+	if net.ParseIP(dstIP) == nil {
+		host = dstIP
+	}
+	log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
+	var connID uint64
+	if counters != nil {
+		connID = counters.ConnOpen(srcAddr, dstAddr, host)
+		defer counters.ConnClose(connID, srcAddr, dstAddr)
+	}
 
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
 	if err != nil {
@@ -154,14 +166,10 @@ func socks5Handshake(conn net.Conn) (host string, port int, err error) {
 			return
 		}
 		host = string(domain)
-		// Resolve domain to IP for the mux protocol.
-		addrs, rerr := net.LookupHost(host)
-		if rerr != nil || len(addrs) == 0 {
-			sendSOCKS5Reply(conn, socks5ReplyFail)
-			err = fmt.Errorf("DNS resolve %q: %v", host, rerr)
-			return
-		}
-		host = addrs[0]
+		// Pass the domain name through to the mux layer so that DNS
+		// resolution happens on the remote server. This is critical for
+		// accessing internal hostnames only resolvable by the remote DNS.
+		// The mux OpenTCP handler on the server side will resolve it.
 
 	default:
 		sendSOCKS5Reply(conn, 8) // address type not supported

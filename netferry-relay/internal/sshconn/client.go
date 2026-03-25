@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -14,20 +15,21 @@ import (
 
 const dialTimeout = 30 * time.Second
 
+// JumpHostSpec describes an explicit jump host, independent of ~/.ssh/config.
+type JumpHostSpec struct {
+	// Remote in [user@]host[:port] format.
+	Remote string `json:"remote"`
+	// IdentityFile path (optional).
+	IdentityFile string `json:"identityFile,omitempty"`
+}
+
 // Dial establishes an *ssh.Client using HostConfig + AuthConfig.
 // It handles ProxyJump and ProxyCommand transparently.
-func Dial(hc *HostConfig, ac AuthConfig) (*ssh.Client, error) {
+// If jumpHosts is non-empty, they are used instead of HostConfig.ProxyJump.
+func Dial(hc *HostConfig, ac AuthConfig, jumpHosts ...JumpHostSpec) (*ssh.Client, error) {
 	// Merge HostConfig overrides into AuthConfig.
 	if hc.IdentityFile != "" && ac.IdentityFile == "" {
 		ac.IdentityFile = hc.IdentityFile
-	}
-	if hc.UserKnownHostsFile != "" && ac.KnownHostsFile == "" {
-		ac.KnownHostsFile = hc.UserKnownHostsFile
-	}
-	if hc.StrictHostKeyChecking == "no" || strings.Contains(ac.ExtraOptions, "StrictHostKeyChecking=no") {
-		ac.StrictHostKeyChecking = false
-	} else {
-		ac.StrictHostKeyChecking = true
 	}
 
 	clientCfg, err := BuildSSHConfig(hc.User, ac)
@@ -36,6 +38,11 @@ func Dial(hc *HostConfig, ac AuthConfig) (*ssh.Client, error) {
 	}
 
 	addr := net.JoinHostPort(hc.HostName, strconv.Itoa(hc.Port))
+
+	// Explicit jump hosts take precedence over everything.
+	if len(jumpHosts) > 0 {
+		return dialViaExplicitJumps(jumpHosts, addr, clientCfg, ac)
+	}
 
 	// ProxyCommand takes precedence over ProxyJump.
 	if hc.ProxyCommand != "" {
@@ -117,6 +124,63 @@ func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, 
 	finalConn, err := currentClient.Dial("tcp", targetAddr)
 	if err != nil {
 		return nil, fmt.Errorf("ProxyJump final dial %s: %w", targetAddr, err)
+	}
+	return sshClientFromConn(finalConn, targetAddr, targetCfg)
+}
+
+// dialViaExplicitJumps connects through one or more explicitly specified jump hosts.
+// Unlike dialViaProxyJump, it does NOT consult ~/.ssh/config for each hop.
+func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ssh.ClientConfig, ac AuthConfig) (*ssh.Client, error) {
+	var currentClient *ssh.Client
+
+	for i, jh := range jumps {
+		user, host := splitUserHost(jh.Remote)
+		port := 22
+		if idx := strings.LastIndex(host, ":"); idx >= 0 {
+			if p, err := strconv.Atoi(host[idx+1:]); err == nil {
+				port = p
+				host = host[:idx]
+			}
+		}
+		if user == "" {
+			user = os.Getenv("USER")
+			if user == "" {
+				user = "root"
+			}
+		}
+
+		jumpAddr := net.JoinHostPort(host, strconv.Itoa(port))
+
+		var conn net.Conn
+		var err error
+		if currentClient == nil {
+			conn, err = net.DialTimeout("tcp", jumpAddr, dialTimeout)
+		} else {
+			conn, err = currentClient.Dial("tcp", jumpAddr)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
+		}
+
+		jumpAC := ac
+		if jh.IdentityFile != "" {
+			jumpAC.IdentityFile = jh.IdentityFile
+		}
+		jumpCfg, err := BuildSSHConfig(user, jumpAC)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("jump[%d] auth: %w", i, err)
+		}
+		currentClient, err = sshClientFromConn(conn, jumpAddr, jumpCfg)
+		if err != nil {
+			return nil, fmt.Errorf("jump[%d] handshake: %w", i, err)
+		}
+	}
+
+	// Final hop: dial target through last jump client.
+	finalConn, err := currentClient.Dial("tcp", targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("jump final dial %s: %w", targetAddr, err)
 	}
 	return sshClientFromConn(finalConn, targetAddr, targetCfg)
 }

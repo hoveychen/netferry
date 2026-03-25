@@ -1,8 +1,9 @@
-use crate::models::{ConnectionEvent, ConnectionStatus, DnsMode, Profile, TunnelError, now_ms};
-use crate::stats;
+use crate::models::{ConnectionStatus, DnsMode, Profile, TunnelError, now_ms};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::net::ToSocketAddrs;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -16,8 +17,10 @@ use std::os::unix::net::UnixStream;
 
 pub const STATUS_EVENT: &str = "connection-status";
 pub const LOG_EVENT: &str = "connection-log";
-pub const CONNECTION_EVENT: &str = "tunnel-connection";
 pub const ERROR_EVENT: &str = "tunnel-error";
+pub const STATS_PORT_EVENT: &str = "stats-port";
+pub const DEPLOY_PROGRESS_EVENT: &str = "deploy-progress";
+pub const DEPLOY_REASON_EVENT: &str = "deploy-reason";
 
 // ── Unix: sudo wrapper via SUDO_ASKPASS ────────────────────────────────────────
 
@@ -153,7 +156,7 @@ pub fn ensure_elevated(app: &tauri::AppHandle) {
 pub struct AppState {
     pub child: Mutex<Option<Child>>,
     pub status: Mutex<ConnectionStatus>,
-    pub stats_stop: Mutex<Option<Arc<AtomicBool>>>,
+    pub stats_port: Mutex<Option<u16>>,
 
     /// macOS 13+: live socket to the privileged helper daemon.
     /// Dropping it signals the helper to kill the tunnel process.
@@ -163,6 +166,11 @@ pub struct AppState {
     /// Unix: per-connection sudo askpass wrapper; cleaned up on disconnect.
     #[cfg(unix)]
     sudo_helper: Mutex<Option<SudoHelper>>,
+
+    /// The profile that was last successfully connected, used for auto-reconnect.
+    pub last_connected_profile: Mutex<Option<Profile>>,
+    /// Set to true to cancel an in-progress reconnection loop.
+    pub reconnect_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -174,13 +182,39 @@ impl AppState {
                 profile_id: None,
                 message: None,
             }),
-            stats_stop: Mutex::new(None),
+            stats_port: Mutex::new(None),
             #[cfg(target_os = "macos")]
             helper_stream: Mutex::new(None),
             #[cfg(unix)]
             sudo_helper: Mutex::new(None),
+            last_connected_profile: Mutex::new(None),
+            reconnect_cancel: Mutex::new(None),
         }
     }
+}
+
+/// Runs `netferry-tunnel --list-features` and returns the parsed JSON.
+pub fn query_method_features() -> Result<HashMap<String, Vec<String>>, String> {
+    let binary = resolve_tunnel_exe();
+    let output = Command::new(&binary)
+        .arg("--list-features")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to run tunnel binary: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tunnel --list-features exited with {}",
+            output.status
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse features JSON: {e}"))
+}
+
+/// Returns the stats server URL if available.
+pub fn get_stats_url(state: State<'_, AppState>) -> Option<String> {
+    state.stats_port.lock().ok()?.map(|p| format!("http://127.0.0.1:{p}"))
 }
 
 // ── PID file helpers ──────────────────────────────────────────────────────────
@@ -192,18 +226,26 @@ fn pid_file_path() -> std::path::PathBuf {
 
 /// Called at app startup: if a stale PID file exists from a previous crash/kill,
 /// terminate the leftover tunnel process group and remove the file.
+/// Also cleans up any stale pf anchors on macOS.
 pub fn kill_stale_tunnel() {
     #[cfg(unix)]
     {
         let path = pid_file_path();
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(pgid) = content.trim().parse::<i32>() {
-                // Best-effort; the process may already be gone.
+                // Try SIGTERM first for firewall cleanup.
+                unsafe { libc::kill(-pgid, libc::SIGTERM) };
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                // Then SIGKILL as fallback.
                 unsafe { libc::kill(-pgid, libc::SIGKILL) };
             }
             let _ = std::fs::remove_file(&path);
         }
     }
+    // Always clean stale pf anchors regardless of PID file presence —
+    // the previous tunnel may have been killed before writing the file.
+    #[cfg(target_os = "macos")]
+    clean_stale_pf_anchors();
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -265,7 +307,60 @@ fn resolve_tunnel_exe() -> String {
     "netferry-tunnel".to_string()
 }
 
-fn build_args(profile: &Profile) -> Vec<String> {
+/// Write inline PEM key material to a temp file with mode 600.
+fn write_temp_key(name: &str, key: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::env::temp_dir().join(format!("netferry-{name}"));
+    std::fs::write(&path, key).map_err(|e| format!("Failed to write {name}: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to set {name} permissions: {e}"))?;
+    }
+    Ok(path)
+}
+
+/// Prepare identity key temp files and jump host JSON for the tunnel binary.
+fn prepare_identity_args(profile: &Profile) -> Result<PreparedIdentity, String> {
+    // Main identity key.
+    let main_key_path = match &profile.identity_key {
+        Some(k) if !k.trim().is_empty() => Some(write_temp_key("identity-key", k)?),
+        _ => None,
+    };
+
+    // Jump hosts: resolve inline keys to temp files, build JSON for --jump flag.
+    let mut jump_specs: Vec<serde_json::Value> = Vec::new();
+    for (i, jh) in profile.jump_hosts.iter().enumerate() {
+        let identity_file = match &jh.identity_key {
+            Some(k) if !k.trim().is_empty() => {
+                let path = write_temp_key(&format!("jump-key-{i}"), k)?;
+                Some(path.to_string_lossy().into_owned())
+            }
+            _ => jh.identity_file.clone().filter(|f| !f.trim().is_empty()),
+        };
+        let mut spec = serde_json::json!({ "remote": jh.remote });
+        if let Some(f) = identity_file {
+            spec["identityFile"] = serde_json::Value::String(f);
+        }
+        jump_specs.push(spec);
+    }
+
+    Ok(PreparedIdentity {
+        main_key_path,
+        jump_json: if jump_specs.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&jump_specs).unwrap())
+        },
+    })
+}
+
+struct PreparedIdentity {
+    main_key_path: Option<std::path::PathBuf>,
+    jump_json: Option<String>,
+}
+
+fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
 
     // Verbose: tunnel logs individual connections to stderr (parsed by this process).
@@ -274,19 +369,21 @@ fn build_args(profile: &Profile) -> Vec<String> {
     args.push("--remote".to_string());
     args.push(profile.remote.clone());
 
-    // Subnets are positional arguments.
-    for subnet in &profile.subnets {
-        if !subnet.trim().is_empty() {
-            args.push(subnet.clone());
-        }
-    }
-
     if profile.auto_nets {
         args.push("--auto-nets".to_string());
     }
-    if !profile.identity_file.trim().is_empty() {
+    // Prefer inline key (written to temp file) over identity file path.
+    if let Some(key_path) = &prepared.main_key_path {
+        args.push("--identity".to_string());
+        args.push(key_path.to_string_lossy().into_owned());
+    } else if !profile.identity_file.trim().is_empty() {
         args.push("--identity".to_string());
         args.push(profile.identity_file.clone());
+    }
+    // Explicit jump hosts.
+    if let Some(json) = &prepared.jump_json {
+        args.push("--jump".to_string());
+        args.push(json.clone());
     }
     if !profile.method.trim().is_empty() {
         args.push("--method".to_string());
@@ -294,6 +391,12 @@ fn build_args(profile: &Profile) -> Vec<String> {
     }
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
+    }
+    if profile.enable_udp {
+        args.push("--udp".to_string());
+    }
+    if profile.flow_control {
+        args.push("--flow-control".to_string());
     }
     match profile.dns {
         DnsMode::Off => {}
@@ -311,22 +414,103 @@ fn build_args(profile: &Profile) -> Vec<String> {
             args.push(extra.clone());
         }
     }
+    {
+        let mut exclude_cidrs: Vec<String> = Vec::new();
+
+        // Detect local network interfaces and exclude their /16 subnets.
+        if profile.auto_exclude_lan {
+            if let Ok(ifaces) = local_ip_address::list_afinet_netifas() {
+                for (_name, ip) in &ifaces {
+                    if let std::net::IpAddr::V4(v4) = ip {
+                        if v4.is_loopback() || v4.is_link_local() {
+                            continue;
+                        }
+                        let octets = v4.octets();
+                        let cidr = format!("{}.{}.0.0/16", octets[0], octets[1]);
+                        if !exclude_cidrs.contains(&cidr) {
+                            exclude_cidrs.push(cidr);
+                        }
+                    }
+                }
+            }
+        }
+
+        // User-specified exclude subnets.
+        for s in &profile.exclude_subnets {
+            let s = s.trim();
+            if !s.is_empty() && !exclude_cidrs.contains(&s.to_string()) {
+                exclude_cidrs.push(s.to_string());
+            }
+        }
+
+        if !exclude_cidrs.is_empty() {
+            args.push("--exclude".to_string());
+            args.push(exclude_cidrs.join(","));
+        }
+    }
+
+    // Subnets are positional arguments and MUST come last.
+    // Go's flag.Parse() stops at the first non-flag argument, so any flags
+    // after a positional arg would be treated as positional args too.
+    for subnet in &profile.subnets {
+        if !subnet.trim().is_empty() {
+            args.push(subnet.clone());
+        }
+    }
+
     args
 }
 
-/// Parse a tunnel verbose "Accept TCP" line into a ConnectionEvent.
-/// Expected format: "c : Accept TCP: <src_ip>:<src_port> -> <dst_ip>:<dst_port>."
-fn parse_connection_event(line: &str) -> Option<ConnectionEvent> {
-    let after = line.split("Accept TCP:").nth(1)?.trim();
-    let after = after.trim_end_matches('.');
-    let mut parts = after.splitn(2, " -> ");
-    let src = parts.next()?.trim().to_string();
-    let dst = parts.next()?.trim().to_string();
-    Some(ConnectionEvent {
-        src_addr: src,
-        dst_addr: dst,
-        timestamp_ms: now_ms(),
-    })
+/// Parse `c : deploy-reason: <reason>` and emit a reason event.
+fn handle_deploy_reason_line(app: &AppHandle, line: &str) -> bool {
+    let marker = "deploy-reason: ";
+    let pos = match line.find(marker) {
+        Some(p) => p,
+        None => return false,
+    };
+    let reason = line[pos + marker.len()..].trim();
+    if !reason.is_empty() {
+        let _ = app.emit(DEPLOY_REASON_EVENT, reason.to_string());
+        return true;
+    }
+    false
+}
+
+/// Parse `c : deploy-progress: SENT/TOTAL` and emit a progress event.
+fn handle_deploy_progress_line(app: &AppHandle, line: &str) -> bool {
+    let marker = "deploy-progress: ";
+    let pos = match line.find(marker) {
+        Some(p) => p,
+        None => return false,
+    };
+    let payload = line[pos + marker.len()..].trim();
+    let parts: Vec<&str> = payload.splitn(2, '/').collect();
+    if parts.len() == 2 {
+        if let (Ok(sent), Ok(total)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+            let progress = crate::models::DeployProgress { sent, total };
+            let _ = app.emit(DEPLOY_PROGRESS_EVENT, progress);
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse `c : stats-port: XXXX` and store/emit the port.
+fn handle_stats_port_line(app: &AppHandle, line: &str) -> bool {
+    let marker = "stats-port: ";
+    let pos = match line.find(marker) {
+        Some(p) => p,
+        None => return false,
+    };
+    let port_str = line[pos + marker.len()..].trim();
+    if let Ok(port) = port_str.parse::<u16>() {
+        if let Ok(mut g) = app.state::<AppState>().stats_port.lock() {
+            *g = Some(port);
+        }
+        let _ = app.emit(STATS_PORT_EVENT, port);
+        return true;
+    }
+    false
 }
 
 /// Returns true if the line looks like an error or warning from the tunnel/SSH.
@@ -354,8 +538,9 @@ fn is_error_line(line: &str) -> bool {
 fn spawn_helper_event_thread(
     app: AppHandle,
     stream: UnixStream,
-    profile_id: String,
+    profile: Profile,
 ) {
+    let profile_id = profile.id.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stream);
         let mut tunnel_connected = false;
@@ -368,22 +553,32 @@ fn spawn_helper_event_thread(
 
             match ev["type"].as_str() {
                 Some("started") => {
-                    // Start bandwidth stats once we know the tunnel PID.
-                    if let Some(pid) = ev["pid"].as_u64() {
-                        let stop_flag =
-                            stats::start_stats_monitoring(app.clone(), pid as u32);
-                        if let Ok(mut g) = app.state::<AppState>().stats_stop.lock() {
-                            *g = Some(stop_flag);
-                        }
-                    }
+                    // Stats are now served by the tunnel's own HTTP/SSE server;
+                    // no process I/O polling needed here.
                 }
 
                 Some("log") => {
                     let stream_name = ev["stream"].as_str().unwrap_or("stderr");
                     let log_line = ev["line"].as_str().unwrap_or("").to_string();
 
+                    if handle_stats_port_line(&app, &log_line) {
+                        continue;
+                    }
+
+                    if handle_deploy_reason_line(&app, &log_line) {
+                        continue;
+                    }
+
+                    if handle_deploy_progress_line(&app, &log_line) {
+                        continue;
+                    }
+
                     if !tunnel_connected && log_line.contains("Connected to server.") {
                         tunnel_connected = true;
+                        // Store profile for auto-reconnect on network loss.
+                        if let Ok(mut g) = app.state::<AppState>().last_connected_profile.lock() {
+                            *g = Some(profile.clone());
+                        }
                         let status = ConnectionStatus {
                             state: "connected".to_string(),
                             profile_id: Some(profile_id.clone()),
@@ -394,13 +589,6 @@ fn spawn_helper_event_thread(
                             *g = status;
                         }
                         let _ = app.emit(LOG_EVENT, format!("{stream_name}: {log_line}"));
-                        continue;
-                    }
-
-                    if log_line.contains("Accept TCP:") {
-                        if let Some(event) = parse_connection_event(&log_line) {
-                            let _ = app.emit(CONNECTION_EVENT, event);
-                        }
                         continue;
                     }
 
@@ -419,6 +607,7 @@ fn spawn_helper_event_thread(
 
                 Some("error") => {
                     let msg = ev["message"].as_str().unwrap_or("unknown error").to_string();
+                    log::error!("Helper error: {msg}");
                     let _ = app.emit(LOG_EVENT, format!("helper: {msg}"));
                 }
 
@@ -433,10 +622,8 @@ fn spawn_helper_event_thread(
             *h = None;
         }
 
-        if let Ok(mut flag_guard) = app.state::<AppState>().stats_stop.lock() {
-            if let Some(flag) = flag_guard.take() {
-                stats::stop_stats_monitoring(&flag);
-            }
+        if let Ok(mut g) = app.state::<AppState>().stats_port.lock() {
+            *g = None;
         }
 
         let current = app
@@ -445,6 +632,19 @@ fn spawn_helper_event_thread(
             .lock()
             .map(|g| g.state.clone())
             .unwrap_or_default();
+        if current == "connected" {
+            // Was connected and tunnel died → auto-reconnect.
+            let profile = app
+                .state::<AppState>()
+                .last_connected_profile
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            if let Some(profile) = profile {
+                spawn_reconnect_thread(app, profile);
+                return;
+            }
+        }
         if current == "connecting" || current == "connected" {
             let status = ConnectionStatus {
                 state: "error".to_string(),
@@ -459,6 +659,137 @@ fn spawn_helper_event_thread(
     });
 }
 
+// ── Auto-reconnect ────────────────────────────────────────────────────────────
+
+/// Extract the SSH host and port from a profile's remote string.
+/// Supports formats: "host", "user@host", "user@host:port", "host:port".
+fn parse_remote_host_port(remote: &str) -> (String, u16) {
+    let without_user = if let Some(at) = remote.find('@') {
+        &remote[at + 1..]
+    } else {
+        remote
+    };
+    if let Some(colon) = without_user.rfind(':') {
+        let host = &without_user[..colon];
+        let port = without_user[colon + 1..].parse::<u16>().unwrap_or(22);
+        (host.to_string(), port)
+    } else {
+        (without_user.to_string(), 22)
+    }
+}
+
+/// Check if the remote host is reachable by attempting a TCP connection to its SSH port.
+fn is_network_reachable(remote: &str) -> bool {
+    let (host, port) = parse_remote_host_port(remote);
+    let addr = format!("{host}:{port}");
+    std::net::TcpStream::connect_timeout(
+        &addr
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut a| a.next())
+            .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
+        std::time::Duration::from_secs(5),
+    )
+    .is_ok()
+}
+
+/// Spawn a background thread that polls the network and reconnects when available.
+/// The thread emits "reconnecting" status and backs off exponentially.
+fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
+    // Set up cancellation token.
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Ok(mut g) = app.state::<AppState>().reconnect_cancel.lock() {
+        *g = Some(cancel.clone());
+    }
+
+    let profile_id = profile.id.clone();
+
+    // Emit reconnecting status.
+    let status = ConnectionStatus {
+        state: "reconnecting".to_string(),
+        profile_id: Some(profile_id.clone()),
+        message: Some("Network lost, waiting to reconnect\u{2026}".to_string()),
+    };
+    let _ = app.emit(STATUS_EVENT, status.clone());
+    if let Ok(mut g) = app.state::<AppState>().status.lock() {
+        *g = status;
+    }
+
+    std::thread::spawn(move || {
+        const BACKOFF: &[u64] = &[3, 5, 10, 15, 30, 30, 30, 30];
+        let mut attempt: usize = 0;
+
+        loop {
+            let delay = BACKOFF.get(attempt).copied().unwrap_or(30);
+            attempt += 1;
+
+            // Sleep in 1-second increments so we can check cancellation quickly.
+            for _ in 0..delay {
+                if cancel.load(Ordering::Relaxed) {
+                    log::info!("Reconnect cancelled");
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+
+            // Update status with attempt number.
+            let msg = format!("Reconnecting (attempt {attempt})\u{2026}");
+            let _ = app.emit(LOG_EVENT, format!("reconnect: {msg}"));
+            let status = ConnectionStatus {
+                state: "reconnecting".to_string(),
+                profile_id: Some(profile_id.clone()),
+                message: Some(msg),
+            };
+            let _ = app.emit(STATUS_EVENT, status.clone());
+            if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                *g = status;
+            }
+
+            // Check network reachability.
+            if !is_network_reachable(&profile.remote) {
+                log::info!("Network not yet reachable for {}, will retry", profile.remote);
+                continue;
+            }
+
+            log::info!("Network reachable, attempting reconnect for profile '{}'", profile.id);
+
+            // Clear the cancel token before reconnecting.
+            if let Ok(mut g) = app.state::<AppState>().reconnect_cancel.lock() {
+                *g = None;
+            }
+
+            // Attempt reconnect.
+            let state: State<'_, AppState> = app.state();
+            match connect(app.clone(), state, profile.clone()) {
+                Ok(_) => {
+                    log::info!("Reconnect succeeded for profile '{}'", profile.id);
+                    return;
+                }
+                Err(e) => {
+                    log::error!("Reconnect failed: {e}");
+                    // Re-set cancel token and continue retrying.
+                    if let Ok(mut g) = app.state::<AppState>().reconnect_cancel.lock() {
+                        *g = Some(cancel.clone());
+                    }
+                    let status = ConnectionStatus {
+                        state: "reconnecting".to_string(),
+                        profile_id: Some(profile_id.clone()),
+                        message: Some(format!("Reconnect failed: {e}")),
+                    };
+                    let _ = app.emit(STATUS_EVENT, status.clone());
+                    if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                        *g = status;
+                    }
+                }
+            }
+        }
+    });
+}
+
 // ── connect() ─────────────────────────────────────────────────────────────────
 
 pub fn connect(
@@ -466,6 +797,13 @@ pub fn connect(
     state: State<'_, AppState>,
     profile: Profile,
 ) -> Result<ConnectionStatus, String> {
+    // Cancel any pending reconnection attempt.
+    if let Ok(mut g) = state.reconnect_cancel.lock() {
+        if let Some(cancel) = g.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     {
         let lock = state
             .child
@@ -487,6 +825,11 @@ pub fn connect(
     }
 
     let binary = resolve_tunnel_exe();
+    log::info!("Connecting profile '{}', tunnel binary: {binary}", profile.id);
+
+    // If the profile carries inline PEM key material, write it to a temp file
+    // so the tunnel binary can read it via --identity.
+    let prepared = prepare_identity_args(&profile)?;
 
     // ── macOS 13+: route through the privileged helper daemon ─────────────────
     // On success the helper manages the tunnel process (running as root) and we
@@ -495,9 +838,11 @@ pub fn connect(
     #[cfg(target_os = "macos")]
     match helper_ipc::ensure_helper_running() {
         Ok(true) => {
+            log::info!("Using privileged helper daemon for connection");
             // The Go tunnel reads SSH config natively and receives HOME/USER/SSH_AUTH_SOCK
             // from the helper's env injection — no SSH wrapper script needed.
-            let args = build_args(&profile);
+            let args = build_args(&profile, &prepared);
+            log::debug!("Tunnel args: {:?}", args);
             let stream = helper_ipc::start_tunnel(&binary, &args)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
             // Give the event thread a cloned read end; keep the original for
@@ -505,7 +850,7 @@ pub fn connect(
             let read_stream = stream
                 .try_clone()
                 .map_err(|e| format!("Socket clone: {e}"))?;
-            spawn_helper_event_thread(app.clone(), read_stream, profile.id.clone());
+            spawn_helper_event_thread(app.clone(), read_stream, profile.clone());
             {
                 let mut h = state
                     .helper_stream
@@ -521,12 +866,16 @@ pub fn connect(
             return set_status(&app, &state, status.clone()).map(|_| status);
         }
         Ok(false) => {
+            log::info!("Helper not available, falling back to sudo+askpass");
             // macOS < 13 or helper not available → fall through to sudo+askpass.
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            log::error!("Helper error: {e}");
+            return Err(e);
+        }
     }
 
-    let args = build_args(&profile);
+    let args = build_args(&profile, &prepared);
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -565,7 +914,6 @@ pub fn connect(
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let child_pid = child.id();
 
     if let Some(out) = stdout {
         let app_clone = app.clone();
@@ -579,13 +927,30 @@ pub fn connect(
 
     if let Some(err) = stderr {
         let app_clone = app.clone();
+        let profile_clone = profile.clone();
         let profile_id = profile.id.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(err);
             let mut tunnel_connected = false;
             for line in reader.lines().map_while(Result::ok) {
+                if handle_stats_port_line(&app_clone, &line) {
+                    continue;
+                }
+
+                if handle_deploy_reason_line(&app_clone, &line) {
+                    continue;
+                }
+
+                if handle_deploy_progress_line(&app_clone, &line) {
+                    continue;
+                }
+
                 if !tunnel_connected && line.contains("Connected to server.") {
                     tunnel_connected = true;
+                    // Store profile for auto-reconnect on network loss.
+                    if let Ok(mut g) = app_clone.state::<AppState>().last_connected_profile.lock() {
+                        *g = Some(profile_clone.clone());
+                    }
                     let status = ConnectionStatus {
                         state: "connected".to_string(),
                         profile_id: Some(profile_id.clone()),
@@ -596,13 +961,6 @@ pub fn connect(
                         *g = status;
                     }
                     let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
-                    continue;
-                }
-
-                if line.contains("Accept TCP:") {
-                    if let Some(event) = parse_connection_event(&line) {
-                        let _ = app_clone.emit(CONNECTION_EVENT, event);
-                    }
                     continue;
                 }
 
@@ -619,7 +977,7 @@ pub fn connect(
                 let _ = app_clone.emit(LOG_EVENT, format!("stderr: {line}"));
             }
 
-            // stderr EOF means the process has exited.  Clear state.child so
+            // stderr EOF means the process has exited. Clear state.child so
             // that the next connect() can run.
             if let Ok(mut g) = app_clone.state::<AppState>().child.lock() {
                 if let Some(mut c) = g.take() {
@@ -627,11 +985,8 @@ pub fn connect(
                 }
             }
 
-            // Stop bandwidth monitoring.
-            if let Ok(mut flag_guard) = app_clone.state::<AppState>().stats_stop.lock() {
-                if let Some(flag) = flag_guard.take() {
-                    stats::stop_stats_monitoring(&flag);
-                }
+            if let Ok(mut g) = app_clone.state::<AppState>().stats_port.lock() {
+                *g = None;
             }
 
             let current = app_clone
@@ -640,6 +995,19 @@ pub fn connect(
                 .lock()
                 .map(|g| g.state.clone())
                 .unwrap_or_default();
+            if current == "connected" {
+                // Was connected and tunnel died → auto-reconnect.
+                let profile = app_clone
+                    .state::<AppState>()
+                    .last_connected_profile
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone());
+                if let Some(profile) = profile {
+                    spawn_reconnect_thread(app_clone, profile);
+                    return;
+                }
+            }
             if current == "connecting" || current == "connected" {
                 let status = ConnectionStatus {
                     state: "error".to_string(),
@@ -662,12 +1030,6 @@ pub fn connect(
         *lock = Some(child);
     }
 
-    // Start bandwidth monitoring in a background thread.
-    let stop_flag = stats::start_stats_monitoring(app.clone(), child_pid);
-    if let Ok(mut flag_guard) = state.stats_stop.lock() {
-        *flag_guard = Some(stop_flag);
-    }
-
     let status = ConnectionStatus {
         state: "connecting".to_string(),
         profile_id: Some(profile.id),
@@ -680,13 +1042,35 @@ pub fn connect(
 // ── disconnect() ──────────────────────────────────────────────────────────────
 
 pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
+    log::info!("Disconnecting tunnel");
+
+    // Cancel any pending reconnection attempt.
+    if let Ok(mut g) = state.reconnect_cancel.lock() {
+        if let Some(cancel) = g.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    // Clear the stored profile so we don't auto-reconnect after manual disconnect.
+    if let Ok(mut g) = state.last_connected_profile.lock() {
+        *g = None;
+    }
+
     // ── macOS: close the helper socket ────────────────────────────────────────
-    // Dropping the socket signals the helper to kill the tunnel process group.
+    // Signals the helper to kill the tunnel process group.
     // Pre-set our status to "disconnected" so the event thread (which also
     // watches for stream EOF) does not emit a spurious "error" event.
     #[cfg(target_os = "macos")]
     if let Ok(mut h) = state.helper_stream.lock() {
-        if h.is_some() {
+        if let Some(ref stream) = *h {
+            // Write an explicit disconnect byte so the helper watchdog kills
+            // the tunnel immediately.  This is more reliable than relying on
+            // socket EOF alone, which may not propagate when cloned fds exist.
+            use std::io::Write;
+            let _ = (&*stream).write_all(b"q");
+            let _ = (&*stream).flush();
+            // Also shut down the socket so the cloned fd held by the
+            // event-reader thread sees EOF.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
             if let Ok(mut g) = state.status.lock() {
                 g.state = "disconnected".to_string();
             }
@@ -701,26 +1085,35 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
     if let Some(mut child) = lock.take() {
         #[cfg(unix)]
         {
-            // Kill the whole process group so the tunnel's child processes (e.g. SSH)
-            // are also terminated; otherwise they would remain as orphans.
+            // Send SIGTERM first so the tunnel can run fw.Restore() to clean up
+            // firewall rules (pf/nft). SIGKILL would skip cleanup and leave stale
+            // DNS redirect rules that break name resolution system-wide.
             let pid = child.id() as i32;
-            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+            let _ = unsafe { libc::kill(-pid, libc::SIGTERM) };
+            // Give it a moment to clean up, then force-kill if still alive.
+            let exited = wait_with_timeout(&mut child, std::time::Duration::from_secs(3));
+            if !exited {
+                log::warn!("Tunnel did not exit after SIGTERM, sending SIGKILL");
+                let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+                let _ = child.wait();
+            }
             // Clean up the PID file now that we've terminated the process group.
             let _ = std::fs::remove_file(pid_file_path());
         }
         #[cfg(not(unix))]
         {
             let _ = child.kill();
+            let _ = child.wait();
         }
-        let _ = child.wait();
     }
     drop(lock);
 
-    // Stop bandwidth monitoring thread.
-    if let Ok(mut flag_guard) = state.stats_stop.lock() {
-        if let Some(flag) = flag_guard.take() {
-            stats::stop_stats_monitoring(&flag);
-        }
+    // Safety net: clean up any stale pf anchors in case SIGTERM cleanup failed.
+    #[cfg(target_os = "macos")]
+    clean_stale_pf_anchors();
+
+    if let Ok(mut g) = state.stats_port.lock() {
+        *g = None;
     }
 
     // Release the sudo helper temp directory now that the tunnel is gone.
@@ -748,4 +1141,53 @@ pub fn current_status(state: State<'_, AppState>) -> Result<ConnectionStatus, St
         .lock()
         .map_err(|_| "Status lock is poisoned".to_string())?;
     Ok(guard.clone())
+}
+
+// ── Utility helpers ──────────────────────────────────────────────────────────
+
+/// Wait for a child process to exit, returning true if it exited within the timeout.
+#[cfg(unix)]
+fn wait_with_timeout(child: &mut std::process::Child, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => return true, // process already gone
+        }
+    }
+}
+
+/// Remove any leftover netferry-* pf anchors.  Called after tunnel disconnect
+/// as a safety net in case the tunnel process was killed before it could clean
+/// up its own rules (e.g. SIGKILL from a prior crash).
+#[cfg(target_os = "macos")]
+fn clean_stale_pf_anchors() {
+    use std::process::Command;
+
+    let output = match Command::new("pfctl").args(["-s", "all"]).output() {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    // Parse pfctl output for lines like: anchor "netferry-12345" ...
+    // or: rdr-anchor "netferry-12345" ...
+    let text = String::from_utf8_lossy(&output.stdout);
+    let needle = "\"netferry-";
+    for line in text.lines() {
+        if let Some(start) = line.find(needle) {
+            let name_start = start + 1; // skip opening quote
+            if let Some(end) = line[name_start..].find('"') {
+                let anchor = &line[name_start..name_start + end];
+                log::info!("Cleaning stale pf anchor: {anchor}");
+                let _ = Command::new("pfctl")
+                    .args(["-a", anchor, "-F", "all"])
+                    .output();
+            }
+        }
+    }
 }

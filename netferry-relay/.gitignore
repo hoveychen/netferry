@@ -1,2 +1,7 @@
 cmd/tunnel/binaries/
 dist/
+
+# Go build output binaries
+/server
+/tunnel
+/probe

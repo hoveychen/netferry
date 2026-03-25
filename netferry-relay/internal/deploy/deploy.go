@@ -5,7 +5,9 @@ package deploy
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"net"
 	"strings"
 
@@ -32,17 +34,43 @@ func EnsureServer(client *ssh.Client, version string) (string, error) {
 		return "", fmt.Errorf("remote path: %w", err)
 	}
 
-	// Step 3: check if already deployed.
-	if remoteFileExists(client, remotePath) {
+	// Step 3: read embedded binary to get its size.
+	if ServerBinaries == nil {
+		return "", fmt.Errorf("ServerBinaries not set (embed not initialised)")
+	}
+	binaryName := "binaries/server-" + arch
+	localData, err := ServerBinaries.ReadFile(binaryName)
+	if err != nil {
+		return "", fmt.Errorf("no embedded binary for arch %q (file %q): %w", arch, binaryName, err)
+	}
+	localSize := int64(len(localData))
+
+	// Step 4: compare with remote file size.
+	remoteSize := remoteFileSize(client, remotePath)
+
+	switch {
+	case remoteSize < 0:
+		// File doesn't exist → first deploy.
+		log.Printf("deploy-reason: first-deploy")
+	case remoteSize == localSize:
+		// Same size → already up to date, skip upload.
+		log.Printf("deploy-reason: up-to-date")
+		return remotePath, nil
+	case remoteSize < localSize:
+		// Remote is smaller → new version available, upload.
+		log.Printf("deploy-reason: update")
+	default:
+		// Remote is larger than local → don't downgrade.
+		log.Printf("deploy-reason: up-to-date")
 		return remotePath, nil
 	}
 
-	// Step 4: upload binary.
-	if err := upload(client, arch, remotePath); err != nil {
+	// Step 5: upload binary.
+	if err := uploadData(client, localData, remotePath); err != nil {
 		return "", fmt.Errorf("upload server binary: %w", err)
 	}
 
-	// Step 5: clean up old versions (best-effort).
+	// Step 6: clean up old versions (best-effort).
 	go cleanOldVersions(client, arch, version)
 
 	return remotePath, nil
@@ -120,38 +148,74 @@ func remoteCachePath(client *ssh.Client, version, arch string) (string, error) {
 	return dir + binaryName, nil
 }
 
-// remoteFileExists checks whether a file exists and is executable.
-func remoteFileExists(client *ssh.Client, path string) bool {
-	_, err := runSession(client, "test -x "+shellQuote(path))
-	return err == nil
+// remoteFileSize returns the size of a remote file, or -1 if it doesn't exist.
+func remoteFileSize(client *ssh.Client, path string) int64 {
+	out, err := runSession(client, "wc -c < "+shellQuote(path))
+	if err != nil {
+		return -1
+	}
+	out = strings.TrimSpace(out)
+	var size int64
+	if _, err := fmt.Sscanf(out, "%d", &size); err != nil {
+		return -1
+	}
+	return size
 }
 
-// upload reads the embedded server binary for the given arch and uploads it.
-func upload(client *ssh.Client, arch, remotePath string) error {
-	if ServerBinaries == nil {
-		return fmt.Errorf("ServerBinaries not set (embed not initialised)")
-	}
-	binaryName := "binaries/server-" + arch
-	data, err := ServerBinaries.ReadFile(binaryName)
-	if err != nil {
-		return fmt.Errorf("no embedded binary for arch %q (file %q): %w", arch, binaryName, err)
-	}
-
+// uploadData uploads the given binary data to the remote path.
+func uploadData(client *ssh.Client, data []byte, remotePath string) error {
 	// Upload atomically (write to .tmp, then mv).
 	// The directory was already created by remoteCachePath.
 	tmpPath := remotePath + ".tmp"
 
-	// Stream binary via stdin of "cat > tmpPath".
+	// Stream binary via stdin of "cat > tmpPath", writing in chunks
+	// so we can report upload progress to stderr.
 	sess, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("new session: %w", err)
 	}
 	defer sess.Close()
-	sess.Stdin = bytes.NewReader(data)
+
+	stdinPipe, err := sess.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+
 	cmd := fmt.Sprintf("cat > %s && chmod +x %s && mv %s %s",
 		shellQuote(tmpPath), shellQuote(tmpPath),
 		shellQuote(tmpPath), shellQuote(remotePath))
-	if err := sess.Run(cmd); err != nil {
+	if err := sess.Start(cmd); err != nil {
+		return fmt.Errorf("start upload command: %w", err)
+	}
+
+	total := int64(len(data))
+	reader := bytes.NewReader(data)
+	const chunkSize = 64 * 1024 // 64 KB chunks
+	var sent int64
+
+	log.Printf("deploy-progress: %d/%d", sent, total)
+	buf := make([]byte, chunkSize)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if _, writeErr := stdinPipe.Write(buf[:n]); writeErr != nil {
+				return fmt.Errorf("write to remote: %w", writeErr)
+			}
+			sent += int64(n)
+			log.Printf("deploy-progress: %d/%d", sent, total)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("read binary: %w", readErr)
+		}
+	}
+
+	if err := stdinPipe.Close(); err != nil {
+		return fmt.Errorf("close stdin: %w", err)
+	}
+	if err := sess.Wait(); err != nil {
 		return fmt.Errorf("upload command: %w", err)
 	}
 	return nil

@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // AuthConfig holds SSH authentication parameters.
@@ -17,26 +16,12 @@ type AuthConfig struct {
 	// IdentityFile is the path to a private key file. Empty = auto-detect.
 	IdentityFile string
 
-	// KnownHostsFile overrides the default ~/.ssh/known_hosts path.
-	KnownHostsFile string
-
-	// StrictHostKeyChecking: false = warn but continue (like AcceptNew in OpenSSH).
-	// Default true (strict).
-	StrictHostKeyChecking bool
-
 	// ExtraOptions is a freeform string of "Key=Value" pairs parsed from --extra-ssh-opts.
-	// Supported: StrictHostKeyChecking=no|yes|accept-new
 	ExtraOptions string
 }
 
 // BuildSSHConfig builds an *ssh.ClientConfig from AuthConfig + user name.
 func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
-	// Parse extra options that affect auth behaviour.
-	strict := ac.StrictHostKeyChecking
-	if strings.Contains(ac.ExtraOptions, "StrictHostKeyChecking=no") {
-		strict = false
-	}
-
 	// Build auth methods — priority: agent → explicit key → default keys.
 	var authMethods []ssh.AuthMethod
 
@@ -70,16 +55,10 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("no SSH authentication methods available (no agent and no key found)")
 	}
 
-	// Host key verification.
-	hostKeyCallback, err := buildHostKeyCallback(ac.KnownHostsFile, strict)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ssh.ClientConfig{
 		User:            user,
 		Auth:            authMethods,
-		HostKeyCallback: hostKeyCallback,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         0, // no connect timeout here; use net.DialTimeout
 	}, nil
 }
@@ -122,59 +101,6 @@ func signersFromFile(path string) ([]ssh.Signer, error) {
 	return []ssh.Signer{signer}, nil
 }
 
-// buildHostKeyCallback creates an ssh.HostKeyCallback.
-// If strict=true, unknown hosts are rejected.
-// If strict=false, unknown hosts are accepted but a warning is printed.
-func buildHostKeyCallback(knownHostsFile string, strict bool) (ssh.HostKeyCallback, error) {
-	if knownHostsFile == "" {
-		knownHostsFile = filepath.Join(expandHome("~"), ".ssh", "known_hosts")
-	} else {
-		knownHostsFile = expandHome(knownHostsFile)
-	}
-
-	if _, err := os.Stat(knownHostsFile); os.IsNotExist(err) {
-		if strict {
-			// Create empty known_hosts so knownhosts.New succeeds.
-			os.MkdirAll(filepath.Dir(knownHostsFile), 0700)
-			os.WriteFile(knownHostsFile, nil, 0600)
-		} else {
-			return ssh.InsecureIgnoreHostKey(), nil
-		}
-	}
-
-	strictCB, err := knownhosts.New(knownHostsFile)
-	if err != nil {
-		return nil, fmt.Errorf("known_hosts %q: %w", knownHostsFile, err)
-	}
-
-	if strict {
-		return strictCB, nil
-	}
-
-	// Non-strict: warn on unknown hosts but continue.
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		err := strictCB(hostname, remote, key)
-		if err != nil {
-			var keyErr *knownhosts.KeyError
-			if ok := isKeyError(err, &keyErr); ok && len(keyErr.Want) == 0 {
-				// Host not in known_hosts — warn and accept.
-				fmt.Fprintf(os.Stderr,
-					"warning: host %q not in known_hosts, accepting anyway (StrictHostKeyChecking=no)\n",
-					hostname)
-				return nil
-			}
-		}
-		return err
-	}, nil
-}
-
-func isKeyError(err error, out **knownhosts.KeyError) bool {
-	if ke, ok := err.(*knownhosts.KeyError); ok {
-		*out = ke
-		return true
-	}
-	return false
-}
 
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {

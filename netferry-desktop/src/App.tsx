@@ -9,7 +9,8 @@ import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { ConnectionStatus, Profile, TunnelError, TunnelStats } from "@/types";
+import { importProfile, importProfileFromFile } from "@/api";
+import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
 
 // Page state union
 type Page =
@@ -43,13 +44,20 @@ function App() {
     logs,
     tunnelStats,
     tunnelErrors,
+    activeConnections,
+    recentClosed,
+    deployProgress,
+    deployReason,
     syncStatus,
     connect,
     disconnect,
     pushLog,
     setStatus,
-    setTunnelStats,
     pushTunnelError,
+    setDeployProgress,
+    setDeployReason,
+    startSSE,
+    stopSSE,
   } = useConnectionStore();
 
   // Initial load
@@ -72,7 +80,7 @@ function App() {
 
   // If we're connected but not on the connected page, navigate there
   useEffect(() => {
-    if (status.state === "connected" || status.state === "connecting") {
+    if (status.state === "connected" || status.state === "connecting" || status.state === "reconnecting") {
       setPage({ kind: "connected" });
     }
   }, [status.state]);
@@ -85,19 +93,39 @@ function App() {
     const offLog = listen<string>("connection-log", (event) => {
       pushLog(event.payload);
     });
-    const offStats = listen<TunnelStats>("tunnel-stats", (event) => {
-      setTunnelStats(event.payload);
-    });
     const offError = listen<TunnelError>("tunnel-error", (event) => {
       pushTunnelError(event.payload);
+    });
+    // stats-port is emitted by Rust when the tunnel prints its HTTP SSE port.
+    const offStatsPort = listen<number>("stats-port", (event) => {
+      startSSE(`http://127.0.0.1:${event.payload}`);
+    });
+    const offDeployProgress = listen<DeployProgress>("deploy-progress", (event) => {
+      setDeployProgress(event.payload);
+    });
+    const offDeployReason = listen<string>("deploy-reason", (event) => {
+      setDeployReason(event.payload);
+    });
+    // Handle .nfprofile file opened from OS (double-click / CLI arg).
+    const offImportFile = listen<string>("import-profile-file", async (event) => {
+      try {
+        await importProfileFromFile(event.payload);
+        await loadProfiles();
+      } catch (err) {
+        console.error("Failed to import profile from file:", err);
+      }
     });
     return () => {
       offStatus.then((fn) => fn());
       offLog.then((fn) => fn());
-      offStats.then((fn) => fn());
       offError.then((fn) => fn());
+      offStatsPort.then((fn) => fn());
+      offDeployProgress.then((fn) => fn());
+      offDeployReason.then((fn) => fn());
+      offImportFile.then((fn) => fn());
+      stopSSE();
     };
-  }, [setStatus, pushLog, setTunnelStats, pushTunnelError]);
+  }, [setStatus, pushLog, pushTunnelError, setDeployProgress, setDeployReason, startSSE, stopSSE, loadProfiles]);
 
   // Disconnect goes back to list
   const handleDisconnect = async () => {
@@ -122,7 +150,11 @@ function App() {
         activeProfile={activeProfile}
         logs={logs}
         tunnelStats={tunnelStats}
+        activeConnections={activeConnections}
+        recentClosed={recentClosed}
         tunnelErrors={tunnelErrors}
+        deployProgress={deployProgress}
+        deployReason={deployReason}
         onDisconnect={handleDisconnect}
       />
     );
@@ -170,6 +202,14 @@ function App() {
           if (profile) setPage({ kind: "detail", profile, isNew: false });
         }}
         onOpenSettings={() => setPage({ kind: "settings" })}
+        onImport={async (data) => {
+          await importProfile(data);
+          await loadProfiles();
+        }}
+        onImportFile={async (path) => {
+          await importProfileFromFile(path);
+          await loadProfiles();
+        }}
       />
 
       <NewProfileDialog

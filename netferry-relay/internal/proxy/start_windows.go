@@ -2,11 +2,17 @@
 
 package proxy
 
-import "github.com/hoveychen/netferry/relay/internal/mux"
+import (
+	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/stats"
+)
 
 // ListenTransparent starts the appropriate local proxy listener.
-// On Windows, this is a SOCKS5 proxy (system proxy settings are configured
-// by firewall.winMethod.Setup so that applications use it automatically).
-func ListenTransparent(port int, client *mux.MuxClient) error {
-	return ListenSOCKS5(port, client)
+// On Windows with WinDivert, this is a transparent TCP proxy (QueryOrigDstFunc
+// is set). Otherwise falls back to SOCKS5 proxy.
+func ListenTransparent(port int, client *mux.MuxClient, counters *stats.Counters) error {
+	if QueryOrigDstFunc != nil {
+		return Listen(port, client, counters)
+	}
+	return ListenSOCKS5(port, client, counters)
 }

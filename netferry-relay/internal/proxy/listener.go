@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
 // QueryOrigDstFunc is the platform-specific function to resolve the original
@@ -15,9 +16,13 @@ import (
 // Set by platform-specific init() or by the caller before Listen().
 var QueryOrigDstFunc func(conn net.Conn) (ip string, port int, err error)
 
+// UseTProxy selects the TPROXY listener instead of the default NAT-based one.
+// Set by cmd/tunnel when --method=tproxy is chosen. Only used on Linux.
+var UseTProxy bool
+
 // Listen accepts connections on the local proxy port and forwards them via mux.
 // Blocks until the listener is closed.
-func Listen(port int, client *mux.MuxClient) error {
+func Listen(port int, client *mux.MuxClient, counters *stats.Counters) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("proxy listen :%d: %w", port, err)
@@ -30,11 +35,11 @@ func Listen(port int, client *mux.MuxClient) error {
 		if err != nil {
 			return err
 		}
-		go handleConn(conn, client)
+		go handleConn(conn, client, counters)
 	}
 }
 
-func handleConn(conn net.Conn, client *mux.MuxClient) {
+func handleConn(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
 	defer conn.Close()
 
 	// Resolve original destination.
@@ -62,9 +67,22 @@ func handleConn(conn net.Conn, client *mux.MuxClient) {
 		family = 10 // AF_INET6
 	}
 
-	// Log in sshuttle-compatible format for Tauri to parse.
 	srcAddr := conn.RemoteAddr().String()
-	log.Printf("c : Accept TCP: %s -> %s:%d.", srcAddr, dstIP, dstPort)
+	dstAddr := fmt.Sprintf("%s:%d", dstIP, dstPort)
+
+	// Peek at the first bytes to extract the hostname (TLS SNI or HTTP Host).
+	host, br := peekHost(conn, dstPort)
+	if host != "" {
+		log.Printf("c : Accept TCP: %s -> %s (%s).", srcAddr, dstAddr, host)
+	} else {
+		log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
+	}
+
+	var connID uint64
+	if counters != nil {
+		connID = counters.ConnOpen(srcAddr, dstAddr, host)
+		defer counters.ConnClose(connID, srcAddr, dstAddr)
+	}
 
 	// Open a mux channel.
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
@@ -74,10 +92,11 @@ func handleConn(conn net.Conn, client *mux.MuxClient) {
 	}
 	defer muxConn.Close()
 
-	// Bidirectional copy.
+	// Bidirectional copy. Use the buffered reader (br) so peeked bytes are
+	// replayed into the mux channel.
 	done := make(chan struct{}, 2)
 	go func() {
-		io.Copy(muxConn, conn)
+		io.Copy(muxConn, br)
 		muxConn.CloseWrite()
 		done <- struct{}{}
 	}()

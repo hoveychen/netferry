@@ -6,11 +6,14 @@
 //!   2. Connection – opens the Unix socket that the helper listens on and
 //!      sends a `connect` request, returning the live stream for event reading.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
+
+/// Must match the value in netferry_helper.rs — bump both together.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 // ── SMAppService FFI (compiled from smappservice.m) ───────────────────────────
 
@@ -19,6 +22,8 @@ extern "C" {
     fn netferry_helper_status() -> i32;
     /// Registers the LaunchDaemon; may show authorisation dialog. 0=ok.
     fn netferry_register_helper() -> i32;
+    /// Unregisters the LaunchDaemon (stops + removes). 0=ok.
+    fn netferry_unregister_helper() -> i32;
 }
 
 /// High-level status mirroring SMAppServiceStatus.
@@ -41,10 +46,63 @@ pub fn helper_status() -> HelperStatus {
     }
 }
 
-/// Ensure the helper is registered and running.
+/// Query the running helper's protocol version.
+///
+/// Returns `Ok(version)` if the helper responds, or `Err` if the helper is
+/// unreachable or does not understand the `version` command (old helper).
+fn query_helper_version() -> Result<u32, String> {
+    let mut stream =
+        UnixStream::connect(SOCKET_PATH).map_err(|e| format!("Helper socket: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .ok();
+    writeln!(stream, r#"{{"cmd":"version"}}"#)
+        .map_err(|e| format!("Helper write: {e}"))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("Helper read: {e}"))?;
+
+    let resp: serde_json::Value =
+        serde_json::from_str(line.trim()).map_err(|e| format!("Helper JSON: {e}"))?;
+
+    // Old helpers return {"type":"error","message":"Bad request: …"} for unknown
+    // commands, so treat any non-version response as version 0 (unknown).
+    match resp.get("type").and_then(|t| t.as_str()) {
+        Some("version") => resp
+            .get("version")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .ok_or_else(|| "Missing version field".to_string()),
+        _ => Ok(0), // unrecognised response → ancient helper
+    }
+}
+
+/// Force-restart the helper by unregistering then re-registering.
+fn restart_helper() -> Result<(), String> {
+    log::warn!("Restarting helper daemon (protocol version mismatch)");
+    let rc = unsafe { netferry_unregister_helper() };
+    if rc != 0 {
+        return Err("Failed to unregister the stale helper daemon.".to_string());
+    }
+    // Give launchd a moment to tear down the old process.
+    std::thread::sleep(Duration::from_millis(500));
+
+    let rc = unsafe { netferry_register_helper() };
+    if rc != 0 {
+        return Err("Failed to re-register the privileged helper after restart.".to_string());
+    }
+    wait_for_socket(Duration::from_secs(8))
+}
+
+/// Ensure the helper is registered, running, **and** protocol-compatible.
 ///
 /// * On first call: shows the macOS native authorisation dialog (one time).
 /// * On subsequent calls: returns immediately (already enabled).
+/// * If the running helper has a stale protocol version, it is automatically
+///   unregistered and re-registered so launchd picks up the new binary.
 /// * If macOS < 13: returns `Ok(false)` → caller should fall back to sudo.
 ///
 /// Returns `Ok(true)` when the helper is ready, `Ok(false)` when not available
@@ -72,6 +130,26 @@ pub fn ensure_helper_running() -> Result<bool, String> {
 
     // Wait up to 8 s for the helper to start and bind the socket.
     wait_for_socket(Duration::from_secs(8))?;
+
+    // ── Version gate ─────────────────────────────────────────────────────────
+    // SMAppService.register() updates the on-disk binary but does NOT restart
+    // an already-running daemon.  If the running process speaks an old protocol
+    // (e.g. still expects `sshuttle_bin` instead of `tunnel_bin`), we need to
+    // tear it down and let launchd relaunch the new binary.
+    match query_helper_version() {
+        Ok(v) if v == PROTOCOL_VERSION => {} // up-to-date
+        Ok(v) => {
+            log::warn!(
+                "Running helper protocol v{v}, expected v{PROTOCOL_VERSION} — restarting"
+            );
+            restart_helper()?;
+        }
+        Err(e) => {
+            log::warn!("Cannot query helper version ({e}) — restarting");
+            restart_helper()?;
+        }
+    }
+
     Ok(true)
 }
 

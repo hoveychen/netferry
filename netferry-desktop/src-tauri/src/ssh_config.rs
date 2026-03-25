@@ -1,6 +1,6 @@
 use crate::models::SshHostEntry;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn parse_kv(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
@@ -22,22 +22,19 @@ fn is_wildcard_host(host: &str) -> bool {
         .all(|p| p.contains('*') || p.contains('?'))
 }
 
-fn expand_tilde(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if path == "~" {
-            return home.to_string_lossy().to_string();
-        }
-        if let Some(rest) = path.strip_prefix("~/") {
-            return home.join(rest).to_string_lossy().to_string();
-        }
+fn expand_tilde(path: &str, home: &Path) -> String {
+    if path == "~" {
+        return home.to_string_lossy().to_string();
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home.join(rest).to_string_lossy().to_string();
     }
     path.to_string()
 }
 
 /// Extract the IdentityFile declared under a wildcard `Host *` block.
 /// Returns None if the config does not exist or contains no such entry.
-pub fn get_default_identity_file() -> Option<String> {
-    let home = dirs::home_dir()?;
+pub fn get_default_identity_file(home: &Path) -> Option<String> {
     let path = PathBuf::from(home).join(".ssh").join("config");
     if !path.exists() {
         return None;
@@ -54,23 +51,22 @@ pub fn get_default_identity_file() -> Option<String> {
             continue;
         }
         if in_wildcard_host && key == "identityfile" {
-            return Some(expand_tilde(&value));
+            return Some(expand_tilde(&value, home));
         }
     }
     None
 }
 
-pub fn parse_default_ssh_config() -> Result<Vec<SshHostEntry>, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Failed to locate user home directory".to_string())?;
+pub fn parse_default_ssh_config(home: &Path) -> Result<Vec<SshHostEntry>, String> {
     let path = PathBuf::from(home).join(".ssh").join("config");
     if !path.exists() {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(path).map_err(|e| format!("Failed to read ~/.ssh/config: {e}"))?;
-    parse_ssh_config(&raw)
+    parse_ssh_config(&raw, home)
 }
 
-pub fn parse_ssh_config(raw: &str) -> Result<Vec<SshHostEntry>, String> {
+pub fn parse_ssh_config(raw: &str, home: &Path) -> Result<Vec<SshHostEntry>, String> {
     let mut entries: Vec<SshHostEntry> = Vec::new();
     // Accumulate defaults from wildcard Host blocks (e.g. `Host *`).
     let mut wildcard_defaults = SshHostEntry {
@@ -136,7 +132,7 @@ pub fn parse_ssh_config(raw: &str) -> Result<Vec<SshHostEntry>, String> {
             "hostname" => entry.host_name = Some(value),
             "user" => entry.user = Some(value),
             "port" => entry.port = value.parse::<u16>().ok(),
-            "identityfile" => entry.identity_file = Some(expand_tilde(&value)),
+            "identityfile" => entry.identity_file = Some(expand_tilde(&value, home)),
             "proxyjump" => entry.proxy_jump = Some(value),
             "proxycommand" => entry.proxy_command = Some(value),
             _ => {}

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, GlobalSettings, Profile, SshHostEntry } from "@/types";
+import type { ConnectionStatus, GlobalSettings, MethodFeatures, Profile, SshHostEntry } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -39,4 +39,32 @@ export function getGlobalSettings() {
 
 export function saveGlobalSettings(settings: GlobalSettings) {
   return invoke<void>("save_global_settings", { settings });
+}
+
+export function getStatsUrl() {
+  return invoke<string | null>("get_stats_url");
+}
+
+export function listMethodFeatures() {
+  return invoke<MethodFeatures>("list_method_features");
+}
+
+export function updateTraySpeed(rxBytesPerSec: number, txBytesPerSec: number) {
+  return invoke<void>("update_tray_speed", { rxBytesPerSec, txBytesPerSec });
+}
+
+export function exportProfile(profile: Profile) {
+  return invoke<string>("export_profile", { profile });
+}
+
+export function exportProfileToFile(profile: Profile, path: string) {
+  return invoke<void>("export_profile_to_file", { profile, path });
+}
+
+export function importProfile(data: string) {
+  return invoke<Profile[]>("import_profile", { data });
+}
+
+export function importProfileFromFile(path: string) {
+  return invoke<Profile[]>("import_profile_from_file", { path });
 }

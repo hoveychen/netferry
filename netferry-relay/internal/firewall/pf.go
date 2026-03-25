@@ -4,12 +4,14 @@ package firewall
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -20,6 +22,12 @@ func newNamed(name string) (Method, error) {
 		return &pfMethod{}, nil
 	}
 	return nil, fmt.Errorf("firewall method %q not supported on macOS (only pf)", name)
+}
+
+func listMethodFeatures() map[string][]Feature {
+	return map[string][]Feature{
+		"pf": (&pfMethod{}).SupportedFeatures(),
+	}
 }
 
 // DIOCNATLOOK ioctl constant for Darwin.
@@ -54,8 +62,32 @@ type pfioc_natlook struct {
 }
 
 const (
-	PF_OUT     = 2
+	PF_OUT      = 2
 	IPPROTO_TCP = 6
+
+	// Darwin AF_INET6 = 30 (NOT 10 like Linux).
+	_AF_INET6_DARWIN = 30
+
+	// ioctl constants for DIOCCHANGERULE / DIOCBEGINADDRS on Darwin.
+	// Computed from: 0xC0000000 | ((sizeof(struct) & 0x1FFF) << 16) | ('D' << 8) | cmd
+	// sizeof(pfioc_rule)     = 3104 = 0xC20  → DIOCCHANGERULE
+	// sizeof(pfioc_pooladdr) = 1136 = 0x470  → DIOCBEGINADDRS
+	_DIOCCHANGERULE = uintptr(0xCC20441A)
+	_DIOCBEGINADDRS = uintptr(0xC4704433)
+
+	// Offsets into the pfioc_rule struct (Darwin / XNU).
+	_PFIOC_RULE_SIZE     = 3104
+	_PFIOC_POOLADDR_SIZE = 1136
+	_ACTION_OFFSET       = 0
+	_POOL_TICKET_OFFSET  = 8
+	_ANCHOR_CALL_OFFSET  = 1040
+	_RULE_ACTION_OFFSET  = 3068 // Darwin-specific
+
+	// pf rule actions / change commands.
+	_PF_CHANGE_ADD_TAIL   = 2
+	_PF_CHANGE_GET_TICKET = 6
+	_PF_PASS              = 0
+	_PF_RDR               = 8
 )
 
 // QueryNATLook resolves the original destination of a redirected TCP connection
@@ -76,10 +108,19 @@ func QueryNATLook(sock net.Conn) (dstIP string, dstPort int, err error) {
 	var pnl pfioc_natlook
 	pnl.proto = IPPROTO_TCP
 	pnl.dir = PF_OUT
-	pnl.af = syscall.AF_INET
 
-	copy(pnl.saddr.addr[:], peerAddr.IP.To4())
-	copy(pnl.daddr.addr[:], proxyAddr.IP.To4())
+	isV6 := peerAddr.IP.To4() == nil
+
+	if isV6 {
+		pnl.af = _AF_INET6_DARWIN
+		copy(pnl.saddr.addr[:], peerAddr.IP.To16())
+		copy(pnl.daddr.addr[:], proxyAddr.IP.To16())
+	} else {
+		pnl.af = syscall.AF_INET
+		copy(pnl.saddr.addr[:], peerAddr.IP.To4())
+		copy(pnl.daddr.addr[:], proxyAddr.IP.To4())
+	}
+
 	pnl.sxport.port = htons(uint16(peerAddr.Port))
 	pnl.dxport.port = htons(uint16(proxyAddr.Port))
 
@@ -95,25 +136,38 @@ func QueryNATLook(sock net.Conn) (dstIP string, dstPort int, err error) {
 		return proxyAddr.IP.String(), proxyAddr.Port, nil
 	}
 
-	ip := net.IP(pnl.rdaddr.addr[:4]).String()
+	var ip string
+	if isV6 {
+		ip = net.IP(pnl.rdaddr.addr[:16]).String()
+	} else {
+		ip = net.IP(pnl.rdaddr.addr[:4]).String()
+	}
 	port := int(ntohs(pnl.rdxport.port))
 	return ip, port, nil
 }
 
-var pfDev *os.File
+var (
+	pfDev     *os.File
+	pfDevOnce sync.Once
+	pfDevErr  error
+)
 
 func openPFDev() (int, error) {
-	if pfDev == nil {
+	pfDevOnce.Do(func() {
 		f, err := os.OpenFile("/dev/pf", os.O_RDWR, 0)
 		if err != nil {
-			return -1, fmt.Errorf("open /dev/pf: %w (running as root?)", err)
+			pfDevErr = fmt.Errorf("open /dev/pf: %w (running as root?)", err)
+			return
 		}
 		pfDev = f
+	})
+	if pfDevErr != nil {
+		return -1, pfDevErr
 	}
 	return int(pfDev.Fd()), nil
 }
 
-func htons(v uint16) uint16 { return (v>>8)|(v<<8) }
+func htons(v uint16) uint16 { return (v >> 8) | (v << 8) }
 func ntohs(v uint16) uint16 { return htons(v) }
 
 // pfMethod implements firewall.Method using macOS pf.
@@ -124,7 +178,11 @@ type pfMethod struct {
 
 func (p *pfMethod) Name() string { return "pf" }
 
-func (p *pfMethod) Setup(subnets, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
+func (p *pfMethod) SupportedFeatures() []Feature {
+	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6}
+}
+
+func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
 	p.anchor = fmt.Sprintf("netferry-%d", proxyPort)
 
 	// pfctl -E: enable pf and capture reference token.
@@ -154,65 +212,131 @@ func (p *pfMethod) Setup(subnets, excludes []string, proxyPort, dnsPort int, dns
 }
 
 func (p *pfMethod) addAnchors() {
-	// Get current main ruleset.
-	currentRules, _ := pfctl("-s", "rules")
-	currentNAT, _ := pfctl("-s", "nat")
-
-	rdrAnchor := fmt.Sprintf("rdr-anchor \"%s\"", p.anchor)
-	anchor := fmt.Sprintf("anchor \"%s\"", p.anchor)
-
-	// Rebuild the main ruleset with our anchors prepended if not already present.
-	var rules bytes.Buffer
-
-	// Add rdr-anchor to NAT rules if not present.
-	if !bytes.Contains(currentNAT, []byte(rdrAnchor)) {
-		fmt.Fprintln(&rules, rdrAnchor)
-	}
-	if len(currentNAT) > 0 {
-		rules.Write(bytes.TrimSpace(currentNAT))
-		rules.WriteByte('\n')
+	fd, err := openPFDev()
+	if err != nil {
+		return
 	}
 
-	// Add anchor to filter rules if not present.
-	if !bytes.Contains(currentRules, []byte(anchor)) {
-		fmt.Fprintln(&rules, anchor)
-	}
-	if len(currentRules) > 0 {
-		rules.Write(bytes.TrimSpace(currentRules))
-		rules.WriteByte('\n')
-	}
+	// Check which anchors already exist.
+	status, _ := pfctl("-s", "all")
 
-	pfctlStdin(rules.Bytes(), "-f", "/dev/stdin")
+	rdrAnchor := fmt.Sprintf(`rdr-anchor "%s"`, p.anchor)
+	anchor := fmt.Sprintf(`anchor "%s"`, p.anchor)
+
+	// Use ioctl DIOCCHANGERULE to append anchor rules individually,
+	// matching sshuttle's approach. This avoids reloading the entire
+	// ruleset which breaks due to ordering and unresolvable references.
+	if !bytes.Contains(status, []byte(rdrAnchor)) {
+		addAnchorRule(fd, _PF_RDR, p.anchor)
+	}
+	if !bytes.Contains(status, []byte(anchor)) {
+		addAnchorRule(fd, _PF_PASS, p.anchor)
+	}
 }
 
-func (p *pfMethod) buildRules(subnets, excludes []string, proxyPort, dnsPort int, dnsServers []string) []byte {
+// addAnchorRule appends a single anchor rule (rdr-anchor or anchor) to the
+// running pf ruleset using DIOCCHANGERULE ioctl, without disturbing existing rules.
+func addAnchorRule(fd int, kind uint32, name string) {
+	pr := make([]byte, _PFIOC_RULE_SIZE)
+	ppa := make([]byte, _PFIOC_POOLADDR_SIZE)
+
+	// DIOCBEGINADDRS — required by FreeBSD/Darwin before DIOCCHANGERULE.
+	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), _DIOCBEGINADDRS,
+		uintptr(unsafe.Pointer(&ppa[0])))
+
+	// Copy pool ticket from ppa to pr.
+	copy(pr[_POOL_TICKET_OFFSET:_POOL_TICKET_OFFSET+4], ppa[4:8])
+
+	// Set anchor_call = name.
+	copy(pr[_ANCHOR_CALL_OFFSET:], []byte(name))
+
+	// Set rule.action = kind (PF_PASS for anchor, PF_RDR for rdr-anchor).
+	binary.LittleEndian.PutUint32(pr[_RULE_ACTION_OFFSET:], kind)
+
+	// Step 1: PF_CHANGE_GET_TICKET
+	binary.LittleEndian.PutUint32(pr[_ACTION_OFFSET:], _PF_CHANGE_GET_TICKET)
+	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), _DIOCCHANGERULE,
+		uintptr(unsafe.Pointer(&pr[0])))
+
+	// Step 2: PF_CHANGE_ADD_TAIL
+	binary.LittleEndian.PutUint32(pr[_ACTION_OFFSET:], _PF_CHANGE_ADD_TAIL)
+	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), _DIOCCHANGERULE,
+		uintptr(unsafe.Pointer(&pr[0])))
+}
+
+func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) []byte {
 	var b bytes.Buffer
 
-	// DNS table.
-	if dnsPort > 0 && len(dnsServers) > 0 {
-		fmt.Fprintf(&b, "table <dns_servers> {%s}\n", strings.Join(dnsServers, ","))
+	v4Subnets, v6Subnets := SplitByFamily(subnets)
+	v4Excludes, v6Excludes := SplitExcludesByFamily(excludes)
+	v4DNS, v6DNS := SplitDNSByFamily(dnsServers)
+
+	// pf requires rules in order: tables, then ALL translation (rdr), then ALL filtering (pass).
+
+	// --- Tables ---
+	if dnsPort > 0 && len(v4DNS) > 0 {
+		fmt.Fprintf(&b, "table <dns_servers> {%s}\n", strings.Join(v4DNS, ","))
+	}
+	if dnsPort > 0 && len(v6DNS) > 0 {
+		fmt.Fprintf(&b, "table <dns6_servers> {%s}\n", strings.Join(v6DNS, ","))
 	}
 
-	// Per-subnet redirect rules.
-	for _, excl := range excludes {
-		fmt.Fprintf(&b, "pass out inet proto tcp to %s\n", excl)
-	}
-	for _, subnet := range subnets {
-		fmt.Fprintf(&b,
-			"rdr pass on lo0 inet proto tcp from ! 127.0.0.1 to %s -> 127.0.0.1 port %d\n",
-			subnet, proxyPort)
-		fmt.Fprintf(&b,
-			"pass out route-to lo0 inet proto tcp to %s keep state\n",
-			subnet)
-	}
+	// --- Translation rules (rdr) ---
 
-	// DNS redirect.
-	if dnsPort > 0 && len(dnsServers) > 0 {
+	// IPv4 subnet rdr rules.
+	for _, subnet := range v4Subnets {
+		fmt.Fprintf(&b,
+			"rdr pass on lo0 inet proto tcp from ! 127.0.0.1 to %s%s -> 127.0.0.1 port %d\n",
+			subnet.CIDR, subnet.PfPortExpr(), proxyPort)
+	}
+	// IPv6 subnet rdr rules.
+	for _, subnet := range v6Subnets {
+		fmt.Fprintf(&b,
+			"rdr pass on lo0 inet6 proto tcp from ! ::1 to %s%s -> ::1 port %d\n",
+			subnet.CIDR, subnet.PfPortExpr(), proxyPort)
+	}
+	// DNS rdr rules.
+	if dnsPort > 0 && len(v4DNS) > 0 {
 		fmt.Fprintf(&b,
 			"rdr pass on lo0 inet proto udp to <dns_servers> port 53 -> 127.0.0.1 port %d\n",
 			dnsPort)
+	}
+	if dnsPort > 0 && len(v6DNS) > 0 {
+		fmt.Fprintf(&b,
+			"rdr pass on lo0 inet6 proto udp to <dns6_servers> port 53 -> ::1 port %d\n",
+			dnsPort)
+	}
+
+	// --- Filtering rules (pass) ---
+
+	// IPv4 excludes.
+	for _, excl := range v4Excludes {
+		fmt.Fprintf(&b, "pass out inet proto tcp to %s\n", excl)
+	}
+	// IPv6 excludes.
+	for _, excl := range v6Excludes {
+		fmt.Fprintf(&b, "pass out inet6 proto tcp to %s\n", excl)
+	}
+	// IPv4 subnet pass rules.
+	for _, subnet := range v4Subnets {
+		fmt.Fprintf(&b,
+			"pass out route-to lo0 inet proto tcp to %s%s keep state\n",
+			subnet.CIDR, subnet.PfPortExpr())
+	}
+	// IPv6 subnet pass rules.
+	for _, subnet := range v6Subnets {
+		fmt.Fprintf(&b,
+			"pass out route-to lo0 inet6 proto tcp to %s%s keep state\n",
+			subnet.CIDR, subnet.PfPortExpr())
+	}
+	// DNS pass rules.
+	if dnsPort > 0 && len(v4DNS) > 0 {
 		fmt.Fprintf(&b,
 			"pass out route-to lo0 inet proto udp to <dns_servers> port 53 keep state\n")
+	}
+	if dnsPort > 0 && len(v6DNS) > 0 {
+		fmt.Fprintf(&b,
+			"pass out route-to lo0 inet6 proto udp to <dns6_servers> port 53 keep state\n")
 	}
 
 	return b.Bytes()

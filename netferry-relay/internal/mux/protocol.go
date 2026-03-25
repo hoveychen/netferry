@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 )
 
 const (
@@ -14,12 +15,32 @@ const (
 	SYNC_HDR   = "\x00\x00SSHUTTLE0001"
 	SYNC_HDR_N = len(SYNC_HDR)
 
-	// Read/write buffer size — 64 KB, removes the Python 2048-byte limit.
-	BUF_SIZE = 65536
+	// Read/write buffer size — must fit in uint16 datalen field (max 65535).
+	BUF_SIZE = 65535
 
 	// Outbound frame channel buffer. One frame ≈ 64 KB → ~512 MB max in-flight
 	// before backpressure kicks in. In practice connections saturate SSH first.
 	MUX_OUT_BUF = 512
+
+	// INBOX_SEND_TIMEOUT is how long we wait to deliver a frame to a
+	// per-channel inbox before considering the consumer dead and closing
+	// the channel. This prevents silent data loss for TCP streams.
+	INBOX_SEND_TIMEOUT = 10 * time.Second
+
+	// KEEPALIVE_INTERVAL is how often the client sends CMD_PING to the server
+	// to detect dead connections.
+	KEEPALIVE_INTERVAL = 30 * time.Second
+
+	// KEEPALIVE_TIMEOUT is how long we wait for a CMD_PONG before considering
+	// the connection dead.
+	KEEPALIVE_TIMEOUT = 15 * time.Second
+
+	// SERVER_IDLE_TIMEOUT is how long the server waits without receiving any
+	// frame before considering the client dead and exiting. This prevents
+	// orphaned server processes when the SSH connection dies without a clean
+	// shutdown (e.g. network loss, client crash). The client sends CMD_PING
+	// every KEEPALIVE_INTERVAL (30s), so 90s gives 3 missed pings of margin.
+	SERVER_IDLE_TIMEOUT = 90 * time.Second
 )
 
 // Commands (kept identical to sshuttle wire protocol for compatibility).
@@ -39,6 +60,24 @@ const (
 	CMD_UDP_OPEN         = uint16(0x420c)
 	CMD_UDP_DATA         = uint16(0x420d)
 	CMD_UDP_CLOSE        = uint16(0x420e)
+	CMD_WINDOW_UPDATE    = uint16(0x420f)
+)
+
+const (
+	// PRIORITY_OUT_BUF is the buffer size for the priority output channel.
+	// Control frames (PING/PONG/DNS/WINDOW_UPDATE) are small and infrequent.
+	PRIORITY_OUT_BUF = 64
+
+	// DEFAULT_INITIAL_WINDOW is the per-channel send window in bytes.
+	// The sender can transmit this many bytes before needing a WINDOW_UPDATE
+	// from the receiver. 256 KB balances latency and throughput.
+	DEFAULT_INITIAL_WINDOW = 256 * 1024
+
+	// WINDOW_UPDATE_THRESHOLD controls when the receiver sends a
+	// WINDOW_UPDATE back to the sender. Once consumed bytes exceed this
+	// fraction of the initial window, a WINDOW_UPDATE is sent. This avoids
+	// sending a WINDOW_UPDATE for every tiny Read().
+	WINDOW_UPDATE_THRESHOLD = DEFAULT_INITIAL_WINDOW / 4
 )
 
 // Frame is a decoded mux protocol frame.

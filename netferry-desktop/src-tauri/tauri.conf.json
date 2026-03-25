@@ -29,12 +29,24 @@
     "externalBin": [
       "binaries/netferry-tunnel"
     ],
+    "resources": {
+      "binaries/WinDivert.dll": "WinDivert.dll",
+      "binaries/WinDivert64.sys": "WinDivert64.sys"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["nfprofile"],
+        "mimeType": "application/x-netferry-profile",
+        "description": "NetFerry Profile",
+        "role": "Editor"
+      }
     ],
     "macOS": {
       "entitlements": "entitlements.plist",

@@ -9,16 +9,18 @@
 //! Request  (main app → helper):
 //!   {"cmd":"connect","tunnel_bin":"/path","args":[...]}
 //!   {"cmd":"ping"}
+//!   {"cmd":"version"}
 //!
 //! Response (helper → main app):
 //!   {"type":"pong"}
+//!   {"type":"version","version":2}
 //!   {"type":"started","pid":12345}
 //!   {"type":"log","stream":"stdout"|"stderr","line":"..."}
 //!   {"type":"exit","code":0}
 //!   {"type":"error","message":"..."}
 
 #[cfg(unix)]
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
@@ -29,6 +31,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 
 pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
+
+/// Protocol version — bump this whenever the IPC wire format changes so the
+/// main app can detect stale helper daemons and force a restart.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -44,12 +50,15 @@ enum Request {
         env: std::collections::HashMap<String, String>,
     },
     Ping,
+    Version,
 }
 
 #[derive(serde::Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum Response {
     Pong,
+    #[serde(rename = "version")]
+    Version { version: u32 },
     Started { pid: u32 },
     Log { stream: String, line: String },
     Exit { code: i32 },
@@ -83,6 +92,7 @@ fn handle_connection(stream: UnixStream) {
     let req: Request = match serde_json::from_str(line.trim()) {
         Ok(r) => r,
         Err(e) => {
+            log::error!("Bad request: {e}");
             send(
                 &mut write_stream,
                 &Response::Error {
@@ -95,10 +105,17 @@ fn handle_connection(stream: UnixStream) {
 
     match req {
         Request::Ping => {
+            log::debug!("Received ping");
             send(&mut write_stream, &Response::Pong);
         }
 
+        Request::Version => {
+            log::info!("Version query → v{PROTOCOL_VERSION}");
+            send(&mut write_stream, &Response::Version { version: PROTOCOL_VERSION });
+        }
+
         Request::Connect { tunnel_bin, args, env } => {
+            log::info!("Connect request: tunnel_bin={tunnel_bin}, args={args:?}");
             let mut cmd = Command::new(&tunnel_bin);
             cmd.args(&args)
                 .stdout(Stdio::piped())
@@ -122,6 +139,7 @@ fn handle_connection(stream: UnixStream) {
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
+                    log::error!("Failed to start tunnel: {e}");
                     send(
                         &mut write_stream,
                         &Response::Error {
@@ -133,6 +151,7 @@ fn handle_connection(stream: UnixStream) {
             };
 
             let pid = child.id();
+            log::info!("Tunnel started, pid={pid}");
             send(&mut write_stream, &Response::Started { pid });
 
             let stdout = child.stdout.take().expect("stdout");
@@ -174,10 +193,41 @@ fn handle_connection(stream: UnixStream) {
             // Drop our copy of tx so the channel closes when both threads finish.
             drop(tx);
 
+            // Watchdog: monitor the read end of the socket.  When the main app
+            // disconnects — either by closing the socket (EOF) or by writing any
+            // data (explicit disconnect signal) — we kill the tunnel process group.
+            let watchdog_pid = pid;
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 1];
+                // read_line already consumed the request; any further read will
+                // block until the peer closes the socket or sends data.
+                loop {
+                    match read_stream.read(&mut buf) {
+                        Ok(0) | Err(_) => {
+                            log::info!("Socket EOF detected (app disconnected), stopping tunnel pgid={watchdog_pid}");
+                        }
+                        Ok(_) => {
+                            // App sent data — explicit disconnect signal.
+                            log::info!("Disconnect signal received from app, stopping tunnel pgid={watchdog_pid}");
+                        }
+                    }
+                    // Send SIGTERM first so the tunnel can clean up firewall rules.
+                    unsafe { libc::kill(-(watchdog_pid as i32), libc::SIGTERM) };
+                    // Wait briefly, then SIGKILL as fallback.
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    unsafe { libc::kill(-(watchdog_pid as i32), libc::SIGKILL) };
+                    return;
+                }
+            });
+
             // Relay events to the socket; stop if the socket write fails
             // (main app disconnected → kill process group).
             for event in rx {
                 if !send(&mut write_stream, &event) {
+                    log::info!("Socket write failed (app disconnected), stopping tunnel pgid={pid}");
+                    // SIGTERM first for firewall cleanup, then SIGKILL.
+                    unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
+                    std::thread::sleep(std::time::Duration::from_secs(3));
                     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
                     let _ = child.wait();
                     return;
@@ -189,6 +239,7 @@ fn handle_connection(stream: UnixStream) {
                 .wait()
                 .map(|s| s.code().unwrap_or(-1))
                 .unwrap_or(-1);
+            log::info!("Tunnel exited with code={code}");
             send(&mut write_stream, &Response::Exit { code });
         }
     }
@@ -204,13 +255,16 @@ fn main() {
 
 #[cfg(unix)]
 fn main() {
+    netferry_desktop_lib::logging::init_helper_logging();
+    log::info!("netferry-helper starting (protocol v{PROTOCOL_VERSION})");
+
     // Clean up any stale socket from a previous crash.
     let _ = std::fs::remove_file(SOCKET_PATH);
 
     let listener = match UnixListener::bind(SOCKET_PATH) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("netferry-helper: cannot bind {SOCKET_PATH}: {e}");
+            log::error!("Cannot bind {SOCKET_PATH}: {e}");
             std::process::exit(1);
         }
     };
@@ -219,16 +273,18 @@ fn main() {
     if let Err(e) =
         std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o666))
     {
-        eprintln!("netferry-helper: cannot chmod socket: {e}");
+        log::error!("Cannot chmod socket: {e}");
     }
 
+    log::info!("Listening on {SOCKET_PATH}");
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
+                log::debug!("Accepted new connection");
                 std::thread::spawn(|| handle_connection(s));
             }
             Err(e) => {
-                eprintln!("netferry-helper: accept error: {e}");
+                log::error!("Accept error: {e}");
             }
         }
     }

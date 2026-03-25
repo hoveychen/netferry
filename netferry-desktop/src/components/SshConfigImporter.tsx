@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { importSshHosts } from "@/api";
-import type { Profile, SshHostEntry } from "@/types";
+import type { JumpHost, Profile, SshHostEntry } from "@/types";
 import { Button } from "@/components/ui/button";
 import { newProfile } from "@/stores/profileStore";
 
@@ -15,6 +15,78 @@ function buildRemote(entry: SshHostEntry): string {
   const host = entry.hostName ?? entry.host;
   const withUser = entry.user ? `${entry.user}@${host}` : host;
   return entry.port ? `${withUser}:${entry.port}` : withUser;
+}
+
+/** Try to extract a jump host from a ProxyCommand of the form:
+ *    ssh -W %h:%p <host-alias>
+ *  or  ssh -W %h:%p [-p port] [user@]hostname
+ *  Returns null if the command doesn't match. */
+function parseProxyCommandAsJump(cmd: string, allHosts: SshHostEntry[]): JumpHost[] | null {
+  // Match: ssh [options...] -W %h:%p <destination>
+  // The -W %h:%p can appear anywhere in the args.
+  const trimmed = cmd.trim();
+  // Must start with "ssh " and contain "-W %h:%p"
+  if (!/^ssh\s/i.test(trimmed) || !trimmed.includes("-W %h:%p")) {
+    return null;
+  }
+  // Remove "ssh" prefix and "-W %h:%p", then parse remaining tokens.
+  const rest = trimmed
+    .replace(/^ssh\s+/, "")
+    .replace(/-W\s+%h:%p/, "")
+    .trim();
+  const tokens = rest.split(/\s+/).filter(Boolean);
+
+  // Consume optional flags: -p <port>, -i <identity>, -o <option>=...
+  let port: string | undefined;
+  let identity: string | undefined;
+  const remaining: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === "-p" && i + 1 < tokens.length) {
+      port = tokens[++i];
+    } else if (tokens[i] === "-i" && i + 1 < tokens.length) {
+      identity = tokens[++i];
+    } else if (tokens[i] === "-o" && i + 1 < tokens.length) {
+      i++; // skip option value
+    } else if (tokens[i].startsWith("-")) {
+      // skip unknown single flags
+    } else {
+      remaining.push(tokens[i]);
+    }
+  }
+
+  // The last remaining token should be the destination (host alias or [user@]host).
+  const dest = remaining.pop();
+  if (!dest) return null;
+
+  // Check if dest is a known Host alias.
+  const entry = allHosts.find((h) => h.host === dest);
+  if (entry) {
+    return [{ remote: buildRemote(entry), identityFile: entry.identityFile ?? identity }];
+  }
+
+  // Treat as literal [user@]host[:port].
+  let remote = dest;
+  if (port) remote += `:${port}`;
+  return [{ remote, identityFile: identity }];
+}
+
+/** Resolve a ProxyJump chain into JumpHost entries by looking up each hop in
+ *  the parsed SSH config.  Falls back to using the hop string as-is when no
+ *  matching Host entry exists. */
+function resolveJumpHosts(proxyJump: string, allHosts: SshHostEntry[]): JumpHost[] {
+  const hops = proxyJump.split(",").map((h) => h.trim()).filter(Boolean);
+  return hops.map((hop) => {
+    // Try to match a known Host alias.
+    const entry = allHosts.find((h) => h.host === hop);
+    if (entry) {
+      return {
+        remote: buildRemote(entry),
+        identityFile: entry.identityFile ?? undefined,
+      };
+    }
+    // No match — treat hop as a literal [user@]host[:port] spec.
+    return { remote: hop };
+  });
 }
 
 export function SshConfigImporter({ open, onClose, onImport }: Props) {
@@ -42,15 +114,32 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
 
   const handleImport = () => {
     if (!selected) return;
+
+    // Resolve ProxyJump chain into native jumpHosts.
+    let jumpHosts: JumpHost[] | undefined;
+    if (selected.proxyJump) {
+      const resolved = resolveJumpHosts(selected.proxyJump, hosts);
+      if (resolved.length > 0) jumpHosts = resolved;
+    }
+
+    // Try to interpret ProxyCommand as a jump host (ssh -W %h:%p pattern).
+    // Fall back to extraSshOptions for unrecognised commands.
     const sshParts: string[] = [];
-    if (selected.proxyJump) sshParts.push(`-J ${selected.proxyJump}`);
-    if (selected.proxyCommand) sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
+    if (selected.proxyCommand && !selected.proxyJump) {
+      const parsed = parseProxyCommandAsJump(selected.proxyCommand, hosts);
+      if (parsed && parsed.length > 0) {
+        jumpHosts = parsed;
+      } else {
+        sshParts.push(`-o ProxyCommand='${selected.proxyCommand}'`);
+      }
+    }
 
     const profile: Profile = {
       ...newProfile(),
       name: selected.host,
       remote: buildRemote(selected),
       identityFile: selected.identityFile ?? "",
+      jumpHosts,
       extraSshOptions: sshParts.join(" ") || undefined,
     };
     onImport(profile);
@@ -93,7 +182,6 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                       ["User", selected.user],
                       ["Port", selected.port],
                       ["IdentityFile", selected.identityFile],
-                      ...(selected.proxyJump ? [["ProxyJump", selected.proxyJump]] : []),
                     ] as [string, string | number | undefined][]
                   ).map(([label, value]) => (
                     <>
@@ -104,6 +192,50 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                     </>
                   ))}
                 </div>
+                {selected.proxyJump && (
+                  <div className="mt-3 border-t border-white/[0.06] pt-3">
+                    <span className="text-white/40">Jump Hosts</span>
+                    <div className="mt-1 space-y-1">
+                      {resolveJumpHosts(selected.proxyJump, hosts).map((jh, i) => (
+                        <div key={i} className="flex items-center gap-2 font-mono text-white/75">
+                          <span className="text-[10px] text-white/25">{i + 1}.</span>
+                          <span className="truncate">{jh.remote}</span>
+                          {jh.identityFile && (
+                            <span className="truncate text-white/35 text-xs">({jh.identityFile})</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {selected.proxyCommand && !selected.proxyJump && (() => {
+                  const parsed = parseProxyCommandAsJump(selected.proxyCommand, hosts);
+                  if (parsed && parsed.length > 0) {
+                    return (
+                      <div className="mt-3 border-t border-white/[0.06] pt-3">
+                        <span className="text-white/40">Jump Hosts</span>
+                        <span className="ml-2 text-[10px] text-white/25">(from ProxyCommand)</span>
+                        <div className="mt-1 space-y-1">
+                          {parsed.map((jh, i) => (
+                            <div key={i} className="flex items-center gap-2 font-mono text-white/75">
+                              <span className="text-[10px] text-white/25">{i + 1}.</span>
+                              <span className="truncate">{jh.remote}</span>
+                              {jh.identityFile && (
+                                <span className="truncate text-white/35 text-xs">({jh.identityFile})</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="mt-3 border-t border-white/[0.06] pt-3">
+                      <span className="text-white/40">ProxyCommand</span>
+                      <p className="mt-1 truncate font-mono text-white/75">{selected.proxyCommand}</p>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </>

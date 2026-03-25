@@ -14,8 +14,10 @@ export function newProfile(): Profile {
     autoNets: false,
     method: "auto",
     disableIpv6: false,
+    enableUdp: false,
     notes: "",
     autoExcludeLan: true,
+    flowControl: true,
     latencyBufferSize: 2097152,
   };
 }

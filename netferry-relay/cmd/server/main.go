@@ -24,6 +24,7 @@ func main() {
 	autoNets := false
 	toNameserver := ""
 	verbose := false
+	flowControl := false
 
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -31,6 +32,8 @@ func main() {
 			autoNets = true
 		case "--verbose", "-v":
 			verbose = true
+		case "--flow-control":
+			flowControl = true
 		case "--to-ns":
 			i++
 			if i < len(os.Args) {
@@ -82,6 +85,9 @@ func main() {
 	}
 
 	srv = mux.NewMuxServer(r, w, handlers)
+	if flowControl {
+		srv.SetFlowControl(true, mux.DEFAULT_INITIAL_WINDOW)
+	}
 
 	// CMD_ROUTES must be enqueued before Run() so it's the first frame the client sees.
 	srv.Send(mux.Frame{Channel: 0, Cmd: mux.CMD_ROUTES, Data: routeData})
@@ -216,22 +222,43 @@ func handleDNS(srv *mux.MuxServer, channel uint16, data []byte, toNameserver str
 
 	conn, err := net.DialTimeout("udp", ns, 5*time.Second)
 	if err != nil {
+		log.Printf("DNS: dial %s: %v", ns, err)
+		sendDNSServFail(srv, channel, data)
 		return
 	}
 	defer conn.Close()
 
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := conn.Write(data); err != nil {
+		log.Printf("DNS: write to %s: %v", ns, err)
+		sendDNSServFail(srv, channel, data)
 		return
 	}
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65535)
 	n, err := conn.Read(buf)
 	if err != nil {
+		log.Printf("DNS: read from %s: %v", ns, err)
+		sendDNSServFail(srv, channel, data)
 		return
 	}
 	resp := make([]byte, n)
 	copy(resp, buf[:n])
-	srv.SendTo(channel, mux.CMD_DNS_RESPONSE, resp)
+	srv.SendPriorityTo(channel, mux.CMD_DNS_RESPONSE, resp)
+}
+
+// sendDNSServFail sends a minimal DNS SERVFAIL response back through the mux
+// so the client gets an immediate error instead of timing out.
+func sendDNSServFail(srv *mux.MuxServer, channel uint16, query []byte) {
+	if len(query) < 12 {
+		return
+	}
+	resp := make([]byte, 12)
+	copy(resp[0:2], query[0:2]) // transaction ID
+	flags := uint16(query[2])<<8 | uint16(query[3])
+	opcode := flags & 0x7800
+	resp[2] = byte((0x8002 | opcode) >> 8)
+	resp[3] = byte((0x8002 | opcode) & 0xff)
+	srv.SendPriorityTo(channel, mux.CMD_DNS_RESPONSE, resp)
 }
 
 // handleUDPOpen creates a UDP proxy for the given channel.
@@ -250,7 +277,7 @@ func handleUDPOpen(srv *mux.MuxServer, channel uint16, family int) {
 	}()
 
 	go func() {
-		buf := make([]byte, 4096)
+		buf := make([]byte, 65535)
 		for {
 			n, addr, err := conn.ReadFrom(buf)
 			if err != nil {
@@ -259,6 +286,13 @@ func handleUDPOpen(srv *mux.MuxServer, channel uint16, family int) {
 			udpAddr := addr.(*net.UDPAddr)
 			hdr := fmt.Sprintf("%s,%d,", udpAddr.IP.String(), udpAddr.Port)
 			out := append([]byte(hdr), buf[:n]...)
+			// Acquire send window before transmitting.
+			cs := srv.ChannelState(channel)
+			if cs != nil && cs.SW() != nil {
+				if !cs.SW().Acquire(len(out)) {
+					return
+				}
+			}
 			srv.SendTo(channel, mux.CMD_UDP_DATA, out)
 		}
 	}()
@@ -277,6 +311,10 @@ func handleUDPOpen(srv *mux.MuxServer, channel uint16, family int) {
 			port, _ := strconv.Atoi(parts[1])
 			dst := &net.UDPAddr{IP: net.ParseIP(parts[0]), Port: port}
 			conn.WriteTo([]byte(parts[2]), dst)
+			// Grant credit back to the client.
+			if srv.FlowControlEnabled() {
+				srv.SendWindowUpdate(channel, int64(len(f.Data)))
+			}
 		case mux.CMD_UDP_CLOSE:
 			return
 		}
@@ -290,6 +328,10 @@ func readResolvConf() []string {
 	}
 	var servers []string
 	for _, line := range strings.Split(string(data), "\n") {
+		// Strip inline comments (# or ;).
+		if idx := strings.IndexAny(line, "#;"); idx >= 0 {
+			line = line[:idx]
+		}
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "nameserver ") {
 			ip := strings.TrimSpace(line[11:])

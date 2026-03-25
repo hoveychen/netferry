@@ -7,6 +7,66 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-tunnel-cli:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: netferry-relay/go.mod
+          cache-dependency-path: netferry-relay/go.sum
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build server binaries (embedded)
+        working-directory: netferry-relay
+        run: |
+          mkdir -p cmd/tunnel/binaries
+          for target in "linux/amd64" "linux/arm64" "linux/mipsle" "darwin/amd64" "darwin/arm64"; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+              go build -ldflags="-X main.Version=${{ steps.version.outputs.version }} -s -w" \
+              -o "cmd/tunnel/binaries/server-${os}-${arch}" ./cmd/server
+          done
+
+      - name: Build tunnel binary
+        working-directory: netferry-relay
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build \
+            -ldflags="-X main.Version=${{ steps.version.outputs.version }} -s -w" \
+            -o "netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}" \
+            ./cmd/tunnel
+          chmod +x "netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: netferry-relay/netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}
+
   build:
     permissions:
       contents: read
@@ -119,6 +179,8 @@ jobs:
         # Do NOT pass APPLE_SIGNING_IDENTITY here. Tauri re-signs all binaries with
         # codesign --force, which would override our custom entitlements on the sidecar
         # and helper (tauri-apps/tauri#7381). We sign everything manually after assembly.
+        env:
+          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
         run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles app
 
       - name: Inject privileged helper into bundle (macOS)
@@ -200,6 +262,8 @@ jobs:
 
       - name: Build bundle (non-macOS)
         if: "!startsWith(matrix.os, 'macos')"
+        env:
+          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
         run: npm run tauri build -- --target ${{ matrix.rust_target }}
 
       - name: Rename bundle to friendly name
@@ -241,7 +305,7 @@ jobs:
           path: ${{ matrix.bundle_glob }}
 
   publish:
-    needs: build
+    needs: [build, build-tunnel-cli]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -260,6 +324,12 @@ jobs:
           cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.AppImage' -type f | head -1)" release-artifacts/NetFerry_linux_x64.AppImage
           cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.msi' -type f | head -1)" release-artifacts/NetFerry_windows_x64.msi
           cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.exe' -type f | head -1)" release-artifacts/NetFerry_windows_x64.exe
+
+          # CLI-only tunnel binaries (already have stable names)
+          cp release-artifacts/netferry-tunnel-linux-amd64/netferry-tunnel-linux-amd64 release-artifacts/netferry-tunnel-linux-amd64.bin
+          cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-artifacts/netferry-tunnel-linux-arm64.bin
+          mv release-artifacts/netferry-tunnel-linux-amd64.bin release-artifacts/netferry-tunnel-linux-amd64
+          mv release-artifacts/netferry-tunnel-linux-arm64.bin release-artifacts/netferry-tunnel-linux-arm64
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2

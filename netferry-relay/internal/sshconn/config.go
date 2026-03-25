@@ -18,9 +18,6 @@ type HostConfig struct {
 	IdentityFile string
 	ProxyJump    string
 	ProxyCommand string
-	// StrictHostKeyChecking: "yes" | "no" | "accept-new" | ""
-	StrictHostKeyChecking string
-	UserKnownHostsFile    string
 }
 
 // ParseSSHConfig loads ~/.ssh/config and resolves settings for the given alias.
@@ -91,13 +88,6 @@ func ParseSSHConfig(alias string) (*HostConfig, error) {
 	if pc := get("ProxyCommand"); pc != "" {
 		hc.ProxyCommand = pc
 	}
-	if sc := get("StrictHostKeyChecking"); sc != "" {
-		hc.StrictHostKeyChecking = sc
-	}
-	if kh := get("UserKnownHostsFile"); kh != "" {
-		hc.UserKnownHostsFile = expandHome(kh)
-	}
-
 	// Defaults.
 	if hc.User == "" {
 		hc.User = os.Getenv("USER")
