@@ -43,6 +43,8 @@ log = "0.4"
 simplelog = "0.12"
 tauri-plugin-log = "2.8.0"
 tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"

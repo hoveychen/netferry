@@ -15,6 +15,18 @@ mod tray;
 extern crate libc;
 
 use tauri::{Emitter, Listener, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
+
+/// Emit "import-profile-file" events for any .nfprofile paths found in an
+/// argument list (used by the single-instance plugin on Windows/Linux).
+fn emit_nfprofile_paths<'a>(app: &tauri::AppHandle, args: impl Iterator<Item = &'a str>) {
+    for arg in args {
+        let path = std::path::Path::new(arg);
+        if path.extension().is_some_and(|ext| ext == "nfprofile") {
+            let _ = app.emit("import-profile-file", arg.to_string());
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,6 +48,12 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Windows/Linux: when a second instance is spawned (e.g. double-clicking
+            // a .nfprofile file), the single-instance plugin forwards the argv here.
+            emit_nfprofile_paths(app, argv.iter().map(|s| s.as_str()));
+        }))
         .manage(sidecar::AppState::new())
         .setup(|app| {
             // On Windows, the tunnel cannot self-elevate, so the whole app must
@@ -63,6 +81,25 @@ pub fn run() {
             sidecar::kill_stale_tunnel();
 
             tray::setup_tray(app.handle())?;
+
+            // Handle .nfprofile files opened while the app is already running.
+            // On macOS this fires for double-click / Finder "Open With";
+            // on Windows/Linux the single-instance plugin above handles it instead.
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if let Ok(path) = url.to_file_path() {
+                        if path.extension().is_some_and(|ext| ext == "nfprofile") {
+                            let _ = handle.emit("import-profile-file", path.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            });
+
+            // On Linux (and debug-mode Windows) the installer doesn't register
+            // file associations at OS level, so register at runtime.
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
 
             // Rebuild tray menu and update tooltip whenever connection status changes.
             let app_handle = app.handle().clone();
@@ -121,18 +158,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // A .nfprofile file was opened (double-click or CLI arg).
-            // Emit the path to the frontend so it can trigger import.
-            if let tauri::RunEvent::Opened { urls } = &event {
-                for url in urls {
-                    if let Ok(path) = url.to_file_path() {
-                        if path.extension().map_or(false, |ext| ext == "nfprofile") {
-                            let _ = app_handle.emit("import-profile-file", path.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-
             // On graceful exit (Cmd+Q, window close, tray quit), ensure the
             // tunnel process group is terminated and the PID file is removed.
             if let tauri::RunEvent::Exit = event {

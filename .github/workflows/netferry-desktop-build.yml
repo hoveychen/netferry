@@ -55,6 +55,11 @@ jobs:
             librsvg2-dev \
             patchelf
 
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: netferry-relay/go.mod
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:

@@ -126,6 +126,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: netferry-relay/go.mod
+          cache-dependency-path: netferry-relay/go.sum
+
       - name: Install Linux system dependencies
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -416,4 +421,3 @@ jobs:
       - name: Clean up keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
-
