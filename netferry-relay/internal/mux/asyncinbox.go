@@ -11,8 +11,10 @@ const (
 
 	// maxOverflowFrames is the hard limit on frames buffered in the
 	// overflow slice. Beyond this the consumer is assumed dead and the
-	// inbox is closed. 1024 frames × 64 KB max ≈ 64 MB worst-case.
-	maxOverflowFrames = 1024
+	// inbox is closed. 8192 frames × 64 KB max ≈ 512 MB worst-case.
+	// Increased from 1024 to give slow consumers (e.g. writing to a
+	// remote server under TCP backpressure) more room.
+	maxOverflowFrames = 8192
 )
 
 // asyncInbox decouples the mux reader goroutine from per-channel consumers.
@@ -48,19 +50,22 @@ func newAsyncInbox() *asyncInbox {
 // send enqueues a frame without blocking the caller.
 // Returns false if the inbox is closed or the overflow limit is exceeded.
 func (ai *asyncInbox) send(f Frame) bool {
-	// Fast path: direct send if channel has space.
-	select {
-	case ai.ch <- f:
-		return true
-	default:
-	}
-
-	// Slow path: buffer in overflow slice.
+	// Check closed state under lock first to avoid send-on-closed-channel panic.
 	ai.mu.Lock()
 	if ai.closed {
 		ai.mu.Unlock()
 		return false
 	}
+
+	// Fast path: direct send if channel has space.
+	select {
+	case ai.ch <- f:
+		ai.mu.Unlock()
+		return true
+	default:
+	}
+
+	// Slow path: buffer in overflow slice.
 	ai.buf = append(ai.buf, f)
 	n := len(ai.buf)
 	ai.mu.Unlock()
@@ -85,13 +90,36 @@ func (ai *asyncInbox) C() <-chan Frame {
 }
 
 // Close shuts down the inbox and stops the drainer goroutine.
+// Overflow frames are drained into the channel buffer so consumers
+// can read any remaining data after the channel is closed.
 func (ai *asyncInbox) Close() {
 	ai.closeOnce.Do(func() {
 		ai.mu.Lock()
 		ai.closed = true
+		// Drain remaining overflow frames into the channel buffer before
+		// closing. This prevents data loss for frames that were in the
+		// overflow slice but hadn't been moved to the channel yet.
+		remaining := ai.buf
 		ai.buf = nil
 		ai.mu.Unlock()
+
+		// Stop the drainer goroutine first so it doesn't race with us.
 		close(ai.done)
+
+		// Best-effort drain: push overflow frames into the channel.
+		// If the channel buffer is full, remaining frames are dropped.
+		// In practice the consumer is still active and draining, so the
+		// channel usually has space.
+		for _, f := range remaining {
+			select {
+			case ai.ch <- f:
+			default:
+				// Channel buffer full — stop trying. The consumer will
+				// get what's already in the channel after it's closed.
+				goto closeCh
+			}
+		}
+	closeCh:
 		close(ai.ch)
 	})
 }

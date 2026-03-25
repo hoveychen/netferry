@@ -182,6 +182,7 @@ func (s *MuxServer) reader() {
 }
 
 func (s *MuxServer) writer() {
+	bw := NewBufferedWriter(s.w)
 	for {
 		// Drain all priority frames first.
 		select {
@@ -189,7 +190,11 @@ func (s *MuxServer) writer() {
 			if !ok {
 				return
 			}
-			if err := WriteFrame(s.w, f); err != nil {
+			if err := WriteFrame(bw, f); err != nil {
+				s.err <- err
+				return
+			}
+			if err := bw.Flush(); err != nil {
 				s.err <- err
 				return
 			}
@@ -201,7 +206,7 @@ func (s *MuxServer) writer() {
 			if !ok {
 				return
 			}
-			if err := WriteFrame(s.w, f); err != nil {
+			if err := WriteFrame(bw, f); err != nil {
 				s.err <- err
 				return
 			}
@@ -209,10 +214,16 @@ func (s *MuxServer) writer() {
 			if !ok {
 				return
 			}
-			if err := WriteFrame(s.w, f); err != nil {
+			if err := WriteFrame(bw, f); err != nil {
 				s.err <- err
 				return
 			}
+		}
+		// Flush after each frame. The bufio.Writer coalesces the header
+		// and data writes within WriteFrame into a single system call.
+		if err := bw.Flush(); err != nil {
+			s.err <- err
+			return
 		}
 	}
 }
@@ -352,6 +363,13 @@ func (s *MuxServer) HandleTCP(channel uint16, family int, dstIP string, dstPort 
 	}
 	defer conn.Close()
 
+	// Enable TCP keepalive to prevent idle connections from being dropped
+	// by NAT/firewalls between the server and the remote host.
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(30 * time.Second)
+	}
+
 	inbox := s.InboxFor(channel)
 	if inbox == nil {
 		return
@@ -381,6 +399,9 @@ func (s *MuxServer) HandleTCP(channel uint16, family int, dstIP string, dstPort 
 			}
 		}
 		s.SendTo(channel, CMD_TCP_EOF, nil)
+		// CloseChannel closes the inbox, which causes the mux→remote
+		// loop below to exit. asyncInbox.Close() drains overflow frames
+		// into the channel buffer so the consumer doesn't lose data.
 		s.CloseChannel(channel)
 	}()
 

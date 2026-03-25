@@ -3,6 +3,7 @@
 package mux
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -25,7 +26,9 @@ const (
 	// INBOX_SEND_TIMEOUT is how long we wait to deliver a frame to a
 	// per-channel inbox before considering the consumer dead and closing
 	// the channel. This prevents silent data loss for TCP streams.
-	INBOX_SEND_TIMEOUT = 10 * time.Second
+	// 60 seconds allows for TCP backpressure during large uploads
+	// (e.g. git push) and slow remote servers (e.g. LLM API processing).
+	INBOX_SEND_TIMEOUT = 60 * time.Second
 
 	// KEEPALIVE_INTERVAL is how often the client sends CMD_PING to the server
 	// to detect dead connections.
@@ -88,6 +91,8 @@ type Frame struct {
 }
 
 // WriteFrame encodes and writes one frame to w.
+// If w is a *bufio.Writer the header and data are coalesced in the buffer;
+// the caller is responsible for flushing.
 func WriteFrame(w io.Writer, f Frame) error {
 	if len(f.Data) > 65535 {
 		return fmt.Errorf("mux: data too large: %d bytes", len(f.Data))
@@ -104,6 +109,13 @@ func WriteFrame(w io.Writer, f Frame) error {
 		return err
 	}
 	return nil
+}
+
+// NewBufferedWriter wraps w with a bufio.Writer sized for typical mux frames.
+// The writer goroutine should call Flush() after each batch of frames.
+func NewBufferedWriter(w io.Writer) *bufio.Writer {
+	// 128 KB buffer: fits ~2 full-size frames or many small frames.
+	return bufio.NewWriterSize(w, 128*1024)
 }
 
 // ReadFrame reads exactly one frame from r.
