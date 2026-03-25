@@ -2,39 +2,52 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"net"
 	"net/http"
+	"time"
 )
 
-// peekHost tries to determine the hostname of a connection by peeking at the
-// first bytes without consuming them.
+// peekHost tries to determine the hostname of a connection by reading the
+// first bytes of the client's initial data.
 //
 // For TLS (port 443 etc.): parses the ClientHello to extract the SNI extension.
 // For HTTP (port 80 etc.): parses the first request line / Host header.
 //
-// Returns the hostname (no port) and a *bufio.Reader that replays the peeked
-// bytes followed by the rest of the connection.  If detection fails the
+// Returns the hostname (no port) and an io.Reader that replays the captured
+// bytes followed by the rest of the connection. If detection fails the
 // returned host is "" and the reader still works correctly.
-func peekHost(conn net.Conn, dstPort int) (host string, r *bufio.Reader) {
-	// We need enough bytes for a TLS ClientHello or HTTP request line.
-	// 1024 bytes is more than enough for either case.
+//
+// IMPORTANT: We use a single conn.Read instead of bufio.Peek(1024) because
+// Peek blocks until 1024 bytes are buffered. Non-browser TLS clients (git,
+// curl, Go net/http, Python requests) send ClientHellos of only 200-500 bytes,
+// causing Peek to block indefinitely waiting for data that never arrives
+// (the client is waiting for the server's response first).
+func peekHost(conn net.Conn, dstPort int) (host string, r io.Reader) {
 	const peekSize = 1024
-	br := bufio.NewReaderSize(conn, peekSize+512)
 
-	buf, err := br.Peek(peekSize)
-	if err != nil && len(buf) == 0 {
-		return "", br
+	// Set a generous deadline so we don't block forever if the client
+	// connects but never sends data (e.g., server-speaks-first protocols).
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, peekSize)
+	n, _ := conn.Read(buf)
+	conn.SetReadDeadline(time.Time{}) // clear deadline for subsequent I/O
+
+	if n == 0 {
+		return "", conn
 	}
+	buf = buf[:n]
 
 	// Try TLS first (most common for modern traffic).
 	if len(buf) > 5 && buf[0] == 0x16 { // TLS handshake content type
 		host = parseTLSSNI(buf)
-		return host, br
+	} else {
+		host = parseHTTPHost(buf)
 	}
 
-	// Try HTTP.
-	host = parseHTTPHost(buf)
-	return host, br
+	// Return a reader that replays the captured bytes, then continues from conn.
+	return host, io.MultiReader(bytes.NewReader(buf), conn)
 }
 
 // parseTLSSNI extracts the SNI hostname from a TLS ClientHello message.
