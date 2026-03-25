@@ -31,8 +31,9 @@ const (
 	INBOX_SEND_TIMEOUT = 60 * time.Second
 
 	// KEEPALIVE_INTERVAL is how often the client sends CMD_PING to the server
-	// to detect dead connections.
-	KEEPALIVE_INTERVAL = 30 * time.Second
+	// to detect dead connections. 15s strikes a balance between quick
+	// detection (e.g. after a WiFi switch) and low overhead.
+	KEEPALIVE_INTERVAL = 15 * time.Second
 
 	// KEEPALIVE_TIMEOUT is how long we wait for a CMD_PONG before considering
 	// the connection dead.
@@ -42,8 +43,8 @@ const (
 	// frame before considering the client dead and exiting. This prevents
 	// orphaned server processes when the SSH connection dies without a clean
 	// shutdown (e.g. network loss, client crash). The client sends CMD_PING
-	// every KEEPALIVE_INTERVAL (30s), so 90s gives 3 missed pings of margin.
-	SERVER_IDLE_TIMEOUT = 90 * time.Second
+	// every KEEPALIVE_INTERVAL (15s), so 60s gives 4 missed pings of margin.
+	SERVER_IDLE_TIMEOUT = 60 * time.Second
 )
 
 // Commands (kept identical to sshuttle wire protocol for compatibility).

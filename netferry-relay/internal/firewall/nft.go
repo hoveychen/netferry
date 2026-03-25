@@ -352,7 +352,7 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 
 	// Redirect target subnets.
 	for _, subnet := range v4Subnets {
-		args := []string{"-t", "nat", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp"}
+		args := []string{"-t", "nat", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 		portArgs := subnet.IptPortArgs()
 		if portArgs != nil {
 			args = append(args, portArgs...)
@@ -369,7 +369,7 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	if dnsPort > 0 {
 		for _, ns := range v4DNS {
 			ipt("-t", "nat", "-A", "NETFERRY", "-d", ns,
-				"-p", "udp", "--dport", "53",
+				"-p", "udp", "-m", "udp", "--dport", "53",
 				"-j", "REDIRECT", "--to-ports", strconv.Itoa(dnsPort))
 		}
 	}
@@ -391,7 +391,7 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 
 		// Redirect target subnets.
 		for _, subnet := range v6Subnets {
-			args := []string{"-t", "nat", "-A", "NETFERRY6", "-d", subnet.CIDR, "-p", "tcp"}
+			args := []string{"-t", "nat", "-A", "NETFERRY6", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 			portArgs := subnet.IptPortArgs()
 			if portArgs != nil {
 				args = append(args, portArgs...)
@@ -408,7 +408,7 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		if dnsPort > 0 {
 			for _, ns := range v6DNS {
 				ip6t("-t", "nat", "-A", "NETFERRY6", "-d", ns,
-					"-p", "udp", "--dport", "53",
+					"-p", "udp", "-m", "udp", "--dport", "53",
 					"-j", "REDIRECT", "--to-ports", strconv.Itoa(dnsPort))
 			}
 		}

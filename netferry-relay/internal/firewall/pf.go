@@ -308,15 +308,9 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	}
 
 	// --- Filtering rules (pass) ---
+	// PF uses last-match-wins, so excludes must come AFTER subnet rules
+	// to override the broader route-to lo0 rules.
 
-	// IPv4 excludes.
-	for _, excl := range v4Excludes {
-		fmt.Fprintf(&b, "pass out inet proto tcp to %s\n", excl)
-	}
-	// IPv6 excludes.
-	for _, excl := range v6Excludes {
-		fmt.Fprintf(&b, "pass out inet6 proto tcp to %s\n", excl)
-	}
 	// IPv4 subnet pass rules.
 	for _, subnet := range v4Subnets {
 		fmt.Fprintf(&b,
@@ -337,6 +331,14 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	if dnsPort > 0 && len(v6DNS) > 0 {
 		fmt.Fprintf(&b,
 			"pass out route-to lo0 inet6 proto udp to <dns6_servers> port 53 keep state\n")
+	}
+	// IPv4 excludes (last-match-wins: these override the route-to rules above).
+	for _, excl := range v4Excludes {
+		fmt.Fprintf(&b, "pass out inet proto tcp to %s\n", excl)
+	}
+	// IPv6 excludes.
+	for _, excl := range v6Excludes {
+		fmt.Fprintf(&b, "pass out inet6 proto tcp to %s\n", excl)
 	}
 
 	return b.Bytes()

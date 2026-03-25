@@ -22,6 +22,7 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/deploy"
 	"github.com/hoveychen/netferry/relay/internal/firewall"
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/netmon"
 	"github.com/hoveychen/netferry/relay/internal/proxy"
 	"github.com/hoveychen/netferry/relay/internal/sshconn"
 	"github.com/hoveychen/netferry/relay/internal/stats"
@@ -367,6 +368,14 @@ func main() {
 		proxyErrCh <- proxy.ListenTransparent(proxyPort, muxClient, counters)
 	}()
 
+	// ── Monitor network changes (WiFi switch, interface up/down) ─────────
+	netmonDone := make(chan struct{})
+	defer close(netmonDone)
+	netChangeCh := make(chan error, 1)
+	go func() {
+		netChangeCh <- netmon.Watch(netmonDone)
+	}()
+
 	select {
 	case err := <-muxErrCh:
 		if err != nil {
@@ -375,6 +384,12 @@ func main() {
 	case err := <-proxyErrCh:
 		if err != nil {
 			log.Printf("proxy closed: %v", err)
+		}
+	case err := <-netChangeCh:
+		if err != nil {
+			log.Printf("netmon error: %v", err)
+		} else {
+			log.Printf("network change detected, exiting for reconnect")
 		}
 	}
 }

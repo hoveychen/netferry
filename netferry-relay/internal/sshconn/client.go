@@ -58,6 +58,7 @@ func Dial(hc *HostConfig, ac AuthConfig, jumpHosts ...JumpHostSpec) (*ssh.Client
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
+	setTCPKeepAlive(conn)
 	return sshClientFromConn(conn, addr, clientCfg)
 }
 
@@ -95,6 +96,7 @@ func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, 
 			if err != nil {
 				return nil, fmt.Errorf("ProxyJump dial %s: %w", jumpAddr, err)
 			}
+			setTCPKeepAlive(conn)
 		} else {
 			// Dial next hop through the previous SSH client.
 			conn, err = currentClient.Dial("tcp", jumpAddr)
@@ -155,11 +157,15 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 		var err error
 		if currentClient == nil {
 			conn, err = net.DialTimeout("tcp", jumpAddr, dialTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
+			}
+			setTCPKeepAlive(conn)
 		} else {
 			conn, err = currentClient.Dial("tcp", jumpAddr)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
+			if err != nil {
+				return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
+			}
 		}
 
 		jumpAC := ac
@@ -230,3 +236,13 @@ func (p *proxyConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
 func (p *proxyConn) SetDeadline(t time.Time) error    { return nil }
 func (p *proxyConn) SetReadDeadline(t time.Time) error { return nil }
 func (p *proxyConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// setTCPKeepAlive enables TCP keepalive on the connection with a short
+// interval so that dead connections (e.g. after a WiFi switch) are detected
+// quickly by the OS rather than waiting for the default 2-hour idle timeout.
+func setTCPKeepAlive(conn net.Conn) {
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(15 * time.Second)
+	}
+}

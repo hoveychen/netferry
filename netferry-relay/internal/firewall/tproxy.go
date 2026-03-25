@@ -208,7 +208,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 		ipt("-t", "mangle", "-A", "NETFERRY", "-d", excl, "-j", "RETURN")
 	}
 	for _, subnet := range v4Subnets {
-		args := []string{"-t", "mangle", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp"}
+		args := []string{"-t", "mangle", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 		portArgs := subnet.IptPortArgs()
 		if portArgs != nil {
 			args = append(args, portArgs...)
@@ -224,7 +224,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 	if dnsPort > 0 {
 		for _, ns := range v4DNS {
 			ipt("-t", "mangle", "-A", "NETFERRY", "-d", ns,
-				"-p", "udp", "--dport", "53",
+				"-p", "udp", "-m", "udp", "--dport", "53",
 				"-j", "TPROXY", "--on-port", strconv.Itoa(dnsPort),
 				"--tproxy-mark", markStr)
 		}
@@ -241,7 +241,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 		ipt("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", excl, "-j", "RETURN")
 	}
 	for _, subnet := range v4Subnets {
-		args := []string{"-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", subnet.CIDR, "-p", "tcp"}
+		args := []string{"-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 		portArgs := subnet.IptPortArgs()
 		if portArgs != nil {
 			args = append(args, portArgs...)
@@ -256,7 +256,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 	if dnsPort > 0 {
 		for _, ns := range v4DNS {
 			ipt("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", ns,
-				"-p", "udp", "--dport", "53",
+				"-p", "udp", "-m", "udp", "--dport", "53",
 				"-j", "MARK", "--set-mark", markStr)
 		}
 	}
@@ -271,7 +271,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 			ip6t("-t", "mangle", "-A", "NETFERRY", "-d", excl, "-j", "RETURN")
 		}
 		for _, subnet := range v6Subnets {
-			args := []string{"-t", "mangle", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp"}
+			args := []string{"-t", "mangle", "-A", "NETFERRY", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 			portArgs := subnet.IptPortArgs()
 			if portArgs != nil {
 				args = append(args, portArgs...)
@@ -287,7 +287,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 		if dnsPort > 0 {
 			for _, ns := range v6DNS {
 				ip6t("-t", "mangle", "-A", "NETFERRY", "-d", ns,
-					"-p", "udp", "--dport", "53",
+					"-p", "udp", "-m", "udp", "--dport", "53",
 					"-j", "TPROXY", "--on-port", strconv.Itoa(dnsPort),
 					"--tproxy-mark", markStr)
 			}
@@ -304,7 +304,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 			ip6t("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", excl, "-j", "RETURN")
 		}
 		for _, subnet := range v6Subnets {
-			args := []string{"-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", subnet.CIDR, "-p", "tcp"}
+			args := []string{"-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", subnet.CIDR, "-p", "tcp", "-m", "tcp"}
 			portArgs := subnet.IptPortArgs()
 			if portArgs != nil {
 				args = append(args, portArgs...)
@@ -319,7 +319,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 		if dnsPort > 0 {
 			for _, ns := range v6DNS {
 				ip6t("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", ns,
-					"-p", "udp", "--dport", "53",
+					"-p", "udp", "-m", "udp", "--dport", "53",
 					"-j", "MARK", "--set-mark", markStr)
 			}
 		}
