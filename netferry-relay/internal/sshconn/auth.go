@@ -25,13 +25,18 @@ type AuthConfig struct {
 func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 	log.Printf("ssh-auth: building config for user=%q identityFile=%q", user, ac.IdentityFile)
 
-	// Build auth methods — priority: agent → explicit key → default keys.
-	var authMethods []ssh.AuthMethod
+	// Collect all signers into a single list so they are presented as one
+	// "publickey" auth method.  The SSH auth loop marks each *method name*
+	// as tried after a failure, so separate PublicKeys / PublicKeysCallback
+	// entries would cause the second "publickey" method to be skipped once
+	// the first one fails.
+	var allSigners []ssh.Signer
 
 	// 1. SSH Agent
-	if agentAuth := agentAuthMethod(); agentAuth != nil {
-		authMethods = append(authMethods, agentAuth)
-		log.Printf("ssh-auth: added SSH agent auth method")
+	agentSigners := agentSigners()
+	if len(agentSigners) > 0 {
+		allSigners = append(allSigners, agentSigners...)
+		log.Printf("ssh-auth: added %d key(s) from SSH agent", len(agentSigners))
 	} else {
 		log.Printf("ssh-auth: no SSH agent available (SSH_AUTH_SOCK=%q)", os.Getenv("SSH_AUTH_SOCK"))
 	}
@@ -49,39 +54,39 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 			log.Printf("ssh-auth: loaded key from %q type=%s fingerprint=%s",
 				expanded, signers[0].PublicKey().Type(),
 				ssh.FingerprintSHA256(signers[0].PublicKey()))
+			allSigners = append(allSigners, signers...)
 		}
-		authMethods = append(authMethods, ssh.PublicKeys(signers...))
 	}
 
-	// 3. Default identity files
+	// 3. Default identity files (only when no explicit file is given)
 	if ac.IdentityFile == "" {
 		for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
 			path := filepath.Join(expandHome("~"), ".ssh", name)
 			signers, err := signersFromFile(path)
 			if err == nil && len(signers) > 0 {
 				log.Printf("ssh-auth: loaded default key %q type=%s", path, signers[0].PublicKey().Type())
-				authMethods = append(authMethods, ssh.PublicKeys(signers...))
+				allSigners = append(allSigners, signers...)
 			}
 		}
 	}
 
-	log.Printf("ssh-auth: total auth methods: %d", len(authMethods))
+	log.Printf("ssh-auth: total signers: %d", len(allSigners))
 
-	if len(authMethods) == 0 {
+	if len(allSigners) == 0 {
 		return nil, fmt.Errorf("no SSH authentication methods available (no agent and no key found)")
 	}
 
 	return &ssh.ClientConfig{
 		User:            user,
-		Auth:            authMethods,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(allSigners...)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         0, // no connect timeout here; use net.DialTimeout
 	}, nil
 }
 
-// agentAuthMethod returns an ssh.AuthMethod backed by the running SSH agent,
-// or nil if SSH_AUTH_SOCK is not set / not reachable.
-func agentAuthMethod() ssh.AuthMethod {
+// agentSigners returns signers from the running SSH agent,
+// or nil if SSH_AUTH_SOCK is not set / not reachable / has no keys.
+func agentSigners() []ssh.Signer {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
 		return nil
@@ -90,7 +95,16 @@ func agentAuthMethod() ssh.AuthMethod {
 	if err != nil {
 		return nil
 	}
-	return ssh.PublicKeysCallback(agent.NewClient(conn).Signers)
+	signers, err := agent.NewClient(conn).Signers()
+	if err != nil {
+		conn.Close()
+		return nil
+	}
+	if len(signers) == 0 {
+		conn.Close()
+		return nil
+	}
+	return signers
 }
 
 // signersFromFile reads a private key file and returns signers.

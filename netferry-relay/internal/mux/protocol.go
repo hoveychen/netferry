@@ -74,9 +74,9 @@ const (
 
 	// DEFAULT_INITIAL_WINDOW is the per-channel send window in bytes.
 	// The sender can transmit this many bytes before needing a WINDOW_UPDATE
-	// from the receiver. 1 MB balances throughput and reliability — larger
-	// values (e.g. 4 MB) can trigger SSH rekey edge cases under load.
-	DEFAULT_INITIAL_WINDOW = 1 * 1024 * 1024
+	// from the receiver. 4 MB allows high throughput even at moderate RTTs
+	// (e.g. 100ms RTT → theoretical max ~40 MB/s per channel).
+	DEFAULT_INITIAL_WINDOW = 4 * 1024 * 1024
 
 	// WINDOW_UPDATE_THRESHOLD controls when the receiver sends a
 	// WINDOW_UPDATE back to the sender. Once consumed bytes exceed this

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActiveConnection } from "@/stores/connectionStore";
 import type { ConnectionEvent, ConnectionStatus, DeployProgress, Profile, TunnelError, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
@@ -27,25 +27,44 @@ interface SpeedPoint {
 
 const MAX_HISTORY = 60;
 
+function useContainerSize(ref: React.RefObject<HTMLDivElement | null>) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize({ width: Math.round(width), height: Math.round(height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return size;
+}
+
+const CHART_HEIGHT = 200;
+const PAD = { top: 16, right: 16, bottom: 28, left: 56 };
+
 function SpeedChart({ history }: { history: SpeedPoint[] }) {
-  const W = 600;
-  const H = 180;
-  const PAD = { top: 16, right: 16, bottom: 28, left: 56 };
-  const innerW = W - PAD.left - PAD.right;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { width: W } = useContainerSize(containerRef);
+  const H = CHART_HEIGHT;
+
+  const innerW = Math.max(W - PAD.left - PAD.right, 0);
   const innerH = H - PAD.top - PAD.bottom;
 
   const allVals = history.flatMap((p) => [p.rx, p.tx]);
   const maxVal = Math.max(...allVals, 1024);
   const yMax = Math.ceil(maxVal / 1024) * 1024;
 
-  function yScale(v: number) {
+  const yScale = useCallback((v: number) => {
     return PAD.top + innerH - (v / yMax) * innerH;
-  }
+  }, [innerH, yMax]);
 
-  function xScale(i: number) {
+  const xScale = useCallback((i: number) => {
     const n = Math.max(history.length - 1, 1);
     return PAD.left + (i / n) * innerW;
-  }
+  }, [history.length, innerW]);
 
   function toPath(vals: number[]) {
     if (vals.length < 2) return "";
@@ -69,82 +88,84 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
     y: yScale(yMax * f),
   }));
 
+  // Compute x-axis tick interval based on available width
+  const xTickInterval = innerW > 400 ? 10 : innerW > 200 ? 15 : 20;
   const xTicks = history
     .map((p, i) => ({ i, t: p.t }))
-    .filter((_, i) => i % 10 === 0);
+    .filter((_, i) => i % xTickInterval === 0);
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="w-full"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      <defs>
-        <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#30d158" stopOpacity="0.25" />
-          <stop offset="100%" stopColor="#30d158" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.20" />
-          <stop offset="100%" stopColor="#0a84ff" stopOpacity="0" />
-        </linearGradient>
-        <clipPath id="chart-clip">
-          <rect x={PAD.left} y={PAD.top} width={innerW} height={innerH} />
-        </clipPath>
-      </defs>
+    <div ref={containerRef} className="w-full" style={{ height: H }}>
+      {W > 0 && (
+        <svg width={W} height={H}>
+          <defs>
+            <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#30d158" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#30d158" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.20" />
+              <stop offset="100%" stopColor="#0a84ff" stopOpacity="0" />
+            </linearGradient>
+            <clipPath id="chart-clip">
+              <rect x={PAD.left} y={PAD.top} width={innerW} height={innerH} />
+            </clipPath>
+          </defs>
 
-      {yTicks.map(({ v, y }) => (
-        <line
-          key={v}
-          x1={PAD.left} y1={y} x2={PAD.left + innerW} y2={y}
-          stroke="rgba(255,255,255,0.06)" strokeWidth="1"
-        />
-      ))}
+          {yTicks.map(({ v, y }) => (
+            <line
+              key={v}
+              x1={PAD.left} y1={y} x2={PAD.left + innerW} y2={y}
+              stroke="rgba(255,255,255,0.06)" strokeWidth="1"
+            />
+          ))}
 
-      {yTicks.map(({ v, y }) => (
-        <text
-          key={v}
-          x={PAD.left - 6} y={y + 4}
-          textAnchor="end" fontSize="10"
-          fill="rgba(255,255,255,0.28)" fontFamily="monospace"
-        >
-          {formatBytes(v)}
-        </text>
-      ))}
+          {yTicks.map(({ v, y }) => (
+            <text
+              key={v}
+              x={PAD.left - 6} y={y + 4}
+              textAnchor="end" fontSize="10"
+              fill="rgba(255,255,255,0.28)" fontFamily="monospace"
+            >
+              {formatBytes(v)}
+            </text>
+          ))}
 
-      {xTicks.map(({ i, t }) => (
-        <text
-          key={i}
-          x={xScale(i)} y={PAD.top + innerH + 14}
-          textAnchor="middle" fontSize="10"
-          fill="rgba(255,255,255,0.22)" fontFamily="monospace"
-        >
-          {new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-        </text>
-      ))}
+          {xTicks.map(({ i, t }) => (
+            <text
+              key={i}
+              x={xScale(i)} y={PAD.top + innerH + 14}
+              textAnchor="middle" fontSize="10"
+              fill="rgba(255,255,255,0.22)" fontFamily="monospace"
+            >
+              {new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </text>
+          ))}
 
-      <g clipPath="url(#chart-clip)">
-        {rxVals.length >= 2 && <path d={toFill(rxVals)} fill="url(#rxGrad)" />}
-        {txVals.length >= 2 && <path d={toFill(txVals)} fill="url(#txGrad)" />}
-        {rxVals.length >= 2 && (
-          <path d={toPath(rxVals)} fill="none" stroke="#30d158" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-        )}
-        {txVals.length >= 2 && (
-          <path d={toPath(txVals)} fill="none" stroke="#0a84ff" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-        )}
-        {rxVals.length >= 1 && (
-          <circle cx={xScale(rxVals.length - 1)} cy={yScale(rxVals[rxVals.length - 1])} r="3" fill="#30d158" />
-        )}
-        {txVals.length >= 1 && (
-          <circle cx={xScale(txVals.length - 1)} cy={yScale(txVals[txVals.length - 1])} r="3" fill="#0a84ff" />
-        )}
-      </g>
+          <g clipPath="url(#chart-clip)">
+            {rxVals.length >= 2 && <path d={toFill(rxVals)} fill="url(#rxGrad)" />}
+            {txVals.length >= 2 && <path d={toFill(txVals)} fill="url(#txGrad)" />}
+            {rxVals.length >= 2 && (
+              <path d={toPath(rxVals)} fill="none" stroke="#30d158" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+            )}
+            {txVals.length >= 2 && (
+              <path d={toPath(txVals)} fill="none" stroke="#0a84ff" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+            )}
+            {rxVals.length >= 1 && (
+              <circle cx={xScale(rxVals.length - 1)} cy={yScale(rxVals[rxVals.length - 1])} r="3" fill="#30d158" />
+            )}
+            {txVals.length >= 1 && (
+              <circle cx={xScale(txVals.length - 1)} cy={yScale(txVals[txVals.length - 1])} r="3" fill="#0a84ff" />
+            )}
+          </g>
 
-      <rect
-        x={PAD.left} y={PAD.top} width={innerW} height={innerH}
-        fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"
-      />
-    </svg>
+          <rect
+            x={PAD.left} y={PAD.top} width={innerW} height={innerH}
+            fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"
+          />
+        </svg>
+      )}
+    </div>
   );
 }
 
