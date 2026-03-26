@@ -98,13 +98,21 @@ func (c *Counters) PushConnEvent(srcAddr, dstAddr string) {
 	c.ConnOpen(srcAddr, dstAddr, "")
 }
 
-// ListenAndServe starts the HTTP stats server on a random loopback port.
-// Returns the bound port. The server runs in background goroutines until the
-// process exits.
-func (c *Counters) ListenAndServe() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("stats: listen: %w", err)
+// ListenAndServe starts the HTTP stats server on a loopback port.
+// It tries preferredPort first; if unavailable (or 0), it falls back to an
+// OS-assigned port. Returns the bound port. The server runs in background
+// goroutines until the process exits.
+func (c *Counters) ListenAndServe(preferredPort int) (int, error) {
+	var ln net.Listener
+	var err error
+	if preferredPort > 0 {
+		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+	}
+	if ln == nil {
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, fmt.Errorf("stats: listen: %w", err)
+		}
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 

@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -186,9 +187,12 @@ func main() {
 		fatalf("server handshake: %v — is the deployed binary corrupted?", err)
 	}
 
+	// ── Load cached ports for stability across reconnections ────────────────
+	cachedPorts := loadPortCache()
+
 	// ── Create stats counters and start HTTP/SSE server ──────────────────────
 	counters := stats.NewCounters()
-	statsPort, err := counters.ListenAndServe()
+	statsPort, err := counters.ListenAndServe(cachedPorts.StatsPort)
 	if err != nil {
 		fatalf("stats server: %v", err)
 	}
@@ -313,9 +317,22 @@ func main() {
 			// TPROXY does not rewrite packet headers — the socket must
 			// have IP_TRANSPARENT and bind to 0.0.0.0 to accept packets
 			// with non-local destination addresses.
-			dnsListener, err = proxy.ListenDNSTProxy(0)
+			dnsListener, err = proxy.ListenDNSTProxy(cachedPorts.DNSPort)
+			if err != nil && cachedPorts.DNSPort > 0 {
+				log.Printf("preferred DNS tproxy port %d in use, picking a new one", cachedPorts.DNSPort)
+				dnsListener, err = proxy.ListenDNSTProxy(0)
+			}
 		} else {
-			dnsListener, err = net.ListenPacket("udp", "127.0.0.1:0")
+			preferred := cachedPorts.DNSPort
+			addr := "127.0.0.1:0"
+			if preferred > 0 {
+				addr = fmt.Sprintf("127.0.0.1:%d", preferred)
+			}
+			dnsListener, err = net.ListenPacket("udp", addr)
+			if err != nil && preferred > 0 {
+				log.Printf("preferred DNS port %d in use, picking a new one", preferred)
+				dnsListener, err = net.ListenPacket("udp", "127.0.0.1:0")
+			}
 		}
 		if err != nil {
 			fatalf("dns listen: %v", err)
@@ -324,7 +341,14 @@ func main() {
 		log.Printf("DNS: servers=%v localPort=%d", dnsServers, dnsPort)
 	}
 
-	proxyPort := mustPickFreePort("tcp")
+	proxyPort := pickFreePort("tcp", cachedPorts.ProxyPort)
+
+	// ── Save ports for next reconnection ────────────────────────────────────
+	savePortCache(portCache{
+		ProxyPort: proxyPort,
+		DNSPort:   dnsPort,
+		StatsPort: statsPort,
+	})
 
 	if err := fw.Setup(effectiveSubnets, excludes, proxyPort, dnsPort, dnsServers); err != nil {
 		fatalf("firewall setup: %v", err)
@@ -399,7 +423,66 @@ func fatalf(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-func mustPickFreePort(network string) int {
+// portCache stores previously used ports so reconnections reuse the same ports
+// when possible.
+type portCache struct {
+	ProxyPort int `json:"proxy_port,omitempty"`
+	DNSPort   int `json:"dns_port,omitempty"`
+	StatsPort int `json:"stats_port,omitempty"`
+}
+
+func portCachePath() string {
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "netferry", "ports.json")
+	}
+	return ""
+}
+
+func loadPortCache() portCache {
+	path := portCachePath()
+	if path == "" {
+		return portCache{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return portCache{}
+	}
+	var pc portCache
+	json.Unmarshal(data, &pc)
+	return pc
+}
+
+func savePortCache(pc portCache) {
+	path := portCachePath()
+	if path == "" {
+		return
+	}
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	data, _ := json.Marshal(pc)
+	os.WriteFile(path, data, 0o644)
+}
+
+// pickFreePort tries to bind to preferredPort first; if that fails (or is 0),
+// it falls back to an OS-assigned port.
+func pickFreePort(network string, preferredPort int) int {
+	if preferredPort > 0 {
+		switch network {
+		case "tcp":
+			ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+			if err == nil {
+				ln.Close()
+				return preferredPort
+			}
+		case "udp":
+			ln, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+			if err == nil {
+				ln.Close()
+				return preferredPort
+			}
+		}
+		log.Printf("preferred %s port %d in use, picking a new one", network, preferredPort)
+	}
+
 	switch network {
 	case "tcp":
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
