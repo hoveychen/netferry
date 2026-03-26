@@ -539,7 +539,12 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       onChange={(e) => setField("autoNets", e.target.checked)}
                       className="accent-[#0a84ff]"
                     />
-                    Auto-nets
+                    <span>
+                      Auto-nets
+                      <span className="ml-1.5 text-xs text-white/30">
+                        (fetch proxy subnets from remote server's routing table)
+                      </span>
+                    </span>
                   </label>
                   {activeFeatures.has("ipv6") && (
                     <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
