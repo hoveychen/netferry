@@ -162,6 +162,41 @@ pub fn import_profile_from_file(app: AppHandle, path: PathBuf) -> Result<Vec<Pro
     profiles::upsert_profile(&app, profile)
 }
 
+/// Returns the macOS privileged helper status as a string.
+/// Possible values: "enabled", "requires_approval", "not_registered", "not_found", "os_too_old", "not_macos".
+#[tauri::command]
+pub fn get_helper_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::helper_ipc::{helper_status, HelperStatus};
+        match helper_status() {
+            HelperStatus::Enabled => "enabled".to_string(),
+            HelperStatus::RequiresApproval => "requires_approval".to_string(),
+            HelperStatus::NotRegistered => "not_registered".to_string(),
+            HelperStatus::NotFound => "not_found".to_string(),
+            HelperStatus::OsTooOld => "os_too_old".to_string(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "not_macos".to_string()
+    }
+}
+
+/// Attempts to register the macOS privileged helper daemon.
+/// Returns Ok(true) if helper is now running, Ok(false) if not applicable, Err on failure.
+#[tauri::command]
+pub fn register_helper() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::helper_ipc::ensure_helper_running()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(false)
+    }
+}
+
 #[tauri::command]
 pub async fn lookup_geoip(host: String) -> Result<String, String> {
     let url = format!("https://ipwho.is/{}", host);

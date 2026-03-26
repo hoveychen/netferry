@@ -68,3 +68,13 @@ export function importProfile(data: string) {
 export function importProfileFromFile(path: string) {
   return invoke<Profile[]>("import_profile_from_file", { path });
 }
+
+export type HelperStatus = "enabled" | "requires_approval" | "not_registered" | "not_found" | "os_too_old" | "not_macos";
+
+export function getHelperStatus() {
+  return invoke<HelperStatus>("get_helper_status");
+}
+
+export function registerHelper() {
+  return invoke<boolean>("register_helper");
+}

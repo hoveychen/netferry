@@ -153,7 +153,9 @@ pub fn run() {
             commands::export_profile,
             commands::export_profile_to_file,
             commands::import_profile,
-            commands::import_profile_from_file
+            commands::import_profile_from_file,
+            commands::get_helper_status,
+            commands::register_helper
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

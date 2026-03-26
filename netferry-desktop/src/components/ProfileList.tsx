@@ -174,18 +174,46 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {profiles.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-white/[0.05] ring-1 ring-white/[0.07]">
-              <img src="/icon.png" alt="NetFerry" className="h-12 w-12 rounded-2xl opacity-50" />
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            {/* Hero */}
+            <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-[1.75rem] bg-gradient-to-br from-[#0a84ff]/20 to-[#5e5ce6]/20 shadow-[0_0_60px_rgba(10,132,255,0.15)] ring-1 ring-white/[0.1]">
+              <img src="/icon.png" alt="NetFerry" className="h-14 w-14 rounded-2xl" />
             </div>
-            <p className="mb-1.5 text-[17px] font-semibold text-white/80">No profiles yet</p>
-            <p className="mb-6 max-w-xs text-sm leading-relaxed text-white/35">
-              Create a profile to start tunneling traffic securely via SSH.
+            <h1 className="mb-2 text-2xl font-bold tracking-tight text-white/90">
+              Welcome to NetFerry
+            </h1>
+            <p className="mb-8 max-w-sm text-sm leading-relaxed text-white/40">
+              Tunnel your traffic securely through SSH. Create a profile to get started, or import one shared by your team.
             </p>
-            <Button onClick={onNew}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Create Profile
-            </Button>
+
+            {/* Feature highlights */}
+            <div className="mb-8 grid w-full max-w-md grid-cols-3 gap-3">
+              {[
+                { icon: "🔒", title: "Encrypted", desc: "SSH tunnel" },
+                { icon: "⚡", title: "Fast", desc: "Low overhead" },
+                { icon: "🌍", title: "Global", desc: "Any SSH server" },
+              ].map((f) => (
+                <div
+                  key={f.title}
+                  className="flex flex-col items-center rounded-2xl border border-white/[0.06] bg-white/[0.03] px-3 py-4"
+                >
+                  <span className="mb-1.5 text-xl">{f.icon}</span>
+                  <span className="text-[13px] font-medium text-white/70">{f.title}</span>
+                  <span className="text-[11px] text-white/30">{f.desc}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button onClick={onNew}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Create Profile
+              </Button>
+              <Button variant="ghost" onClick={() => setImportDialogOpen(true)}>
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Import
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

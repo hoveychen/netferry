@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
+import { HelperSetupGuide } from "@/components/HelperSetupGuide";
 import { NewProfileDialog } from "@/components/NewProfileDialog";
 import { ProfileDetailPage } from "@/components/ProfileDetailPage";
 import { ProfileList } from "@/components/ProfileList";
@@ -9,7 +10,7 @@ import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { importProfile, importProfileFromFile } from "@/api";
+import { getHelperStatus, importProfile, importProfileFromFile } from "@/api";
 import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
 
 // Page state union
@@ -23,6 +24,7 @@ function App() {
   const [page, setPage] = useState<Page>({ kind: "list" });
   const [newProfileDialogOpen, setNewProfileDialogOpen] = useState(false);
   const [sshImporterOpen, setSshImporterOpen] = useState(false);
+  const [showHelperSetup, setShowHelperSetup] = useState<boolean | null>(null); // null = checking
 
   const {
     profiles,
@@ -66,6 +68,23 @@ function App() {
     loadSettings();
     syncStatus();
   }, [loadProfiles, loadSettings, syncStatus]);
+
+  // Check if helper setup guide should be shown (macOS only, first time)
+  useEffect(() => {
+    const HELPER_SETUP_KEY = "netferry_helper_setup_done";
+    if (localStorage.getItem(HELPER_SETUP_KEY)) {
+      setShowHelperSetup(false);
+      return;
+    }
+    getHelperStatus().then((status) => {
+      if (status === "not_macos" || status === "os_too_old" || status === "enabled") {
+        localStorage.setItem(HELPER_SETUP_KEY, "1");
+        setShowHelperSetup(false);
+      } else {
+        setShowHelperSetup(true);
+      }
+    }).catch(() => setShowHelperSetup(false));
+  }, []);
 
   // Auto-connect on startup
   useEffect(() => {
@@ -142,6 +161,22 @@ function App() {
   // Find the active profile by profileId from status
   const activeProfile =
     status.profileId ? profiles.find((p) => p.id === status.profileId) ?? null : null;
+
+  // Show helper setup guide on first launch (macOS)
+  if (showHelperSetup === null) {
+    // Still checking — show nothing (very brief)
+    return <div className="h-screen bg-[#1c1c1e]" />;
+  }
+  if (showHelperSetup) {
+    return (
+      <HelperSetupGuide
+        onDone={() => {
+          localStorage.setItem("netferry_helper_setup_done", "1");
+          setShowHelperSetup(false);
+        }}
+      />
+    );
+  }
 
   if (page.kind === "connected") {
     return (
