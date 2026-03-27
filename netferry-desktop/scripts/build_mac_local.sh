@@ -98,13 +98,13 @@ cd "$DESKTOP_DIR"
 echo "==> Installing npm dependencies"
 npm ci
 
-# ── Build sidecar (no signing yet) ───────────────────────────────────────────
-echo "==> Building sidecar"
-python scripts/build_sidecar.py --target "$RUST_TARGET"
-
 # ── Generate dev version ──────────────────────────────────────────────────────
 VERSION="$(date +%y).$((10#$(date +%m))).$((10#$(date +%d)))-$(date +%s)"
 echo "==> Version: v$VERSION"
+
+# ── Build sidecar (no signing yet) ───────────────────────────────────────────
+echo "==> Building sidecar"
+python scripts/build_sidecar.py --target "$RUST_TARGET" --version "v$VERSION"
 
 # ── Build Tauri .app bundle WITHOUT signing ───────────────────────────────────
 # Tauri auto-signs when APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY are present

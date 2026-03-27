@@ -39,6 +39,10 @@ func (c *rwConn) Close() error                { return nil }
 
 func smuxClientConfig() *smux.Config {
 	cfg := smux.DefaultConfig()
+	cfg.Version = 2
+	cfg.MaxFrameSize = 65535
+	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
+	cfg.MaxStreamBuffer = 4 * 1024 * 1024
 	cfg.KeepAliveInterval = KEEPALIVE_INTERVAL
 	cfg.KeepAliveTimeout = KEEPALIVE_INTERVAL + KEEPALIVE_TIMEOUT
 	return cfg

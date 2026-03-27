@@ -63,6 +63,10 @@ func main() {
 
 	conn := &rwConn{r: os.Stdin, w: os.Stdout}
 	cfg := smux.DefaultConfig()
+	cfg.Version = 2
+	cfg.MaxFrameSize = 65535
+	cfg.MaxReceiveBuffer = 16 * 1024 * 1024
+	cfg.MaxStreamBuffer = 4 * 1024 * 1024
 	cfg.KeepAliveInterval = mux.KEEPALIVE_INTERVAL
 	cfg.KeepAliveTimeout = mux.KEEPALIVE_INTERVAL + mux.KEEPALIVE_TIMEOUT
 

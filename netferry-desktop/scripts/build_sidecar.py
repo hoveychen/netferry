@@ -59,6 +59,7 @@ def get_version(relay_dir: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", help="Rust target triple; defaults to current host")
+    parser.add_argument("--version", help="Override version string (e.g. passed from build_mac_local.sh)")
     args = parser.parse_args()
 
     workspace = Path(__file__).resolve().parents[2]
@@ -75,7 +76,7 @@ def main() -> int:
         )
 
     goos_target, goarch_target, exe_suffix = TARGET_MAP[target]
-    version = get_version(relay_dir)
+    version = args.version if args.version else get_version(relay_dir)
     ldflags = f"-X main.Version={version} -s -w"
 
     base_env = {**os.environ, "CGO_ENABLED": "0"}
