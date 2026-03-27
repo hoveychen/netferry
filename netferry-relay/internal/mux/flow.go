@@ -2,21 +2,24 @@ package mux
 
 import (
 	"encoding/binary"
+	"log"
 	"sync"
+	"time"
 )
 
 // sendWindow tracks the remaining send credit for a single mux channel.
 // The sender calls Acquire before transmitting data; the receiver calls
 // Release when it has consumed data and is ready for more.
 type sendWindow struct {
-	mu   sync.Mutex
-	cond *sync.Cond
-	win  int64
-	dead bool
+	mu    sync.Mutex
+	cond  *sync.Cond
+	win   int64
+	dead  bool
+	label string
 }
 
-func newSendWindow(initial int64) *sendWindow {
-	sw := &sendWindow{win: initial}
+func newSendWindow(initial int64, label string) *sendWindow {
+	sw := &sendWindow{win: initial, label: label}
 	sw.cond = sync.NewCond(&sw.mu)
 	return sw
 }
@@ -26,11 +29,21 @@ func newSendWindow(initial int64) *sendWindow {
 func (sw *sendWindow) Acquire(n int) bool {
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
+	var waitStart time.Time
 	for sw.win < int64(n) && !sw.dead {
+		if waitStart.IsZero() {
+			waitStart = time.Now()
+		}
 		sw.cond.Wait()
 	}
 	if sw.dead {
 		return false
+	}
+	if !waitStart.IsZero() {
+		waited := time.Since(waitStart)
+		if waited >= 2*time.Second {
+			log.Printf("warning: mux flow-control blocked sender: label=%s waited=%s want=%d available=%d", sw.label, waited.Round(time.Millisecond), n, sw.win)
+		}
 	}
 	sw.win -= int64(n)
 	return true

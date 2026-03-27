@@ -26,7 +26,7 @@ func ServeDNS(conn net.PacketConn, client *mux.MuxClient, counters *stats.Counte
 		query := make([]byte, n)
 		copy(query, buf[:n])
 		if counters != nil {
-			counters.DNSTotal.Add(1)
+			counters.AddDNS()
 		}
 		go func(q []byte, srcAddr net.Addr) {
 			resp, err := client.DNSRequest(q)
@@ -67,7 +67,7 @@ func buildDNSServFail(query []byte) []byte {
 	copy(resp[0:2], query[0:2])
 	// Flags: QR=1 (response), Opcode from query, RCODE=2 (SERVFAIL).
 	flags := binary.BigEndian.Uint16(query[2:4])
-	opcode := flags & 0x7800 // preserve opcode bits
+	opcode := flags & 0x7800                             // preserve opcode bits
 	binary.BigEndian.PutUint16(resp[2:4], 0x8002|opcode) // QR=1, RCODE=SERVFAIL
 	// QDCOUNT=0, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0 (already zero).
 	return resp

@@ -3,6 +3,7 @@ package mux
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -34,8 +35,8 @@ type ServerHandlers struct {
 
 // chanState tracks per-channel state on the server.
 type chanState struct {
-	inbox *asyncInbox    // frames from mux destined for the downstream conn
-	sw    *sendWindow    // nil when flow control is off
+	inbox *asyncInbox // frames from mux destined for the downstream conn
+	sw    *sendWindow // nil when flow control is off
 }
 
 // MuxServer runs the server-side mux loop, reading from r and writing to w.
@@ -47,9 +48,11 @@ type MuxServer struct {
 	mu       sync.Mutex
 	channels map[uint16]*chanState
 
-	out         chan Frame // serialised writer goroutine
-	priorityOut chan Frame // PONG/DNS_RESPONSE/WINDOW_UPDATE bypass bulk data
-	err         chan error // fatal error from reader or writer
+	sched       *fairScheduler // fair per-channel queue for data frames
+	priorityOut chan Frame      // PONG/DNS_RESPONSE/WINDOW_UPDATE bypass bulk data
+	err         chan error      // fatal error from reader or writer
+	stopCh      chan struct{}
+	stopOnce    sync.Once
 
 	lastFrame atomic.Int64 // UnixNano of last frame received (idle watchdog)
 
@@ -64,9 +67,10 @@ func NewMuxServer(r io.Reader, w io.Writer, h ServerHandlers) *MuxServer {
 		w:           w,
 		handlers:    h,
 		channels:    make(map[uint16]*chanState),
-		out:         make(chan Frame, MUX_OUT_BUF),
+		sched:       newFairScheduler(MUX_OUT_BUF),
 		priorityOut: make(chan Frame, PRIORITY_OUT_BUF),
 		err:         make(chan error, 2),
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -79,7 +83,9 @@ func (s *MuxServer) SetFlowControl(enabled bool, initialWindow int64) {
 
 // Send enqueues a frame to be written to the client.
 func (s *MuxServer) Send(f Frame) {
-	s.out <- f
+	if ok := s.sendFrame(f); !ok {
+		return
+	}
 }
 
 // SendTo is a convenience wrapper used by handler goroutines.
@@ -89,7 +95,9 @@ func (s *MuxServer) SendTo(channel uint16, cmd uint16, data []byte) {
 
 // SendPriority enqueues a high-priority frame that bypasses the bulk data queue.
 func (s *MuxServer) SendPriority(f Frame) {
-	s.priorityOut <- f
+	if ok := s.sendPriorityFrame(f); !ok {
+		return
+	}
 }
 
 // SendPriorityTo is a convenience wrapper for SendPriority.
@@ -98,7 +106,9 @@ func (s *MuxServer) SendPriorityTo(channel uint16, cmd uint16, data []byte) {
 }
 
 func (s *MuxServer) sendWindowUpdate(ch uint16, credit int64) {
-	s.SendPriority(Frame{Channel: ch, Cmd: CMD_WINDOW_UPDATE, Data: EncodeWindowUpdate(credit)})
+	if ok := s.sendPriorityFrame(Frame{Channel: ch, Cmd: CMD_WINDOW_UPDATE, Data: EncodeWindowUpdate(credit)}); !ok {
+		return
+	}
 }
 
 // InboxFor returns the inbox channel for a given channel, or nil if closed/unknown.
@@ -150,6 +160,7 @@ func (s *MuxServer) CloseChannel(channel uint16) {
 	}
 	s.mu.Unlock()
 	if ok {
+		log.Printf("mux: server closing channel %d", channel)
 		if cs.sw != nil {
 			cs.sw.Kill()
 		}
@@ -163,49 +174,53 @@ func (s *MuxServer) Run() error {
 	go s.writer()
 	go s.reader()
 	go s.idleWatchdog()
-	return <-s.err
+	err := <-s.err
+	s.shutdown("run exit")
+	return err
 }
 
 func (s *MuxServer) reader() {
 	for {
 		f, err := ReadFrame(s.r)
 		if err != nil {
-			s.err <- err
+			s.reportError(err)
 			return
 		}
 		s.lastFrame.Store(time.Now().UnixNano())
 		if err := s.dispatch(f); err != nil {
-			s.err <- err
+			s.reportError(err)
 			return
 		}
 	}
 }
 
 func (s *MuxServer) writer() {
-	bw := NewBufferedWriter(s.w)
 	for {
 		// Block until at least one frame is available.
 		select {
+		case <-s.stopCh:
+			return
 		case f, ok := <-s.priorityOut:
 			if !ok {
 				return
 			}
-			if err := WriteFrame(bw, f); err != nil {
-				s.err <- err
+			if err := WriteFrame(s.w, f); err != nil {
+				s.reportError(err)
 				return
 			}
-		case f, ok := <-s.out:
+		case <-s.sched.ReadyCh():
+			f, ok := s.sched.Dequeue()
 			if !ok {
-				return
+				continue
 			}
-			if err := WriteFrame(bw, f); err != nil {
-				s.err <- err
+			if err := WriteFrame(s.w, f); err != nil {
+				s.reportError(err)
 				return
 			}
 		}
-		// Drain all queued frames (priority first) before flushing,
-		// so multiple frames are coalesced into fewer system calls.
-		if err := drainAndFlush(bw, s.priorityOut, s.out, s.err); err != nil {
+		// Drain all immediately available frames (priority first, then data in fair round-robin).
+		if err := drainAndFlushSched(s.w, s.priorityOut, s.sched, s.err); err != nil {
+			s.reportError(err)
 			return
 		}
 	}
@@ -215,9 +230,14 @@ func (s *MuxServer) idleWatchdog() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
 		last := time.Unix(0, s.lastFrame.Load())
 		if time.Since(last) > SERVER_IDLE_TIMEOUT {
-			s.err <- fmt.Errorf("mux: server idle timeout (no frames for %v)", time.Since(last))
+			s.reportError(fmt.Errorf("mux: server idle timeout (no frames for %v)", time.Since(last)))
 			return
 		}
 	}
@@ -226,7 +246,9 @@ func (s *MuxServer) idleWatchdog() {
 func (s *MuxServer) dispatch(f Frame) error {
 	switch f.Cmd {
 	case CMD_PING:
-		s.SendPriorityTo(0, CMD_PONG, f.Data)
+		if !s.sendPriorityFrame(Frame{Channel: 0, Cmd: CMD_PONG, Data: f.Data}) && !s.isStopped() {
+			return fmt.Errorf("mux: failed to queue PONG")
+		}
 
 	case CMD_EXIT:
 		return fmt.Errorf("mux: received CMD_EXIT")
@@ -239,9 +261,9 @@ func (s *MuxServer) dispatch(f Frame) error {
 		}
 		var sw *sendWindow
 		if s.flowControl {
-			sw = newSendWindow(s.initialWindow)
+			sw = newSendWindow(s.initialWindow, fmt.Sprintf("server ch=%d", f.Channel))
 		}
-		cs := &chanState{inbox: newAsyncInbox(), sw: sw}
+		cs := &chanState{inbox: newAsyncInbox(fmt.Sprintf("server ch=%d", f.Channel)), sw: sw}
 		s.mu.Lock()
 		s.channels[f.Channel] = cs
 		s.mu.Unlock()
@@ -259,9 +281,9 @@ func (s *MuxServer) dispatch(f Frame) error {
 		fmt.Sscanf(string(f.Data), "%d", &family)
 		var sw *sendWindow
 		if s.flowControl {
-			sw = newSendWindow(s.initialWindow)
+			sw = newSendWindow(s.initialWindow, fmt.Sprintf("server ch=%d", f.Channel))
 		}
-		cs := &chanState{inbox: newAsyncInbox(), sw: sw}
+		cs := &chanState{inbox: newAsyncInbox(fmt.Sprintf("server ch=%d", f.Channel)), sw: sw}
 		s.mu.Lock()
 		s.channels[f.Channel] = cs
 		s.mu.Unlock()
@@ -369,13 +391,17 @@ func (s *MuxServer) HandleTCP(channel uint16, family int, dstIP string, dstPort 
 					cs := s.channelState(channel)
 					if cs != nil && cs.sw != nil {
 						if !cs.sw.Acquire(n) {
+							log.Printf("mux: server channel %d remote->mux send window killed", channel)
 							break
 						}
 					}
 				}
 				d := make([]byte, n)
 				copy(d, buf[:n])
-				s.SendTo(channel, CMD_TCP_DATA, d)
+				if !s.sendFrame(Frame{Channel: channel, Cmd: CMD_TCP_DATA, Data: d}) {
+					log.Printf("mux: server channel %d remote->mux send aborted during shutdown", channel)
+					break
+				}
 			}
 			if err != nil {
 				break
@@ -406,10 +432,70 @@ func (s *MuxServer) HandleTCP(channel uint16, family int, dstIP string, dstPort 
 			}
 		case CMD_TCP_EOF:
 			if tc, ok := conn.(*net.TCPConn); ok {
+				log.Printf("mux: server channel %d received EOF from client", channel)
 				tc.CloseWrite()
 			}
 		case CMD_TCP_STOP_SENDING:
+			log.Printf("mux: server channel %d received STOP_SENDING from client", channel)
 			return
 		}
+	}
+}
+
+func (s *MuxServer) sendFrame(f Frame) bool {
+	return s.sched.Enqueue(f, s.stopCh)
+}
+
+func (s *MuxServer) sendPriorityFrame(f Frame) bool {
+	return s.enqueueFrame(s.priorityOut, f)
+}
+
+func (s *MuxServer) enqueueFrame(ch chan Frame, f Frame) bool {
+	select {
+	case <-s.stopCh:
+		return false
+	case ch <- f:
+		return true
+	}
+}
+
+func (s *MuxServer) reportError(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case s.err <- err:
+	default:
+	}
+	s.shutdown(err.Error())
+}
+
+func (s *MuxServer) shutdown(reason string) {
+	s.stopOnce.Do(func() {
+		log.Printf("mux: server shutdown: %s", reason)
+		close(s.stopCh)
+		s.sched.Close()
+
+		s.mu.Lock()
+		channels := s.channels
+		s.channels = make(map[uint16]*chanState)
+		s.mu.Unlock()
+
+		for ch, cs := range channels {
+			if cs.sw != nil {
+				cs.sw.Kill()
+			}
+			cs.inbox.Close()
+			log.Printf("mux: server shutdown closed channel %d", ch)
+		}
+	})
+}
+
+func (s *MuxServer) isStopped() bool {
+	select {
+	case <-s.stopCh:
+		return true
+	default:
+		return false
 	}
 }

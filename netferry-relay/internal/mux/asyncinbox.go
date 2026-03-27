@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -25,23 +26,30 @@ const (
 // INBOX_SEND_TIMEOUT the inbox is closed (same semantics as before, but
 // without blocking the global reader).
 type asyncInbox struct {
-	ch chan Frame // consumer reads from here
+	label string
+	ch    chan Frame // consumer reads from here
 
-	mu     sync.Mutex
-	buf    []Frame
-	closed bool
+	mu          sync.Mutex
+	buf         []Frame
+	closed      bool
+	warnedLevel int
 
 	wake chan struct{} // 1-buffered; nudges drainer
-	done chan struct{} // closed on shutdown
+	done chan struct{} // closed by drainer on shutdown
 
 	closeOnce sync.Once
 }
 
-func newAsyncInbox() *asyncInbox {
+func newAsyncInbox(labels ...string) *asyncInbox {
+	label := "unknown"
+	if len(labels) > 0 && labels[0] != "" {
+		label = labels[0]
+	}
 	ai := &asyncInbox{
-		ch:   make(chan Frame, inboxChanSize),
-		wake: make(chan struct{}, 1),
-		done: make(chan struct{}),
+		label: label,
+		ch:    make(chan Frame, inboxChanSize),
+		wake:  make(chan struct{}, 1),
+		done:  make(chan struct{}),
 	}
 	go ai.drain()
 	return ai
@@ -56,18 +64,13 @@ func (ai *asyncInbox) send(f Frame) bool {
 		ai.mu.Unlock()
 		return false
 	}
-
-	// Fast path: direct send if channel has space.
-	select {
-	case ai.ch <- f:
-		ai.mu.Unlock()
-		return true
-	default:
-	}
-
-	// Slow path: buffer in overflow slice.
 	ai.buf = append(ai.buf, f)
 	n := len(ai.buf)
+	level := n / 512
+	if level > ai.warnedLevel {
+		ai.warnedLevel = level
+		log.Printf("warning: mux inbox backlog growing: label=%s backlog=%d frames", ai.label, n)
+	}
 	ai.mu.Unlock()
 
 	// Nudge the drainer.
@@ -78,6 +81,7 @@ func (ai *asyncInbox) send(f Frame) bool {
 
 	// Hard limit: consumer is hopelessly behind.
 	if n > maxOverflowFrames {
+		log.Printf("warning: mux inbox overflow limit exceeded: label=%s backlog=%d frames", ai.label, n)
 		ai.Close()
 		return false
 	}
@@ -96,31 +100,16 @@ func (ai *asyncInbox) Close() {
 	ai.closeOnce.Do(func() {
 		ai.mu.Lock()
 		ai.closed = true
-		// Drain remaining overflow frames into the channel buffer before
-		// closing. This prevents data loss for frames that were in the
-		// overflow slice but hadn't been moved to the channel yet.
-		remaining := ai.buf
-		ai.buf = nil
+		buffered := len(ai.buf)
 		ai.mu.Unlock()
 
-		// Stop the drainer goroutine first so it doesn't race with us.
-		close(ai.done)
+		log.Printf("mux: inbox closing: label=%s buffered=%d", ai.label, buffered)
 
-		// Best-effort drain: push overflow frames into the channel.
-		// If the channel buffer is full, remaining frames are dropped.
-		// In practice the consumer is still active and draining, so the
-		// channel usually has space.
-		for _, f := range remaining {
-			select {
-			case ai.ch <- f:
-			default:
-				// Channel buffer full — stop trying. The consumer will
-				// get what's already in the channel after it's closed.
-				goto closeCh
-			}
+		// Wake the drainer so it can finish draining buffered frames and close ch.
+		select {
+		case ai.wake <- struct{}{}:
+		default:
 		}
-	closeCh:
-		close(ai.ch)
 	})
 }
 
@@ -128,36 +117,42 @@ func (ai *asyncInbox) Close() {
 // It runs in its own goroutine so that a slow consumer only blocks this
 // goroutine, never the mux reader.
 func (ai *asyncInbox) drain() {
+	defer close(ai.done)
 	for {
-		select {
-		case <-ai.wake:
-		case <-ai.done:
-			return
+		ai.mu.Lock()
+		if len(ai.buf) == 0 {
+			closed := ai.closed
+			ai.mu.Unlock()
+			if closed {
+				close(ai.ch)
+				return
+			}
+			<-ai.wake
+			continue
 		}
 
-		for {
+		f := ai.buf[0]
+		ai.buf[0] = Frame{} // allow GC of frame data
+		ai.buf = ai.buf[1:]
+		if len(ai.buf) == 0 {
+			ai.buf = nil // release backing array
+		}
+		ai.mu.Unlock()
+
+		select {
+		case ai.ch <- f:
+		case <-time.After(INBOX_SEND_TIMEOUT):
 			ai.mu.Lock()
-			if len(ai.buf) == 0 || ai.closed {
-				ai.mu.Unlock()
-				break
-			}
-			f := ai.buf[0]
-			ai.buf[0] = Frame{} // allow GC of frame data
-			ai.buf = ai.buf[1:]
-			if len(ai.buf) == 0 {
-				ai.buf = nil // release backing array
-			}
+			pending := len(ai.buf)
+			ai.closed = true
+			ai.buf = nil
 			ai.mu.Unlock()
 
-			select {
-			case ai.ch <- f:
-			case <-time.After(INBOX_SEND_TIMEOUT):
-				// Consumer didn't read for too long — give up.
-				ai.Close()
-				return
-			case <-ai.done:
-				return
-			}
+			// Consumer didn't read for too long — give up and close with
+			// whatever data is already buffered in ai.ch.
+			log.Printf("warning: mux inbox consumer stalled: label=%s timeout=%s pending=%d", ai.label, INBOX_SEND_TIMEOUT, pending)
+			close(ai.ch)
+			return
 		}
 	}
 }

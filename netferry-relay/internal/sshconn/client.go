@@ -255,3 +255,34 @@ func setTCPKeepAlive(conn net.Conn) {
 		tc.SetNoDelay(true)
 	}
 }
+
+// StartSSHKeepalive sends SSH-protocol-level keepalive requests periodically.
+// This is distinct from TCP keepalive: it forces data through the SSH
+// transport, which lets the SSH library detect dead connections (e.g. after a
+// NAT timeout or abrupt network drop) on platforms like Windows where the OS
+// may not surface TCP errors promptly.
+//
+// The returned stop function cancels the keepalive goroutine. If the SSH
+// connection dies, the goroutine exits automatically (SendRequest will return
+// an error and the ssh.Client will close all channels).
+func StartSSHKeepalive(client *ssh.Client, interval time.Duration) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+					// Connection is dead; ssh.Client has already started
+					// shutting down all channels.
+					log.Printf("ssh keepalive: connection lost: %v", err)
+					return
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}

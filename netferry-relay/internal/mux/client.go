@@ -3,6 +3,7 @@ package mux
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -26,9 +27,13 @@ type MuxClient struct {
 	err         chan error
 	routesCh    chan []string
 
-	done      atomic.Bool
-	lastPong  atomic.Int64 // UnixNano of last PONG received
-	counters  *stats.Counters // optional; nil = no-op
+	stopCh   chan struct{}
+	stopOnce sync.Once
+
+	done     atomic.Bool
+	lastPong atomic.Int64    // UnixNano of last PONG received
+	lastPing atomic.Int64    // UnixNano of last PING sent
+	counters *stats.Counters // optional; nil = no-op
 
 	flowControl   bool
 	initialWindow int64
@@ -51,6 +56,7 @@ func NewMuxClient(r io.Reader, w io.Writer) *MuxClient {
 		priorityOut: make(chan Frame, PRIORITY_OUT_BUF),
 		err:         make(chan error, 2),
 		routesCh:    make(chan []string, 1),
+		stopCh:      make(chan struct{}),
 	}
 }
 
@@ -76,11 +82,13 @@ func (c *MuxClient) RoutesCh() <-chan []string {
 // Run starts the mux client loops. Blocks until the connection dies.
 func (c *MuxClient) Run() error {
 	c.lastPong.Store(time.Now().UnixNano())
+	c.lastPing.Store(time.Now().UnixNano())
 	go c.writer()
 	go c.reader()
 	go c.keepalive()
+	go c.healthLogger()
 	err := <-c.err
-	c.done.Store(true)
+	c.shutdown("run exit")
 	return err
 }
 
@@ -92,10 +100,14 @@ func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn,
 	}
 	ch, inbox := c.allocChannel()
 	data := []byte(fmt.Sprintf("%d,%s,%d", family, dstIP, dstPort))
-	c.out <- Frame{Channel: ch, Cmd: CMD_TCP_CONNECT, Data: data}
+	if err := c.sendFrame(Frame{Channel: ch, Cmd: CMD_TCP_CONNECT, Data: data}); err != nil {
+		c.freeChannel(ch)
+		return nil, err
+	}
 	if c.counters != nil {
-		c.counters.ActiveTCP.Add(1)
+		active := c.counters.ActiveTCP.Add(1)
 		c.counters.TotalTCP.Add(1)
+		c.counters.NoteActiveConns(active)
 	}
 	return &ClientConn{client: c, channel: ch, inbox: inbox, counters: c.counters}, nil
 }
@@ -108,7 +120,9 @@ func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 	ch, inbox := c.allocChannel()
 	defer c.freeChannel(ch)
 
-	c.priorityOut <- Frame{Channel: ch, Cmd: CMD_DNS_REQ, Data: data}
+	if err := c.sendPriorityFrame(Frame{Channel: ch, Cmd: CMD_DNS_REQ, Data: data}); err != nil {
+		return nil, err
+	}
 
 	select {
 	case f, ok := <-inbox:
@@ -124,7 +138,6 @@ func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 	}
 }
 
-
 func (c *MuxClient) allocChannel() (uint16, <-chan Frame) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -134,10 +147,10 @@ func (c *MuxClient) allocChannel() (uint16, <-chan Frame) {
 			c.nextChan = 1
 		}
 		if _, used := c.channels[c.nextChan]; !used {
-			inbox := newAsyncInbox()
+			inbox := newAsyncInbox(fmt.Sprintf("client ch=%d", c.nextChan))
 			var sw *sendWindow
 			if c.flowControl {
-				sw = newSendWindow(c.initialWindow)
+				sw = newSendWindow(c.initialWindow, fmt.Sprintf("client ch=%d", c.nextChan))
 			}
 			c.channels[c.nextChan] = &clientChan{inbox: inbox, sw: sw}
 			return c.nextChan, inbox.C()
@@ -154,6 +167,7 @@ func (c *MuxClient) freeChannel(ch uint16) {
 	}
 	c.mu.Unlock()
 	if ok {
+		log.Printf("mux: client freeing local channel %d", ch)
 		if cc.sw != nil {
 			cc.sw.Kill()
 		}
@@ -165,7 +179,7 @@ func (c *MuxClient) reader() {
 	for {
 		f, err := ReadFrame(c.r)
 		if err != nil {
-			c.err <- err
+			c.reportError(err)
 			return
 		}
 		c.dispatchIncoming(f)
@@ -173,30 +187,31 @@ func (c *MuxClient) reader() {
 }
 
 func (c *MuxClient) writer() {
-	bw := NewBufferedWriter(c.w)
 	for {
 		// Block until at least one frame is available.
 		select {
+		case <-c.stopCh:
+			return
 		case f, ok := <-c.priorityOut:
 			if !ok {
 				return
 			}
-			if err := WriteFrame(bw, f); err != nil {
-				c.err <- err
+			if err := WriteFrame(c.w, f); err != nil {
+				c.reportError(err)
 				return
 			}
 		case f, ok := <-c.out:
 			if !ok {
 				return
 			}
-			if err := WriteFrame(bw, f); err != nil {
-				c.err <- err
+			if err := WriteFrame(c.w, f); err != nil {
+				c.reportError(err)
 				return
 			}
 		}
-		// Drain all queued frames (priority first) before flushing,
-		// so multiple frames are coalesced into fewer system calls.
-		if err := drainAndFlush(bw, c.priorityOut, c.out, c.err); err != nil {
+		// Drain all immediately available frames (priority first).
+		if err := drainAndFlush(c.w, c.priorityOut, c.out, c.err); err != nil {
+			c.reportError(err)
 			return
 		}
 	}
@@ -211,26 +226,42 @@ func (c *MuxClient) keepalive() {
 		}
 		last := time.Unix(0, c.lastPong.Load())
 		if time.Since(last) > KEEPALIVE_INTERVAL+KEEPALIVE_TIMEOUT {
-			c.err <- fmt.Errorf("mux: keepalive timeout (no pong for %v)", time.Since(last))
+			c.reportError(fmt.Errorf("mux: keepalive timeout (no pong for %v)", time.Since(last)))
 			return
 		}
+		now := time.Now()
+		c.lastPing.Store(now.UnixNano())
 		select {
+		case <-c.stopCh:
+			return
 		case c.priorityOut <- Frame{Channel: 0, Cmd: CMD_PING}:
 		default:
+			log.Printf("warning: mux priority queue full while sending keepalive ping (%d/%d)", len(c.priorityOut), cap(c.priorityOut))
 		}
 	}
 }
 
 func (c *MuxClient) sendWindowUpdate(ch uint16, credit int64) {
-	c.priorityOut <- Frame{Channel: ch, Cmd: CMD_WINDOW_UPDATE, Data: EncodeWindowUpdate(credit)}
+	if err := c.sendPriorityFrame(Frame{Channel: ch, Cmd: CMD_WINDOW_UPDATE, Data: EncodeWindowUpdate(credit)}); err != nil && !c.done.Load() {
+		log.Printf("warning: mux failed to queue WINDOW_UPDATE for channel %d: %v", ch, err)
+	}
 }
 
 func (c *MuxClient) dispatchIncoming(f Frame) {
 	switch f.Cmd {
 	case CMD_PING:
-		c.priorityOut <- Frame{Channel: 0, Cmd: CMD_PONG, Data: f.Data}
+		if err := c.sendPriorityFrame(Frame{Channel: 0, Cmd: CMD_PONG, Data: f.Data}); err != nil && !c.done.Load() {
+			log.Printf("warning: mux failed to queue PONG: %v", err)
+		}
 	case CMD_PONG:
 		c.lastPong.Store(time.Now().UnixNano())
+		if sent := c.lastPing.Load(); sent > 0 && c.counters != nil {
+			rtt := time.Since(time.Unix(0, sent))
+			c.counters.ObserveKeepaliveRTT(rtt)
+			if rtt >= 2*time.Second {
+				log.Printf("warning: mux keepalive RTT is elevated: %s", rtt.Round(time.Millisecond))
+			}
+		}
 	case CMD_ROUTES:
 		routes := parseRoutes(f.Data)
 		select {
@@ -256,6 +287,76 @@ func (c *MuxClient) dispatchIncoming(f Frame) {
 		}
 	}
 }
+
+func (c *MuxClient) healthLogger() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	var prevRx, prevTx int64
+	for range ticker.C {
+		if c.done.Load() {
+			return
+		}
+
+		var active int32
+		var total int64
+		var rxRate int64
+		var txRate int64
+		var idle time.Duration
+		var keepaliveRTT time.Duration
+		if c.counters != nil {
+			active = c.counters.ActiveTCP.Load()
+			total = c.counters.TotalTCP.Load()
+			rx := c.counters.RxTotal.Load()
+			tx := c.counters.TxTotal.Load()
+			rxRate = (rx - prevRx) / 15
+			txRate = (tx - prevTx) / 15
+			prevRx = rx
+			prevTx = tx
+			idle = c.counters.LastActivityAgo(time.Now())
+			keepaliveRTT = c.counters.LastKeepaliveRTT()
+		}
+
+		c.mu.Lock()
+		channels := len(c.channels)
+		c.mu.Unlock()
+
+		outQueued := len(c.out)
+		priorityQueued := len(c.priorityOut)
+		lastPongAgo := time.Since(time.Unix(0, c.lastPong.Load()))
+
+		log.Printf(
+			"mux health: channels=%d active=%d total=%d out=%d/%d priority=%d/%d rx=%dB/s tx=%dB/s idle=%s last_pong=%s keepalive_rtt=%s",
+			channels,
+			active,
+			total,
+			outQueued,
+			cap(c.out),
+			priorityQueued,
+			cap(c.priorityOut),
+			rxRate,
+			txRate,
+			idle.Round(time.Second),
+			lastPongAgo.Round(time.Second),
+			keepaliveRTT.Round(time.Millisecond),
+		)
+
+		switch {
+		case outQueued >= cap(c.out)*3/4:
+			log.Printf("warning: mux out queue is heavily backlogged: %d/%d", outQueued, cap(c.out))
+		case priorityQueued >= cap(c.priorityOut)/2:
+			log.Printf("warning: mux priority queue is backlogged: %d/%d", priorityQueued, cap(c.priorityOut))
+		case channels >= highChannelWarningThreshold:
+			log.Printf("warning: mux channel count is high: %d", channels)
+		case active > 0 && idle >= 45*time.Second:
+			log.Printf("warning: mux traffic appears stalled: active=%d idle=%s last_pong=%s", active, idle.Round(time.Second), lastPongAgo.Round(time.Second))
+		case lastPongAgo >= KEEPALIVE_INTERVAL:
+			log.Printf("warning: mux pong is delayed: last_pong=%s", lastPongAgo.Round(time.Millisecond))
+		}
+	}
+}
+
+const highChannelWarningThreshold = 128
 
 func parseRoutes(data []byte) []string {
 	// Format: "family,ip,width\nfamily,ip,width\n..."
@@ -312,7 +413,7 @@ func (cc *ClientConn) Read(b []byte) (int, error) {
 	n := copy(b, cc.buf)
 	cc.buf = cc.buf[n:]
 	if cc.counters != nil && n > 0 {
-		cc.counters.RxTotal.Add(int64(n))
+		cc.counters.AddRx(int64(n))
 	}
 	// Send WINDOW_UPDATE back to the remote sender in batches.
 	if cc.client.flowControl && n > 0 {
@@ -348,12 +449,17 @@ func (cc *ClientConn) Write(b []byte) (int, error) {
 		}
 		d := make([]byte, len(chunk))
 		copy(d, chunk)
-		cc.client.out <- Frame{Channel: cc.channel, Cmd: CMD_TCP_DATA, Data: d}
+		if err := cc.client.sendFrame(Frame{Channel: cc.channel, Cmd: CMD_TCP_DATA, Data: d}); err != nil {
+			if total == 0 {
+				return 0, err
+			}
+			return total, err
+		}
 		total += len(chunk)
 		b = b[len(chunk):]
 	}
 	if cc.counters != nil && total > 0 {
-		cc.counters.TxTotal.Add(int64(total))
+		cc.counters.AddTx(int64(total))
 	}
 	return total, nil
 }
@@ -362,27 +468,34 @@ func (cc *ClientConn) CloseWrite() error {
 	if cc.isClosed.Load() {
 		return net.ErrClosed
 	}
-	cc.client.out <- Frame{Channel: cc.channel, Cmd: CMD_TCP_EOF}
-	return nil
+	log.Printf("mux: client channel %d CloseWrite -> EOF", cc.channel)
+	return cc.client.sendFrame(Frame{Channel: cc.channel, Cmd: CMD_TCP_EOF})
 }
 
 func (cc *ClientConn) Close() error {
 	cc.closed.Do(func() {
 		cc.isClosed.Store(true)
-		cc.client.out <- Frame{Channel: cc.channel, Cmd: CMD_TCP_EOF}
+		log.Printf("mux: client channel %d Close -> STOP_SENDING + EOF", cc.channel)
+		if err := cc.client.sendFrame(Frame{Channel: cc.channel, Cmd: CMD_TCP_STOP_SENDING}); err != nil && !cc.client.done.Load() {
+			log.Printf("warning: mux failed to queue STOP_SENDING for channel %d: %v", cc.channel, err)
+		}
+		if err := cc.client.sendFrame(Frame{Channel: cc.channel, Cmd: CMD_TCP_EOF}); err != nil && !cc.client.done.Load() {
+			log.Printf("warning: mux failed to queue EOF for channel %d: %v", cc.channel, err)
+		}
 		cc.client.freeChannel(cc.channel)
 		if cc.counters != nil {
-			cc.counters.ActiveTCP.Add(-1)
+			active := cc.counters.ActiveTCP.Add(-1)
+			cc.counters.NoteActiveConns(active)
 		}
 	})
 	return nil
 }
 
 // net.Conn boilerplate — not used but required by interface.
-func (cc *ClientConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
-func (cc *ClientConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
-func (cc *ClientConn) SetDeadline(t time.Time) error    { return nil }
-func (cc *ClientConn) SetReadDeadline(t time.Time) error { return nil }
+func (cc *ClientConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (cc *ClientConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (cc *ClientConn) SetDeadline(t time.Time) error      { return nil }
+func (cc *ClientConn) SetReadDeadline(t time.Time) error  { return nil }
 func (cc *ClientConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // UDPDatagram represents a single UDP datagram with its remote address.
@@ -410,9 +523,13 @@ func (c *MuxClient) OpenUDP(family int) (*UDPChannel, error) {
 	}
 	ch, inbox := c.allocChannel()
 	data := []byte(fmt.Sprintf("%d", family))
-	c.out <- Frame{Channel: ch, Cmd: CMD_UDP_OPEN, Data: data}
+	if err := c.sendFrame(Frame{Channel: ch, Cmd: CMD_UDP_OPEN, Data: data}); err != nil {
+		c.freeChannel(ch)
+		return nil, err
+	}
 	if c.counters != nil {
-		c.counters.ActiveTCP.Add(1) // reuse counter for active channels
+		active := c.counters.ActiveTCP.Add(1) // reuse counter for active channels
+		c.counters.NoteActiveConns(active)
 	}
 	return &UDPChannel{client: c, channel: ch, inbox: inbox}, nil
 }
@@ -434,9 +551,11 @@ func (uc *UDPChannel) SendTo(dstIP string, dstPort int, data []byte) error {
 			}
 		}
 	}
-	uc.client.out <- Frame{Channel: uc.channel, Cmd: CMD_UDP_DATA, Data: payload}
+	if err := uc.client.sendFrame(Frame{Channel: uc.channel, Cmd: CMD_UDP_DATA, Data: payload}); err != nil {
+		return err
+	}
 	if uc.client.counters != nil {
-		uc.client.counters.TxTotal.Add(int64(len(data)))
+		uc.client.counters.AddTx(int64(len(data)))
 	}
 	return nil
 }
@@ -467,7 +586,7 @@ func (uc *UDPChannel) Recv() (UDPDatagram, error) {
 			fmt.Sscanf(s[i1+1:i2], "%d", &port)
 			payload := f.Data[i2+1:]
 			if uc.client.counters != nil {
-				uc.client.counters.RxTotal.Add(int64(len(payload)))
+				uc.client.counters.AddRx(int64(len(payload)))
 			}
 			if uc.client.flowControl {
 				uc.client.sendWindowUpdate(uc.channel, int64(len(f.Data)))
@@ -487,10 +606,14 @@ func (uc *UDPChannel) RecvCh() <-chan Frame {
 // Close sends CMD_UDP_CLOSE and frees the channel.
 func (uc *UDPChannel) Close() error {
 	uc.closed.Do(func() {
-		uc.client.out <- Frame{Channel: uc.channel, Cmd: CMD_UDP_CLOSE}
+		log.Printf("mux: client UDP channel %d Close -> UDP_CLOSE", uc.channel)
+		if err := uc.client.sendFrame(Frame{Channel: uc.channel, Cmd: CMD_UDP_CLOSE}); err != nil && !uc.client.done.Load() {
+			log.Printf("warning: mux failed to queue UDP_CLOSE for channel %d: %v", uc.channel, err)
+		}
 		uc.client.freeChannel(uc.channel)
 		if uc.client.counters != nil {
-			uc.client.counters.ActiveTCP.Add(-1)
+			active := uc.client.counters.ActiveTCP.Add(-1)
+			uc.client.counters.NoteActiveConns(active)
 		}
 	})
 	return nil
@@ -504,4 +627,53 @@ func indexByte(s string, c byte) int {
 		}
 	}
 	return -1
+}
+
+func (c *MuxClient) sendFrame(f Frame) error {
+	return c.enqueueFrame(c.out, f, "out")
+}
+
+func (c *MuxClient) sendPriorityFrame(f Frame) error {
+	return c.enqueueFrame(c.priorityOut, f, "priority")
+}
+
+func (c *MuxClient) enqueueFrame(ch chan Frame, f Frame, queueName string) error {
+	select {
+	case <-c.stopCh:
+		return fmt.Errorf("mux: client closed")
+	case ch <- f:
+		return nil
+	}
+}
+
+func (c *MuxClient) reportError(err error) {
+	if err == nil {
+		return
+	}
+	select {
+	case c.err <- err:
+	default:
+	}
+	c.shutdown(err.Error())
+}
+
+func (c *MuxClient) shutdown(reason string) {
+	c.stopOnce.Do(func() {
+		c.done.Store(true)
+		log.Printf("mux: client shutdown: %s", reason)
+		close(c.stopCh)
+
+		c.mu.Lock()
+		channels := c.channels
+		c.channels = make(map[uint16]*clientChan)
+		c.mu.Unlock()
+
+		for ch, cc := range channels {
+			if cc.sw != nil {
+				cc.sw.Kill()
+			}
+			cc.inbox.Close()
+			log.Printf("mux: client shutdown closed local channel %d", ch)
+		}
+	})
 }

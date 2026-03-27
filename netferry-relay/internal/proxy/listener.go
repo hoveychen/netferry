@@ -2,10 +2,13 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"strings"
+	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
 	"github.com/hoveychen/netferry/relay/internal/stats"
@@ -41,6 +44,7 @@ func Listen(port int, client *mux.MuxClient, counters *stats.Counters) error {
 
 func handleConn(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
 	defer conn.Close()
+	startedAt := time.Now()
 
 	// Resolve original destination.
 	var dstIP string
@@ -81,32 +85,111 @@ func handleConn(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) 
 	var connID uint64
 	if counters != nil {
 		connID = counters.ConnOpen(srcAddr, dstAddr, host)
-		defer counters.ConnClose(connID, srcAddr, dstAddr)
 	}
 
 	// Open a mux channel.
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
 	if err != nil {
 		log.Printf("proxy: open channel to %s:%d: %v", dstIP, dstPort, err)
+		if counters != nil {
+			counters.ConnClose(connID, srcAddr, dstAddr)
+		}
 		return
 	}
 	defer muxConn.Close()
 
 	// Bidirectional copy. Use the buffered reader (br) so peeked bytes are
 	// replayed into the mux channel.
-	done := make(chan struct{}, 2)
+	done := make(chan copyResult, 2)
 	go func() {
-		io.Copy(muxConn, br)
+		n, err := io.Copy(&countingWriter{w: muxConn, onWrite: func(wrote int) {
+			if counters != nil {
+				counters.ConnAddTx(connID, int64(wrote))
+			}
+		}}, br)
 		muxConn.CloseWrite()
-		done <- struct{}{}
+		done <- copyResult{direction: "upload", bytes: n, err: normalizeCopyErr(err)}
 	}()
 	go func() {
-		io.Copy(conn, muxConn)
+		n, err := io.Copy(&countingWriter{w: conn, onWrite: func(wrote int) {
+			if counters != nil {
+				counters.ConnAddRx(connID, int64(wrote))
+			}
+		}}, muxConn)
 		if tc, ok := conn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
-		done <- struct{}{}
+		done <- copyResult{direction: "download", bytes: n, err: normalizeCopyErr(err)}
 	}()
-	<-done
-	<-done
+	first := <-done
+	second := <-done
+	if counters != nil {
+		counters.ConnClose(connID, srcAddr, dstAddr)
+	}
+	logConnSummary("tcp", connID, srcAddr, dstAddr, host, startedAt, first, second)
+}
+
+type countingWriter struct {
+	w       io.Writer
+	onWrite func(int)
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	if n > 0 && cw.onWrite != nil {
+		cw.onWrite(n)
+	}
+	return n, err
+}
+
+type copyResult struct {
+	direction string
+	bytes     int64
+	err       error
+}
+
+func normalizeCopyErr(err error) error {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "use of closed network connection"):
+		return nil
+	case strings.Contains(msg, "closed pipe"):
+		return nil
+	default:
+		return err
+	}
+}
+
+func logConnSummary(kind string, connID uint64, srcAddr, dstAddr, host string, startedAt time.Time, first, second copyResult) {
+	upload := first
+	download := second
+	if first.direction == "download" {
+		upload, download = second, first
+	}
+	duration := time.Since(startedAt)
+	fields := []string{
+		fmt.Sprintf("id=%d", connID),
+		fmt.Sprintf("src=%s", srcAddr),
+		fmt.Sprintf("dst=%s", dstAddr),
+		fmt.Sprintf("dur=%s", duration.Round(time.Millisecond)),
+		fmt.Sprintf("upload=%dB", upload.bytes),
+		fmt.Sprintf("download=%dB", download.bytes),
+	}
+	if host != "" {
+		fields = append(fields, fmt.Sprintf("host=%q", host))
+	}
+	if upload.err != nil {
+		fields = append(fields, fmt.Sprintf("upload_err=%q", upload.err))
+	}
+	if download.err != nil {
+		fields = append(fields, fmt.Sprintf("download_err=%q", download.err))
+	}
+	prefix := "conn summary"
+	if upload.err != nil || download.err != nil {
+		prefix = "warning: conn summary"
+	}
+	log.Printf("%s: kind=%s %s", prefix, kind, strings.Join(fields, " "))
 }

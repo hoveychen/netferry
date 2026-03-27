@@ -157,6 +157,32 @@ func TestAsyncInbox_CloseWithActiveConsumer(t *testing.T) {
 	}
 }
 
+func TestAsyncInbox_CloseRejectsNewSend(t *testing.T) {
+	ai := newAsyncInbox()
+
+	if !ai.send(Frame{Channel: 1, Cmd: CMD_TCP_DATA, Data: []byte("before-close")}) {
+		t.Fatal("initial send returned false")
+	}
+
+	ai.Close()
+
+	if ai.send(Frame{Channel: 2, Cmd: CMD_TCP_DATA, Data: []byte("after-close")}) {
+		t.Fatal("send after Close should return false")
+	}
+
+	var got []Frame
+	for f := range ai.C() {
+		got = append(got, f)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 frame after Close, got %d", len(got))
+	}
+	if got[0].Channel != 1 {
+		t.Fatalf("got channel %d, want 1", got[0].Channel)
+	}
+}
+
 // TestAsyncInbox_ConcurrentSendRecv stress-tests concurrent producers and a
 // single consumer.
 func TestAsyncInbox_ConcurrentSendRecv(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
 	"github.com/hoveychen/netferry/relay/internal/stats"
@@ -17,14 +18,14 @@ import (
 
 // SOCKS5 protocol constants (RFC 1928).
 const (
-	socks5Version     = 5
-	socks5AuthNone    = 0
-	socks5CmdConnect  = 1
-	socks5AddrIPv4    = 1
-	socks5AddrDomain  = 3
-	socks5AddrIPv6    = 4
-	socks5ReplyOK     = 0
-	socks5ReplyFail   = 1
+	socks5Version    = 5
+	socks5AuthNone   = 0
+	socks5CmdConnect = 1
+	socks5AddrIPv4   = 1
+	socks5AddrDomain = 3
+	socks5AddrIPv6   = 4
+	socks5ReplyOK    = 0
+	socks5ReplyFail  = 1
 )
 
 // ListenSOCKS5 starts a SOCKS5 proxy on the given port and forwards all
@@ -50,6 +51,7 @@ func ListenSOCKS5(port int, client *mux.MuxClient, counters *stats.Counters) err
 // handleSOCKS5 performs the SOCKS5 handshake and then proxies data.
 func handleSOCKS5(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
 	defer conn.Close()
+	startedAt := time.Now()
 
 	dstIP, dstPort, err := socks5Handshake(conn)
 	if err != nil {
@@ -75,31 +77,45 @@ func handleSOCKS5(conn net.Conn, client *mux.MuxClient, counters *stats.Counters
 	var connID uint64
 	if counters != nil {
 		connID = counters.ConnOpen(srcAddr, dstAddr, host)
-		defer counters.ConnClose(connID, srcAddr, dstAddr)
 	}
 
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
 	if err != nil {
 		log.Printf("socks5: open channel to %s:%d: %v", dstIP, dstPort, err)
+		if counters != nil {
+			counters.ConnClose(connID, srcAddr, dstAddr)
+		}
 		return
 	}
 	defer muxConn.Close()
 
-	done := make(chan struct{}, 2)
+	done := make(chan copyResult, 2)
 	go func() {
-		io.Copy(muxConn, conn)
+		n, err := io.Copy(&countingWriter{w: muxConn, onWrite: func(wrote int) {
+			if counters != nil {
+				counters.ConnAddTx(connID, int64(wrote))
+			}
+		}}, conn)
 		muxConn.CloseWrite()
-		done <- struct{}{}
+		done <- copyResult{direction: "upload", bytes: n, err: normalizeCopyErr(err)}
 	}()
 	go func() {
-		io.Copy(conn, muxConn)
+		n, err := io.Copy(&countingWriter{w: conn, onWrite: func(wrote int) {
+			if counters != nil {
+				counters.ConnAddRx(connID, int64(wrote))
+			}
+		}}, muxConn)
 		if tc, ok := conn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
-		done <- struct{}{}
+		done <- copyResult{direction: "download", bytes: n, err: normalizeCopyErr(err)}
 	}()
-	<-done
-	<-done
+	first := <-done
+	second := <-done
+	if counters != nil {
+		counters.ConnClose(connID, srcAddr, dstAddr)
+	}
+	logConnSummary("socks5", connID, srcAddr, dstAddr, host, startedAt, first, second)
 }
 
 // socks5Handshake handles the SOCKS5 greeting and request, sends the reply,

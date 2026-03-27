@@ -199,6 +199,13 @@ func main() {
 	// Print the port on stderr so the Tauri sidecar can pick it up.
 	fmt.Fprintf(os.Stderr, "c : stats-port: %d\n", statsPort)
 
+	// ── SSH-level keepalive ───────────────────────────────────────────────────
+	// Sends keepalive@openssh.com global requests so the SSH transport detects
+	// dead TCP connections promptly (critical on Windows where the OS may not
+	// surface TCP errors without an explicit write).
+	stopSSHKeepalive := sshconn.StartSSHKeepalive(sshClient, 30*time.Second)
+	defer stopSSHKeepalive()
+
 	// ── Start mux client ─────────────────────────────────────────────────────
 	muxClient := mux.NewMuxClient(sessStdout, sessStdin)
 	muxClient.SetCounters(counters)

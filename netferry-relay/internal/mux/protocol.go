@@ -3,7 +3,6 @@
 package mux
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -113,18 +112,10 @@ func WriteFrame(w io.Writer, f Frame) error {
 	return nil
 }
 
-// NewBufferedWriter wraps w with a bufio.Writer sized for typical mux frames.
-// The writer goroutine should call Flush() after each batch of frames.
-func NewBufferedWriter(w io.Writer) *bufio.Writer {
-	// 256 KB buffer: fits ~4 full-size frames for better batching.
-	return bufio.NewWriterSize(w, 256*1024)
-}
-
 // drainAndFlush writes all immediately available frames from priority and out
-// channels, then flushes once. This batches multiple frames into fewer system
-// calls, improving throughput. The caller must have already written at least
-// one frame before calling this.
-func drainAndFlush(bw *bufio.Writer, priority <-chan Frame, out <-chan Frame, errCh chan<- error) error {
+// channels directly to w. Priority frames are always written before data frames.
+// The caller must have already written at least one frame before calling this.
+func drainAndFlush(w io.Writer, priority <-chan Frame, out <-chan Frame, errCh chan<- error) error {
 	for {
 		// Priority frames first.
 		select {
@@ -132,7 +123,7 @@ func drainAndFlush(bw *bufio.Writer, priority <-chan Frame, out <-chan Frame, er
 			if !ok {
 				return fmt.Errorf("priority channel closed")
 			}
-			if err := WriteFrame(bw, f); err != nil {
+			if err := WriteFrame(w, f); err != nil {
 				errCh <- err
 				return err
 			}
@@ -145,16 +136,11 @@ func drainAndFlush(bw *bufio.Writer, priority <-chan Frame, out <-chan Frame, er
 			if !ok {
 				return fmt.Errorf("out channel closed")
 			}
-			if err := WriteFrame(bw, f); err != nil {
+			if err := WriteFrame(w, f); err != nil {
 				errCh <- err
 				return err
 			}
 		default:
-			// No more frames queued — flush the batch.
-			if err := bw.Flush(); err != nil {
-				errCh <- err
-				return err
-			}
 			return nil
 		}
 	}
