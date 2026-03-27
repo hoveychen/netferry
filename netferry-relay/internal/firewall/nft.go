@@ -283,12 +283,26 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	if err != nil {
 		return fmt.Errorf("nft: %w\n%s", err, out)
 	}
+
+	// Flush conntrack entries for intercepted subnets so existing connections
+	// are disrupted and apps reconnect through the new redirect rules.
+	flushConntrack(subnets)
 	return nil
 }
 
 func (n *nftMethod) Restore() error {
 	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
 	return nil
+}
+
+// flushConntrack removes conntrack entries whose destination matches any of the
+// given subnets. This disrupts existing connections so apps reconnect through
+// the newly installed redirect rules. conntrack-tools may not be present on
+// all systems; errors are silently ignored.
+func flushConntrack(subnets []SubnetRule) {
+	for _, subnet := range subnets {
+		exec.Command("conntrack", "-D", "-d", subnet.CIDR).Run()
+	}
 }
 
 func joinQuoted(ss []string) string {
@@ -414,6 +428,9 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		}
 	}
 
+	// Flush conntrack entries for intercepted subnets so existing connections
+	// are disrupted and apps reconnect through the new redirect rules.
+	flushConntrack(subnets)
 	return nil
 }
 

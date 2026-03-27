@@ -1,9 +1,11 @@
 // netferry-server is the remote-side binary deployed to the SSH host.
-// It communicates via stdin/stdout using the sshuttle mux protocol.
-// Zero external dependencies — only the Go standard library.
+// It communicates via stdin/stdout using smux over the SSH channel.
+// Zero external dependencies beyond smux — no OS-specific code.
 package main
 
 import (
+	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/xtaci/smux"
 )
 
 var Version = "dev"
@@ -24,7 +27,6 @@ func main() {
 	autoNets := false
 	toNameserver := ""
 	verbose := false
-	flowControl := false
 
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -32,8 +34,7 @@ func main() {
 			autoNets = true
 		case "--verbose", "-v":
 			verbose = true
-		case "--flow-control":
-			flowControl = true
+		case "--flow-control": // accepted but ignored; smux handles flow control
 		case "--to-ns":
 			i++
 			if i < len(os.Args) {
@@ -54,53 +55,354 @@ func main() {
 
 	log.Printf("netferry-server %s on %s/%s", Version, runtime.GOOS, runtime.GOARCH)
 
-	r := os.Stdin
-	w := os.Stdout
-
 	// Write synchronisation header — client reads this to confirm server started.
-	if err := mux.WriteSyncHeader(w); err != nil {
+	if err := mux.WriteSyncHeader(os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "s: fatal: write sync header: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Build routes packet before starting the mux loop.
-	routeData := buildRoutePacket(autoNets)
+	conn := &rwConn{r: os.Stdin, w: os.Stdout}
+	cfg := smux.DefaultConfig()
+	cfg.KeepAliveInterval = mux.KEEPALIVE_INTERVAL
+	cfg.KeepAliveTimeout = mux.KEEPALIVE_INTERVAL + mux.KEEPALIVE_TIMEOUT
 
-	// Use a pointer so handler closures reference the final srv value.
-	var srv *mux.MuxServer
-
-	handlers := mux.ServerHandlers{
-		NewTCP: func(channel uint16, family int, dstIP string, dstPort int) {
-			log.Printf("TCP %d → %s:%d", channel, dstIP, dstPort)
-			srv.HandleTCP(channel, family, dstIP, dstPort)
-		},
-		DNSReq: func(channel uint16, data []byte) {
-			log.Printf("DNS %d len=%d", channel, len(data))
-			handleDNS(srv, channel, data, toNameserver)
-		},
-		UDPOpen: func(channel uint16, family int) {
-			log.Printf("UDP open %d family=%d", channel, family)
-			handleUDPOpen(srv, channel, family)
-		},
+	sess, err := smux.Server(conn, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "s: fatal: smux.Server: %v\n", err)
+		os.Exit(1)
 	}
 
-	srv = mux.NewMuxServer(r, w, handlers)
-	if flowControl {
-		srv.SetFlowControl(true, mux.DEFAULT_INITIAL_WINDOW)
-	}
+	// Push routes to the client via a server-opened stream.
+	go pushRoutes(sess, autoNets)
 
-	// CMD_ROUTES must be enqueued before Run() so it's the first frame the client sees.
-	srv.Send(mux.Frame{Channel: 0, Cmd: mux.CMD_ROUTES, Data: routeData})
-
-	if err := srv.Run(); err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "s: fatal: %v\n", err)
-		os.Exit(99)
+	// Accept and dispatch client streams.
+	for {
+		stream, err := sess.AcceptStream()
+		if err != nil {
+			// Session closed (SSH channel died) — exit cleanly.
+			break
+		}
+		go handleStream(stream, toNameserver)
 	}
 }
 
+// rwConn adapts separate stdin/stdout into an io.ReadWriteCloser for smux.
+type rwConn struct {
+	r io.Reader
+	w io.Writer
+}
+
+func (c *rwConn) Read(b []byte) (int, error)  { return c.r.Read(b) }
+func (c *rwConn) Write(b []byte) (int, error) { return c.w.Write(b) }
+func (c *rwConn) Close() error                { return nil }
+
+// pushRoutes opens a server-initiated stream and writes the route list.
+func pushRoutes(sess *smux.Session, autoNets bool) {
+	stream, err := sess.OpenStream()
+	if err != nil {
+		log.Printf("pushRoutes: open stream: %v", err)
+		return
+	}
+	defer stream.Close()
+
+	routeData := buildRoutePacket(autoNets)
+	payload := append([]byte("ROUTES\n"), routeData...)
+	if _, err := stream.Write(payload); err != nil {
+		log.Printf("pushRoutes: write: %v", err)
+	}
+}
+
+// handleStream reads the stream type header and dispatches to the right handler.
+func handleStream(stream *smux.Stream, toNameserver string) {
+	defer stream.Close()
+
+	br := bufio.NewReader(stream)
+	hdr, err := br.ReadString('\n')
+	if err != nil {
+		return
+	}
+	hdr = strings.TrimRight(hdr, "\n")
+	parts := strings.SplitN(hdr, " ", 4)
+
+	switch parts[0] {
+	case "TCP":
+		if len(parts) != 4 {
+			log.Printf("bad TCP header: %q", hdr)
+			return
+		}
+		family, _ := strconv.Atoi(parts[1])
+		ip := parts[2]
+		port, _ := strconv.Atoi(parts[3])
+		handleTCP(stream, br, family, ip, port)
+
+	case "DNS":
+		handleDNS(stream, br, toNameserver)
+
+	case "UDP":
+		if len(parts) != 2 {
+			log.Printf("bad UDP header: %q", hdr)
+			return
+		}
+		family, _ := strconv.Atoi(parts[1])
+		handleUDP(stream, br, family)
+
+	default:
+		log.Printf("unknown stream type: %q", hdr)
+	}
+}
+
+// handleTCP proxies a TCP connection through the stream using length-framed messages.
+// Half-close (zero-length message) from either side is forwarded to the real TCP conn.
+func handleTCP(stream *smux.Stream, br *bufio.Reader, family int, dstIP string, dstPort int) {
+	netFamily := "tcp4"
+	if net.ParseIP(dstIP) == nil {
+		netFamily = "tcp" // domain — resolve on server
+	} else if family != 2 {
+		netFamily = "tcp6"
+	}
+	addr := net.JoinHostPort(dstIP, strconv.Itoa(dstPort))
+	log.Printf("TCP → %s", addr)
+
+	conn, err := net.DialTimeout(netFamily, addr, 10*time.Second)
+	if err != nil {
+		log.Printf("TCP dial %s: %v", addr, err)
+		// Signal EOF back to client.
+		writeMsg(stream, nil)
+		return
+	}
+	defer conn.Close()
+
+	if tc, ok := conn.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	type result struct{ err error }
+	done := make(chan result, 2)
+
+	// mux → remote: read length-framed messages from client, write to remote conn.
+	go func() {
+		for {
+			payload, err := readMsgBuf(br)
+			if err != nil {
+				done <- result{err}
+				return
+			}
+			if payload == nil {
+				// Half-close from client: signal EOF to remote.
+				if tc, ok := conn.(*net.TCPConn); ok {
+					tc.CloseWrite()
+				}
+				done <- result{nil}
+				return
+			}
+			if _, err := conn.Write(payload); err != nil {
+				done <- result{err}
+				return
+			}
+		}
+	}()
+
+	// remote → mux: read from remote conn, write length-framed messages to client.
+	go func() {
+		buf := make([]byte, mux.BUF_SIZE)
+		for {
+			n, err := conn.Read(buf)
+			if n > 0 {
+				if werr := writeMsg(stream, buf[:n]); werr != nil {
+					done <- result{werr}
+					return
+				}
+			}
+			if err != nil {
+				// Send half-close to client.
+				writeMsg(stream, nil)
+				done <- result{err}
+				return
+			}
+		}
+	}()
+
+	<-done
+	<-done
+}
+
+// handleDNS forwards a single DNS query and writes back the response.
+func handleDNS(stream *smux.Stream, br *bufio.Reader, toNameserver string) {
+	stream.SetDeadline(time.Now().Add(15 * time.Second))
+
+	query, err := readMsgBuf(br)
+	if err != nil || query == nil {
+		return
+	}
+
+	ns := resolveNameserver(toNameserver)
+	log.Printf("DNS len=%d → %s", len(query), ns)
+
+	conn, err := net.DialTimeout("udp", ns, 5*time.Second)
+	if err != nil {
+		log.Printf("DNS dial %s: %v", ns, err)
+		writeMsg(stream, servfail(query))
+		return
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	if _, err := conn.Write(query); err != nil {
+		writeMsg(stream, servfail(query))
+		return
+	}
+	buf := make([]byte, 65535)
+	n, err := conn.Read(buf)
+	if err != nil {
+		writeMsg(stream, servfail(query))
+		return
+	}
+	writeMsg(stream, buf[:n])
+}
+
+// handleUDP proxies UDP datagrams through the stream.
+// Each datagram is length-framed; payload format: "ip,port,<raw>".
+func handleUDP(stream *smux.Stream, br *bufio.Reader, family int) {
+	netFamily := "udp4"
+	if family != 2 {
+		netFamily = "udp6"
+	}
+	conn, err := net.ListenPacket(netFamily, ":0")
+	if err != nil {
+		log.Printf("UDP listen: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// remote → mux
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			udpAddr := addr.(*net.UDPAddr)
+			hdr := fmt.Sprintf("%s,%d,", udpAddr.IP.String(), udpAddr.Port)
+			payload := make([]byte, len(hdr)+n)
+			copy(payload, hdr)
+			copy(payload[len(hdr):], buf[:n])
+			if werr := writeMsg(stream, payload); werr != nil {
+				return
+			}
+		}
+	}()
+
+	// mux → remote
+	for {
+		payload, err := readMsgBuf(br)
+		if err != nil || payload == nil {
+			return
+		}
+		// Parse "dstIP,dstPort,<raw>"
+		s := string(payload)
+		i1 := strings.Index(s, ",")
+		if i1 < 0 {
+			continue
+		}
+		rest := s[i1+1:]
+		i2 := strings.Index(rest, ",")
+		if i2 < 0 {
+			continue
+		}
+		dstIP := s[:i1]
+		dstPort, _ := strconv.Atoi(rest[:i2])
+		data := payload[i1+1+i2+1:]
+		dst := &net.UDPAddr{IP: net.ParseIP(dstIP), Port: dstPort}
+		conn.WriteTo(data, dst)
+	}
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// writeMsg writes a length-prefixed message (nil payload = half-close signal).
+func writeMsg(w io.Writer, payload []byte) error {
+	buf := make([]byte, 2+len(payload))
+	binary.BigEndian.PutUint16(buf[:2], uint16(len(payload)))
+	copy(buf[2:], payload)
+	_, err := w.Write(buf)
+	return err
+}
+
+// readMsgBuf reads one length-prefixed message from a bufio.Reader.
+// Returns (nil, nil) for a half-close frame.
+func readMsgBuf(r *bufio.Reader) ([]byte, error) {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, err
+	}
+	n := binary.BigEndian.Uint16(hdr[:])
+	if n == 0 {
+		return nil, nil
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+func resolveNameserver(toNameserver string) string {
+	if toNameserver != "" {
+		parts := strings.SplitN(toNameserver, "@", 2)
+		port := "53"
+		if len(parts) == 2 {
+			port = parts[1]
+		}
+		return net.JoinHostPort(parts[0], port)
+	}
+	if servers := readResolvConf(); len(servers) > 0 {
+		return net.JoinHostPort(servers[0], "53")
+	}
+	return "127.0.0.1:53"
+}
+
+// servfail returns a minimal DNS SERVFAIL response for the given query.
+func servfail(query []byte) []byte {
+	if len(query) < 12 {
+		return nil
+	}
+	resp := make([]byte, 12)
+	copy(resp[0:2], query[0:2])
+	flags := uint16(query[2])<<8 | uint16(query[3])
+	opcode := flags & 0x7800
+	resp[2] = byte((0x8002 | opcode) >> 8)
+	resp[3] = byte((0x8002 | opcode) & 0xff)
+	return resp
+}
+
+func readResolvConf() []string {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	var servers []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if idx := strings.IndexAny(line, "#;"); idx >= 0 {
+			line = line[:idx]
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "nameserver ") {
+			ip := strings.TrimSpace(line[11:])
+			if net.ParseIP(ip) != nil {
+				servers = append(servers, ip)
+			}
+		}
+	}
+	return servers
+}
+
+// ── route discovery ───────────────────────────────────────────────────────────
+
 func buildRoutePacket(autoNets bool) []byte {
 	if !autoNets {
-		return nil // empty routes packet
+		return nil
 	}
 	routes := listRoutes()
 	log.Printf("auto-nets: %d routes", len(routes))
@@ -112,7 +414,6 @@ func buildRoutePacket(autoNets bool) []byte {
 	return []byte(sb.String())
 }
 
-// listRoutes returns available routes in "family,ip,width" format.
 func listRoutes() []string {
 	var lines []string
 	if _, err := exec.LookPath("ip"); err == nil {
@@ -140,20 +441,13 @@ func listRoutes() []string {
 
 func parseIPRoute(line string) string {
 	fields := strings.Fields(line)
-	if len(fields) == 0 {
+	if len(fields) == 0 || !strings.Contains(fields[0], "/") || fields[0] == "default" {
 		return ""
 	}
-	dest := fields[0]
-	if !strings.Contains(dest, "/") || dest == "default" {
-		return ""
-	}
-	parts := strings.SplitN(dest, "/", 2)
+	parts := strings.SplitN(fields[0], "/", 2)
 	ip := parts[0]
 	width, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return ""
-	}
-	if strings.HasPrefix(ip, "0.") || strings.HasPrefix(ip, "127.") {
+	if err != nil || strings.HasPrefix(ip, "0.") || strings.HasPrefix(ip, "127.") {
 		return ""
 	}
 	addr := net.ParseIP(ip)
@@ -202,143 +496,4 @@ func parseNetstatRoute(line string) string {
 		family = 10
 	}
 	return fmt.Sprintf("%d,%s,%d", family, ip, width)
-}
-
-// handleDNS forwards a DNS query to a local or specified nameserver.
-func handleDNS(srv *mux.MuxServer, channel uint16, data []byte, toNameserver string) {
-	defer srv.CloseChannel(channel)
-
-	ns := "127.0.0.1:53"
-	if toNameserver != "" {
-		parts := strings.SplitN(toNameserver, "@", 2)
-		port := "53"
-		if len(parts) == 2 {
-			port = parts[1]
-		}
-		ns = net.JoinHostPort(parts[0], port)
-	} else if servers := readResolvConf(); len(servers) > 0 {
-		ns = net.JoinHostPort(servers[0], "53")
-	}
-
-	conn, err := net.DialTimeout("udp", ns, 5*time.Second)
-	if err != nil {
-		log.Printf("DNS: dial %s: %v", ns, err)
-		sendDNSServFail(srv, channel, data)
-		return
-	}
-	defer conn.Close()
-
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if _, err := conn.Write(data); err != nil {
-		log.Printf("DNS: write to %s: %v", ns, err)
-		sendDNSServFail(srv, channel, data)
-		return
-	}
-	buf := make([]byte, 65535)
-	n, err := conn.Read(buf)
-	if err != nil {
-		log.Printf("DNS: read from %s: %v", ns, err)
-		sendDNSServFail(srv, channel, data)
-		return
-	}
-	resp := make([]byte, n)
-	copy(resp, buf[:n])
-	srv.SendPriorityTo(channel, mux.CMD_DNS_RESPONSE, resp)
-}
-
-// sendDNSServFail sends a minimal DNS SERVFAIL response back through the mux
-// so the client gets an immediate error instead of timing out.
-func sendDNSServFail(srv *mux.MuxServer, channel uint16, query []byte) {
-	if len(query) < 12 {
-		return
-	}
-	resp := make([]byte, 12)
-	copy(resp[0:2], query[0:2]) // transaction ID
-	flags := uint16(query[2])<<8 | uint16(query[3])
-	opcode := flags & 0x7800
-	resp[2] = byte((0x8002 | opcode) >> 8)
-	resp[3] = byte((0x8002 | opcode) & 0xff)
-	srv.SendPriorityTo(channel, mux.CMD_DNS_RESPONSE, resp)
-}
-
-// handleUDPOpen creates a UDP proxy for the given channel.
-func handleUDPOpen(srv *mux.MuxServer, channel uint16, family int) {
-	netFamily := "udp4"
-	if family != 2 {
-		netFamily = "udp6"
-	}
-	conn, err := net.ListenPacket(netFamily, ":0")
-	if err != nil {
-		return
-	}
-	defer func() {
-		conn.Close()
-		srv.CloseChannel(channel)
-	}()
-
-	go func() {
-		buf := make([]byte, 65535)
-		for {
-			n, addr, err := conn.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			udpAddr := addr.(*net.UDPAddr)
-			hdr := fmt.Sprintf("%s,%d,", udpAddr.IP.String(), udpAddr.Port)
-			out := append([]byte(hdr), buf[:n]...)
-			// Acquire send window before transmitting.
-			cs := srv.ChannelState(channel)
-			if cs != nil && cs.SW() != nil {
-				if !cs.SW().Acquire(len(out)) {
-					return
-				}
-			}
-			srv.SendTo(channel, mux.CMD_UDP_DATA, out)
-		}
-	}()
-
-	inbox := srv.InboxFor(channel)
-	if inbox == nil {
-		return
-	}
-	for f := range inbox {
-		switch f.Cmd {
-		case mux.CMD_UDP_DATA:
-			parts := strings.SplitN(string(f.Data), ",", 3)
-			if len(parts) != 3 {
-				continue
-			}
-			port, _ := strconv.Atoi(parts[1])
-			dst := &net.UDPAddr{IP: net.ParseIP(parts[0]), Port: port}
-			conn.WriteTo([]byte(parts[2]), dst)
-			// Grant credit back to the client.
-			if srv.FlowControlEnabled() {
-				srv.SendWindowUpdate(channel, int64(len(f.Data)))
-			}
-		case mux.CMD_UDP_CLOSE:
-			return
-		}
-	}
-}
-
-func readResolvConf() []string {
-	data, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return nil
-	}
-	var servers []string
-	for _, line := range strings.Split(string(data), "\n") {
-		// Strip inline comments (# or ;).
-		if idx := strings.IndexAny(line, "#;"); idx >= 0 {
-			line = line[:idx]
-		}
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "nameserver ") {
-			ip := strings.TrimSpace(line[11:])
-			if net.ParseIP(ip) != nil {
-				servers = append(servers, ip)
-			}
-		}
-	}
-	return servers
 }

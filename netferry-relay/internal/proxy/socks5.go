@@ -31,7 +31,7 @@ const (
 // ListenSOCKS5 starts a SOCKS5 proxy on the given port and forwards all
 // CONNECT requests through the mux tunnel. Blocks until the listener closes.
 // This is the primary proxy mode on Windows.
-func ListenSOCKS5(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenSOCKS5(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("socks5 listen :%d: %w", port, err)
@@ -49,7 +49,7 @@ func ListenSOCKS5(port int, client *mux.MuxClient, counters *stats.Counters) err
 }
 
 // handleSOCKS5 performs the SOCKS5 handshake and then proxies data.
-func handleSOCKS5(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
+func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counters) {
 	defer conn.Close()
 	startedAt := time.Now()
 

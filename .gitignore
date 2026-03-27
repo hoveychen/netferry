@@ -44,3 +44,4 @@ result
 
 # Sidecar binaries (built by make sidecar)
 netferry-desktop/src-tauri/binaries/
+netferry-relay/tunnel

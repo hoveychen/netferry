@@ -1,5 +1,24 @@
-// Package mux implements the sshuttle-compatible multiplexing protocol.
-// Wire format: [S][S][channel uint16 BE][cmd uint16 BE][datalen uint16 BE][data...]
+// Package mux implements stream-multiplexed tunnelling over SSH sessions.
+// Transport: smux (github.com/xtaci/smux) sessions over SSH stdin/stdout.
+//
+// Per-stream wire protocol
+// ========================
+// Client-opened streams begin with a newline-terminated header:
+//
+//	"TCP <family> <ip> <port>\n"   — proxy a TCP connection
+//	"DNS\n"                         — forward one DNS query
+//	"UDP <family>\n"                — open a UDP datagram channel
+//
+// Server-opened streams begin with:
+//
+//	"ROUTES\n"                      — followed by "family,ip,width\n" lines
+//
+// After the header, TCP and UDP streams exchange length-prefixed messages:
+//
+//	[uint16 BE length][payload bytes]
+//
+// A zero-length message signals a half-close (equivalent to TCP FIN from
+// that direction). DNS streams use the same framing for one query/response.
 package mux
 
 import (
@@ -10,166 +29,31 @@ import (
 )
 
 const (
-	HDR_LEN    = 8
-	MAX_CHAN    = 65535
+	// SYNC_HDR is written by the server on startup; the client reads it to
+	// confirm the remote binary started correctly.
 	SYNC_HDR   = "\x00\x00SSHUTTLE0001"
 	SYNC_HDR_N = len(SYNC_HDR)
 
-	// Read/write buffer size — must fit in uint16 datalen field (max 65535).
-	BUF_SIZE = 65535
+	// BUF_SIZE is the maximum payload written in a single writeMsg call.
+	// Fits in a uint16, leaving one value (0) reserved for half-close.
+	BUF_SIZE = 65534
 
-	// Outbound frame channel buffer. One frame ≈ 64 KB → ~512 MB max in-flight
-	// before backpressure kicks in. In practice connections saturate SSH first.
-	MUX_OUT_BUF = 512
-
-	// INBOX_SEND_TIMEOUT is how long we wait to deliver a frame to a
-	// per-channel inbox before considering the consumer dead and closing
-	// the channel. This prevents silent data loss for TCP streams.
-	// 60 seconds allows for TCP backpressure during large uploads
-	// (e.g. git push) and slow remote servers (e.g. LLM API processing).
-	INBOX_SEND_TIMEOUT = 60 * time.Second
-
-	// KEEPALIVE_INTERVAL is how often the client sends CMD_PING to the server
-	// to detect dead connections. 15s strikes a balance between quick
-	// detection (e.g. after a WiFi switch) and low overhead.
+	// Keepalive timings (used by smux config and health logging).
 	KEEPALIVE_INTERVAL = 15 * time.Second
+	KEEPALIVE_TIMEOUT  = 15 * time.Second
 
-	// KEEPALIVE_TIMEOUT is how long we wait for a CMD_PONG before considering
-	// the connection dead.
-	KEEPALIVE_TIMEOUT = 15 * time.Second
-
-	// SERVER_IDLE_TIMEOUT is how long the server waits without receiving any
-	// frame before considering the client dead and exiting. This prevents
-	// orphaned server processes when the SSH connection dies without a clean
-	// shutdown (e.g. network loss, client crash). The client sends CMD_PING
-	// every KEEPALIVE_INTERVAL (15s), so 60s gives 4 missed pings of margin.
-	SERVER_IDLE_TIMEOUT = 60 * time.Second
-)
-
-// Commands (kept identical to sshuttle wire protocol for compatibility).
-const (
-	CMD_EXIT             = uint16(0x4200)
-	CMD_PING             = uint16(0x4201)
-	CMD_PONG             = uint16(0x4202)
-	CMD_TCP_CONNECT      = uint16(0x4203)
-	CMD_TCP_STOP_SENDING = uint16(0x4204)
-	CMD_TCP_EOF          = uint16(0x4205)
-	CMD_TCP_DATA         = uint16(0x4206)
-	CMD_ROUTES           = uint16(0x4207)
-	CMD_HOST_REQ         = uint16(0x4208)
-	CMD_HOST_LIST        = uint16(0x4209)
-	CMD_DNS_REQ          = uint16(0x420a)
-	CMD_DNS_RESPONSE     = uint16(0x420b)
-	CMD_UDP_OPEN         = uint16(0x420c)
-	CMD_UDP_DATA         = uint16(0x420d)
-	CMD_UDP_CLOSE        = uint16(0x420e)
-	CMD_WINDOW_UPDATE    = uint16(0x420f)
-)
-
-const (
-	// PRIORITY_OUT_BUF is the buffer size for the priority output channel.
-	// Control frames (PING/PONG/DNS/WINDOW_UPDATE) are small and infrequent.
-	PRIORITY_OUT_BUF = 64
-
-	// DEFAULT_INITIAL_WINDOW is the per-channel send window in bytes.
-	// The sender can transmit this many bytes before needing a WINDOW_UPDATE
-	// from the receiver. 4 MB allows high throughput even at moderate RTTs
-	// (e.g. 100ms RTT → theoretical max ~40 MB/s per channel).
+	// DEFAULT_INITIAL_WINDOW is exported so cmd/tunnel/main.go compiles
+	// without changes; smux ignores it (manages its own window).
 	DEFAULT_INITIAL_WINDOW = 4 * 1024 * 1024
-
-	// WINDOW_UPDATE_THRESHOLD controls when the receiver sends a
-	// WINDOW_UPDATE back to the sender. Once consumed bytes exceed this
-	// threshold, a WINDOW_UPDATE is sent. This avoids sending a
-	// WINDOW_UPDATE for every tiny Read() while keeping the window open.
-	WINDOW_UPDATE_THRESHOLD = DEFAULT_INITIAL_WINDOW / 4
 )
 
-// Frame is a decoded mux protocol frame.
-type Frame struct {
-	Channel uint16
-	Cmd     uint16
-	Data    []byte
+// WriteSyncHeader writes the handshake marker to w.
+func WriteSyncHeader(w io.Writer) error {
+	_, err := io.WriteString(w, SYNC_HDR)
+	return err
 }
 
-// WriteFrame encodes and writes one frame to w.
-// If w is a *bufio.Writer the header and data are coalesced in the buffer;
-// the caller is responsible for flushing.
-func WriteFrame(w io.Writer, f Frame) error {
-	if len(f.Data) > 65535 {
-		return fmt.Errorf("mux: data too large: %d bytes", len(f.Data))
-	}
-	hdr := [HDR_LEN]byte{'S', 'S'}
-	binary.BigEndian.PutUint16(hdr[2:], f.Channel)
-	binary.BigEndian.PutUint16(hdr[4:], f.Cmd)
-	binary.BigEndian.PutUint16(hdr[6:], uint16(len(f.Data)))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
-	}
-	if len(f.Data) > 0 {
-		_, err := w.Write(f.Data)
-		return err
-	}
-	return nil
-}
-
-// drainAndFlush writes all immediately available frames from priority and out
-// channels directly to w. Priority frames are always written before data frames.
-// The caller must have already written at least one frame before calling this.
-func drainAndFlush(w io.Writer, priority <-chan Frame, out <-chan Frame, errCh chan<- error) error {
-	for {
-		// Priority frames first.
-		select {
-		case f, ok := <-priority:
-			if !ok {
-				return fmt.Errorf("priority channel closed")
-			}
-			if err := WriteFrame(w, f); err != nil {
-				errCh <- err
-				return err
-			}
-			continue
-		default:
-		}
-		// Then normal frames, non-blocking.
-		select {
-		case f, ok := <-out:
-			if !ok {
-				return fmt.Errorf("out channel closed")
-			}
-			if err := WriteFrame(w, f); err != nil {
-				errCh <- err
-				return err
-			}
-		default:
-			return nil
-		}
-	}
-}
-
-// ReadFrame reads exactly one frame from r.
-func ReadFrame(r io.Reader) (Frame, error) {
-	var hdr [HDR_LEN]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return Frame{}, err
-	}
-	if hdr[0] != 'S' || hdr[1] != 'S' {
-		return Frame{}, fmt.Errorf("mux: bad magic bytes 0x%02x 0x%02x", hdr[0], hdr[1])
-	}
-	channel := binary.BigEndian.Uint16(hdr[2:])
-	cmd := binary.BigEndian.Uint16(hdr[4:])
-	datalen := binary.BigEndian.Uint16(hdr[6:])
-
-	var data []byte
-	if datalen > 0 {
-		data = make([]byte, datalen)
-		if _, err := io.ReadFull(r, data); err != nil {
-			return Frame{}, err
-		}
-	}
-	return Frame{Channel: channel, Cmd: cmd, Data: data}, nil
-}
-
-// ReadSyncHeader reads and verifies the "\x00\x00SSHUTTLE0001" handshake.
+// ReadSyncHeader reads and verifies the handshake marker from r.
 func ReadSyncHeader(r io.Reader) error {
 	buf := make([]byte, SYNC_HDR_N)
 	if _, err := io.ReadFull(r, buf); err != nil {
@@ -181,8 +65,35 @@ func ReadSyncHeader(r io.Reader) error {
 	return nil
 }
 
-// WriteSyncHeader writes the "\x00\x00SSHUTTLE0001" handshake.
-func WriteSyncHeader(w io.Writer) error {
-	_, err := io.WriteString(w, SYNC_HDR)
+// writeMsg writes a length-prefixed message to w.
+// payload==nil or len==0 encodes as a zero-length frame (half-close signal).
+func writeMsg(w io.Writer, payload []byte) error {
+	if len(payload) > BUF_SIZE {
+		return fmt.Errorf("mux: payload too large: %d bytes", len(payload))
+	}
+	var hdr [2]byte
+	binary.BigEndian.PutUint16(hdr[:], uint16(len(payload)))
+	buf := make([]byte, 2+len(payload))
+	copy(buf[:2], hdr[:])
+	copy(buf[2:], payload)
+	_, err := w.Write(buf)
 	return err
+}
+
+// readMsg reads one length-prefixed message from r.
+// Returns an empty slice for a half-close frame (length == 0).
+func readMsg(r io.Reader) ([]byte, error) {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, err
+	}
+	n := binary.BigEndian.Uint16(hdr[:])
+	if n == 0 {
+		return nil, nil // half-close signal
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
 }

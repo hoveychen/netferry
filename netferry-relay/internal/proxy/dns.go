@@ -13,7 +13,7 @@ import (
 // ServeDNS runs the DNS interceptor on a pre-bound PacketConn.
 // Use this instead of ListenDNS to avoid the gap between firewall setup and
 // socket binding (which causes ICMP port-unreachable → "DNS probe failed").
-func ServeDNS(conn net.PacketConn, client *mux.MuxClient, counters *stats.Counters) error {
+func ServeDNS(conn net.PacketConn, client mux.TunnelClient, counters *stats.Counters) error {
 	defer conn.Close()
 
 	log.Printf("proxy: DNS serving on %s", conn.LocalAddr())
@@ -47,7 +47,7 @@ func ServeDNS(conn net.PacketConn, client *mux.MuxClient, counters *stats.Counte
 // ListenDNS starts a UDP DNS interceptor on the given port.
 // Prefer ServeDNS with a pre-bound listener when firewall rules are
 // installed before the listener starts.
-func ListenDNS(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenDNS(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	conn, err := net.ListenPacket("udp", addr)
 	if err != nil {

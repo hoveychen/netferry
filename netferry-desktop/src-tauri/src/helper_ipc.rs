@@ -177,7 +177,11 @@ fn wait_for_socket(timeout: Duration) -> Result<(), String> {
 /// Returns the live `UnixStream`; the caller should spawn a thread to read
 /// JSON event lines from it.  Dropping the stream signals the helper to kill
 /// the tunnel process.
-pub fn start_tunnel(tunnel_bin: &str, args: &[String]) -> Result<UnixStream, String> {
+pub fn start_tunnel(
+    tunnel_bin: &str,
+    args: &[String],
+    extra_env: &[(String, String)],
+) -> Result<UnixStream, String> {
     let mut stream =
         UnixStream::connect(SOCKET_PATH).map_err(|e| format!("Helper socket: {e}"))?;
 
@@ -189,6 +193,10 @@ pub fn start_tunnel(tunnel_bin: &str, args: &[String]) -> Result<UnixStream, Str
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), serde_json::Value::String(val));
         }
+    }
+    // Inject PEM key material (never written to disk, not visible in ps aux).
+    for (k, v) in extra_env {
+        env.insert(k.clone(), serde_json::Value::String(v.clone()));
     }
 
     let req = serde_json::json!({

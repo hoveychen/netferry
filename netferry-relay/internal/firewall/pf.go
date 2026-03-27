@@ -208,7 +208,25 @@ func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dns
 	if err := pfctlStdin(rules, "-a", p.anchor, "-f", "/dev/stdin"); err != nil {
 		return fmt.Errorf("load pf rules: %w", err)
 	}
+
+	// Flush existing PF states for intercepted subnets so they are re-evaluated
+	// by the new rules. Without this, connections established before Setup was
+	// called continue to bypass the redirect rules (PF keeps state per-connection).
+	p.flushStates(subnets)
 	return nil
+}
+
+// flushStates kills PF state table entries destined for the given subnets.
+// This forces existing connections to be re-evaluated by the new redirect rules.
+// pfctl -k sends RSTs to both endpoints, so apps reconnect quickly.
+func (p *pfMethod) flushStates(subnets []SubnetRule) {
+	for _, subnet := range subnets {
+		if subnet.IsIPv6() {
+			pfctl("-k", "::/0", "-k", subnet.CIDR)
+		} else {
+			pfctl("-k", "0/0", "-k", subnet.CIDR)
+		}
+	}
 }
 
 func (p *pfMethod) addAnchors() {

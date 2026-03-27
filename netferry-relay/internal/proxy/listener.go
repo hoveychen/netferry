@@ -25,7 +25,7 @@ var UseTProxy bool
 
 // Listen accepts connections on the local proxy port and forwards them via mux.
 // Blocks until the listener is closed.
-func Listen(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func Listen(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("proxy listen :%d: %w", port, err)
@@ -42,7 +42,7 @@ func Listen(port int, client *mux.MuxClient, counters *stats.Counters) error {
 	}
 }
 
-func handleConn(conn net.Conn, client *mux.MuxClient, counters *stats.Counters) {
+func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters) {
 	defer conn.Close()
 	startedAt := time.Now()
 

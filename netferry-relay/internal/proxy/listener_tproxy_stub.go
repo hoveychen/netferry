@@ -11,7 +11,7 @@ import (
 )
 
 // ListenTProxy is not supported on this platform.
-func ListenTProxy(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenTProxy(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	return fmt.Errorf("TPROXY is only supported on Linux")
 }
 

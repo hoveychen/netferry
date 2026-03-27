@@ -307,35 +307,31 @@ fn resolve_tunnel_exe() -> String {
     "netferry-tunnel".to_string()
 }
 
-/// Write inline PEM key material to a temp file with mode 600.
-fn write_temp_key(name: &str, key: &str) -> Result<std::path::PathBuf, String> {
-    let path = std::env::temp_dir().join(format!("netferry-{name}"));
-    std::fs::write(&path, key).map_err(|e| format!("Failed to write {name}: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("Failed to set {name} permissions: {e}"))?;
-    }
-    Ok(path)
-}
-
-/// Prepare identity key temp files and jump host JSON for the tunnel binary.
+/// Prepare identity env vars and jump host JSON for the tunnel binary.
+/// PEM key material is passed via environment variables — never written to disk,
+/// never visible in `ps aux`.
 fn prepare_identity_args(profile: &Profile) -> Result<PreparedIdentity, String> {
-    // Main identity key.
-    let main_key_path = match &profile.identity_key {
-        Some(k) if !k.trim().is_empty() => Some(write_temp_key("identity-key", k)?),
-        _ => None,
-    };
+    let mut env_vars: Vec<(String, String)> = Vec::new();
 
-    // Jump hosts: resolve inline keys to temp files, build JSON for --jump flag.
+    // Main identity key → NETFERRY_IDENTITY_PEM env var.
+    if let Some(k) = &profile.identity_key {
+        if !k.trim().is_empty() {
+            env_vars.push(("NETFERRY_IDENTITY_PEM".to_string(), k.clone()));
+        }
+    }
+
+    // Jump hosts: inline keys → NETFERRY_JUMP_KEY_{i} env vars.
+    // identityFile (path on disk) is still passed in JSON for file-based keys.
     let mut jump_specs: Vec<serde_json::Value> = Vec::new();
     for (i, jh) in profile.jump_hosts.iter().enumerate() {
-        let identity_file = match &jh.identity_key {
-            Some(k) if !k.trim().is_empty() => {
-                let path = write_temp_key(&format!("jump-key-{i}"), k)?;
-                Some(path.to_string_lossy().into_owned())
+        if let Some(k) = &jh.identity_key {
+            if !k.trim().is_empty() {
+                env_vars.push((format!("NETFERRY_JUMP_KEY_{i}"), k.clone()));
             }
+        }
+        // Only include identityFile in JSON when there is no inline key.
+        let identity_file = match &jh.identity_key {
+            Some(k) if !k.trim().is_empty() => None,
             _ => jh.identity_file.clone().filter(|f| !f.trim().is_empty()),
         };
         let mut spec = serde_json::json!({ "remote": jh.remote });
@@ -346,7 +342,7 @@ fn prepare_identity_args(profile: &Profile) -> Result<PreparedIdentity, String> 
     }
 
     Ok(PreparedIdentity {
-        main_key_path,
+        env_vars,
         jump_json: if jump_specs.is_empty() {
             None
         } else {
@@ -356,7 +352,10 @@ fn prepare_identity_args(profile: &Profile) -> Result<PreparedIdentity, String> 
 }
 
 struct PreparedIdentity {
-    main_key_path: Option<std::path::PathBuf>,
+    /// Environment variables carrying PEM key material, to be injected into
+    /// the tunnel child process.  Keys: NETFERRY_IDENTITY_PEM,
+    /// NETFERRY_JUMP_KEY_0, NETFERRY_JUMP_KEY_1, …
+    env_vars: Vec<(String, String)>,
     jump_json: Option<String>,
 }
 
@@ -372,11 +371,10 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     if profile.auto_nets {
         args.push("--auto-nets".to_string());
     }
-    // Prefer inline key (written to temp file) over identity file path.
-    if let Some(key_path) = &prepared.main_key_path {
-        args.push("--identity".to_string());
-        args.push(key_path.to_string_lossy().into_owned());
-    } else if !profile.identity_file.trim().is_empty() {
+    // Inline key is passed via NETFERRY_IDENTITY_PEM env var (set at spawn time).
+    // Only fall back to identity_file when there is no inline key.
+    let has_inline_key = profile.identity_key.as_deref().map_or(false, |k| !k.trim().is_empty());
+    if !has_inline_key && !profile.identity_file.trim().is_empty() {
         args.push("--identity".to_string());
         args.push(profile.identity_file.clone());
     }
@@ -389,14 +387,15 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
         args.push("--method".to_string());
         args.push(profile.method.clone());
     }
+    if profile.pool_size > 1 {
+        args.push("--pool".to_string());
+        args.push(profile.pool_size.to_string());
+    }
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
     }
     if profile.enable_udp {
         args.push("--udp".to_string());
-    }
-    if profile.flow_control {
-        args.push("--flow-control".to_string());
     }
     match profile.dns {
         DnsMode::Off => {}
@@ -849,7 +848,7 @@ pub fn connect(
             // from the helper's env injection — no SSH wrapper script needed.
             let args = build_args(&profile, &prepared);
             log::debug!("Tunnel args: {:?}", args);
-            let stream = helper_ipc::start_tunnel(&binary, &args)
+            let stream = helper_ipc::start_tunnel(&binary, &args, &prepared.env_vars)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
             // Give the event thread a cloned read end; keep the original for
             // disconnect (dropping it signals the helper to kill the tunnel).
@@ -884,6 +883,10 @@ pub fn connect(
     let args = build_args(&profile, &prepared);
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Inject PEM key material as env vars (never written to disk, not in ps aux).
+    for (k, v) in &prepared.env_vars {
+        cmd.env(k, v);
+    }
 
     // The Tauri app has no controlling TTY, so sudo cannot prompt for a password
     // the usual way.  We inject a thin wrapper named "sudo" at the front of PATH

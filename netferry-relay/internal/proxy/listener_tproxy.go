@@ -18,7 +18,7 @@ import (
 // conn.LocalAddr() returns the real target (no NAT lookup needed).
 // The listener must bind to 0.0.0.0 with IP_TRANSPARENT so the kernel
 // allows accepting connections destined for any IP.
-func ListenTProxy(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenTProxy(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {

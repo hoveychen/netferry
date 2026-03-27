@@ -590,21 +590,21 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   </label>
                 </div>
 
+
                 <div className="col-span-2">
-                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
-                    <input
-                      type="checkbox"
-                      checked={draft.flowControl}
-                      onChange={(e) => setField("flowControl", e.target.checked)}
-                      className="accent-[#0a84ff]"
-                    />
-                    <span>
-                      Flow Control
-                      <span className="ml-1.5 text-xs text-white/30">
-                        (per-channel window, prevents one connection from starving others)
-                      </span>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                    SSH Connection Pool
+                    <span className="ml-1.5 font-normal text-white/30">
+                      (parallel SSH connections for higher concurrency)
                     </span>
                   </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={draft.poolSize}
+                    onChange={(e) => setField("poolSize", Math.max(1, parseInt(e.target.value) || 1))}
+                  />
                 </div>
 
                 <div className="col-span-2">

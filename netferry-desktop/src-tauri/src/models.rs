@@ -4,8 +4,8 @@ fn default_auto_exclude_lan() -> bool {
     true
 }
 
-fn default_flow_control() -> bool {
-    true
+fn default_pool_size() -> u32 {
+    4
 }
 
 fn default_latency_buffer_size() -> Option<u32> {
@@ -54,8 +54,8 @@ pub struct Profile {
     pub notes: Option<String>,
     #[serde(default = "default_auto_exclude_lan")]
     pub auto_exclude_lan: bool,
-    #[serde(default = "default_flow_control")]
-    pub flow_control: bool,
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
     #[serde(default = "default_latency_buffer_size")]
     pub latency_buffer_size: Option<u32>,
     #[serde(default)]
@@ -99,7 +99,7 @@ impl Default for Profile {
             enable_udp: false,
             notes: None,
             auto_exclude_lan: true,
-            flow_control: true,
+            pool_size: 4,
             latency_buffer_size: Some(2097152),
             imported: false,
         }

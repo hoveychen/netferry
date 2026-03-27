@@ -10,7 +10,7 @@ import (
 // ListenTransparent starts the appropriate local proxy listener.
 // On Windows with WinDivert, this is a transparent TCP proxy (QueryOrigDstFunc
 // is set). Otherwise falls back to SOCKS5 proxy.
-func ListenTransparent(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenTransparent(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	if QueryOrigDstFunc != nil {
 		return Listen(port, client, counters)
 	}

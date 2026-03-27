@@ -9,7 +9,7 @@ import (
 
 // ListenTransparent starts the appropriate local proxy listener.
 // On Unix, this is a transparent TCP proxy (requires firewall redirect).
-func ListenTransparent(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenTransparent(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	if UseTProxy {
 		return ListenTProxy(port, client, counters)
 	}

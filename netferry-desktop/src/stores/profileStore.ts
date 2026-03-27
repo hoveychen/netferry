@@ -17,7 +17,7 @@ export function newProfile(): Profile {
     enableUdp: false,
     notes: "",
     autoExcludeLan: true,
-    flowControl: true,
+    poolSize: 4,
     latencyBufferSize: 2097152,
   };
 }

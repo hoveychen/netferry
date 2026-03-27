@@ -10,5 +10,6 @@ require (
 
 require (
 	github.com/google/gopacket v1.1.19 // indirect
+	github.com/xtaci/smux v1.5.57 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 )

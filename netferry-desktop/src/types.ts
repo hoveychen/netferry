@@ -30,7 +30,7 @@ export interface Profile {
   enableUdp: boolean;
   notes?: string;
   autoExcludeLan: boolean;
-  flowControl: boolean;
+  poolSize: number;
   latencyBufferSize?: number;
   imported?: boolean;
 }

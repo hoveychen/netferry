@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/hoveychen/netferry/relay/internal/deploy"
 	"github.com/hoveychen/netferry/relay/internal/firewall"
 	"github.com/hoveychen/netferry/relay/internal/mux"
@@ -50,8 +52,8 @@ func main() {
 		verbose      = flag.Bool("v", false, "verbose logging")
 		extraSSHOpts = flag.String("extra-ssh-opts", "", "extra SSH options")
 		jumpHostsJSON = flag.String("jump", "", "explicit jump hosts as JSON array: [{\"remote\":\"user@host:port\",\"identityFile\":\"/path/to/key\"}]")
-		flowCtrl      = flag.Bool("flow-control", false, "enable per-channel flow control (requires matching server)")
 		excludeNets   = flag.String("exclude", "", "comma-separated CIDRs to exclude from tunnel")
+		poolSize      = flag.Int("pool", 1, "number of parallel SSH TCP connections for connection bonding (1 = disabled; use 2-4 for high-concurrency workloads)")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
 	)
@@ -96,6 +98,7 @@ func main() {
 
 	ac := sshconn.AuthConfig{
 		IdentityFile: *identity,
+		IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
 		ExtraOptions: *extraSSHOpts,
 	}
 
@@ -104,6 +107,12 @@ func main() {
 	if *jumpHostsJSON != "" {
 		if err := json.Unmarshal([]byte(*jumpHostsJSON), &jumpHosts); err != nil {
 			fatalf("--jump JSON: %v", err)
+		}
+	}
+	// Populate inline PEM keys from env vars (set by Tauri app; never on disk).
+	for i := range jumpHosts {
+		if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
+			jumpHosts[i].IdentityPEM = pem
 		}
 	}
 
@@ -142,13 +151,7 @@ func main() {
 	}
 	log.Printf("remote server: %s", remotePath)
 
-	// ── Start remote server session ──────────────────────────────────────────
-	sess, err := sshClient.NewSession()
-	if err != nil {
-		fatalf("new ssh session: %v", err)
-	}
-	defer sess.Close()
-
+	// ── Build server command ─────────────────────────────────────────────────
 	var serverArgs []string
 	if *autoNets {
 		serverArgs = append(serverArgs, "--auto-nets")
@@ -159,32 +162,9 @@ func main() {
 	if *verbose {
 		serverArgs = append(serverArgs, "--verbose")
 	}
-	if *flowCtrl {
-		serverArgs = append(serverArgs, "--flow-control")
-	}
-
 	remoteCmd := remotePath
 	if len(serverArgs) > 0 {
 		remoteCmd += " " + strings.Join(serverArgs, " ")
-	}
-
-	sessStdin, err := sess.StdinPipe()
-	if err != nil {
-		fatalf("session stdin: %v", err)
-	}
-	sessStdout, err := sess.StdoutPipe()
-	if err != nil {
-		fatalf("session stdout: %v", err)
-	}
-	sess.Stderr = os.Stderr
-
-	if err := sess.Start(remoteCmd); err != nil {
-		fatalf("start remote server: %v", err)
-	}
-
-	// ── Read sync header ─────────────────────────────────────────────────────
-	if err := mux.ReadSyncHeader(sessStdout); err != nil {
-		fatalf("server handshake: %v — is the deployed binary corrupted?", err)
 	}
 
 	// ── Load cached ports for stability across reconnections ────────────────
@@ -203,25 +183,97 @@ func main() {
 	// Sends keepalive@openssh.com global requests so the SSH transport detects
 	// dead TCP connections promptly (critical on Windows where the OS may not
 	// surface TCP errors without an explicit write).
-	stopSSHKeepalive := sshconn.StartSSHKeepalive(sshClient, 30*time.Second)
-	defer stopSSHKeepalive()
+	// The first sshClient is already connected; keepalive is started after all
+	// pool connections are established so we can cover additional clients too.
 
-	// ── Start mux client ─────────────────────────────────────────────────────
-	muxClient := mux.NewMuxClient(sessStdout, sessStdin)
-	muxClient.SetCounters(counters)
-	if *flowCtrl {
-		muxClient.SetFlowControl(true, mux.DEFAULT_INITIAL_WINDOW)
+	// ── Start mux pool (N parallel SSH TCP connections) ───────────────────────
+	// Each pool member is a separate SSH client (separate TCP connection to the
+	// server). Multiple sessions on the same ssh.Client would share one TCP
+	// connection and provide no bonding benefit.
+	n := *poolSize
+	if n < 1 {
+		n = 1
 	}
+	// sshClients[0] is the already-dialed sshClient; additional ones are dialed now.
+	sshClients := make([]*ssh.Client, n)
+	sshClients[0] = sshClient
+	for i := 1; i < n; i++ {
+		extra, err := sshconn.Dial(hc, ac, jumpHosts...)
+		if err != nil {
+			fatalf("ssh connect (pool %d/%d): %v", i+1, n, err)
+		}
+		defer extra.Close()
+		sshClients[i] = extra
+	}
+
+	clients := make([]*mux.MuxClient, n)
+	// muxErrCh receives only the primary client's error. Secondary pool member
+	// failures are logged but do not tear down the tunnel — they just reduce
+	// available bonded connections until the next reconnect.
 	muxErrCh := make(chan error, 1)
-	go func() {
-		muxErrCh <- muxClient.Run()
-	}()
+	for i, sc := range sshClients {
+		// Start SSH-level keepalive on each connection.
+		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second)
+		defer stop()
+
+		sess, err := sc.NewSession()
+		if err != nil {
+			fatalf("new ssh session %d/%d: %v", i+1, n, err)
+		}
+		defer sess.Close()
+
+		sessStdin, err := sess.StdinPipe()
+		if err != nil {
+			fatalf("session %d stdin: %v", i+1, err)
+		}
+		sessStdout, err := sess.StdoutPipe()
+		if err != nil {
+			fatalf("session %d stdout: %v", i+1, err)
+		}
+		sess.Stderr = os.Stderr
+
+		if err := sess.Start(remoteCmd); err != nil {
+			fatalf("start remote server (session %d): %v", i+1, err)
+		}
+		if err := mux.ReadSyncHeader(sessStdout); err != nil {
+			fatalf("server handshake (session %d): %v — is the deployed binary corrupted?", i+1, err)
+		}
+
+		c := mux.NewMuxClient(sessStdout, sessStdin)
+		c.SetCounters(counters)
+		clients[i] = c
+		if i == 0 {
+			// Primary: its death exits the tunnel (triggers Tauri reconnect).
+			go func() { muxErrCh <- c.Run() }()
+		} else {
+			// Secondary: just log and absorb the error.
+			idx := i
+			go func() {
+				if err := c.Run(); err != nil {
+					log.Printf("mux pool member %d/%d closed: %v", idx+1, n, err)
+				}
+			}()
+		}
+	}
+	if n > 1 {
+		log.Printf("mux pool: %d parallel TCP connections", n)
+	}
+
+	// Use the first client to collect routes; all sessions connect to the same
+	// server so routes are identical across all.
+	firstClient := clients[0]
+	var tunnelClient mux.TunnelClient
+	if n == 1 {
+		tunnelClient = firstClient
+	} else {
+		tunnelClient = mux.NewMuxPool(clients)
+	}
 
 	// Collect CMD_ROUTES if --auto-nets (arrives within ~200ms of connect).
 	var autoNetRoutes []string
 	if *autoNets {
 		select {
-		case routes := <-muxClient.RoutesCh():
+		case routes := <-firstClient.RoutesCh():
 			autoNetRoutes = routes
 			log.Printf("auto-nets: %d routes received", len(autoNetRoutes))
 		case <-time.After(5 * time.Second):
@@ -232,7 +284,7 @@ func main() {
 	} else {
 		// Drain the empty CMD_ROUTES sent by the server unconditionally.
 		select {
-		case <-muxClient.RoutesCh():
+		case <-firstClient.RoutesCh():
 		case <-time.After(3 * time.Second):
 		case err := <-muxErrCh:
 			fatalf("mux: %v", err)
@@ -378,7 +430,7 @@ func main() {
 	// ── Start DNS proxy ───────────────────────────────────────────────────────
 	if *dns && dnsListener != nil {
 		go func() {
-			if err := proxy.ServeDNS(dnsListener, muxClient, counters); err != nil {
+			if err := proxy.ServeDNS(dnsListener, tunnelClient, counters); err != nil {
 				log.Printf("DNS proxy: %v", err)
 			}
 		}()
@@ -387,7 +439,7 @@ func main() {
 	// ── Start UDP proxy (tproxy only) ────────────────────────────────────────
 	if *udpProxy && proxy.UseTProxy {
 		go func() {
-			if err := proxy.ListenUDPTProxy(proxyPort, muxClient, counters); err != nil {
+			if err := proxy.ListenUDPTProxy(proxyPort, tunnelClient, counters); err != nil {
 				log.Printf("UDP proxy: %v", err)
 			}
 		}()
@@ -396,7 +448,7 @@ func main() {
 	// ── Start TCP proxy (transparent on Unix, SOCKS5 on Windows) ─────────────
 	proxyErrCh := make(chan error, 1)
 	go func() {
-		proxyErrCh <- proxy.ListenTransparent(proxyPort, muxClient, counters)
+		proxyErrCh <- proxy.ListenTransparent(proxyPort, tunnelClient, counters)
 	}()
 
 	// ── Monitor network changes (WiFi switch, interface up/down) ─────────

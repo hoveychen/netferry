@@ -52,10 +52,20 @@ func (t *tproxyMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort,
 		}
 	}
 
+	var setupErr error
 	if t.useNft {
-		return t.setupNft(subnets, excludes, proxyPort, dnsPort, dnsServers)
+		setupErr = t.setupNft(subnets, excludes, proxyPort, dnsPort, dnsServers)
+	} else {
+		setupErr = t.setupIpt(subnets, excludes, proxyPort, dnsPort, dnsServers)
 	}
-	return t.setupIpt(subnets, excludes, proxyPort, dnsPort, dnsServers)
+	if setupErr != nil {
+		return setupErr
+	}
+
+	// Flush conntrack entries for intercepted subnets. Without this, packets
+	// from existing connections bypass TPROXY and are not intercepted.
+	flushConntrack(subnets)
+	return nil
 }
 
 func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {

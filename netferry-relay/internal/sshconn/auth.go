@@ -17,6 +17,11 @@ type AuthConfig struct {
 	// IdentityFile is the path to a private key file. Empty = auto-detect.
 	IdentityFile string
 
+	// IdentityPEM is inline PEM key material passed via environment variable
+	// by the Tauri app. Takes precedence over IdentityFile when set.
+	// Never written to disk.
+	IdentityPEM string
+
 	// ExtraOptions is a freeform string of "Key=Value" pairs parsed from --extra-ssh-opts.
 	ExtraOptions string
 }
@@ -41,7 +46,18 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 		log.Printf("ssh-auth: no SSH agent available (SSH_AUTH_SOCK=%q)", os.Getenv("SSH_AUTH_SOCK"))
 	}
 
-	// 2. Explicit identity file
+	// 2. Inline PEM key (passed via env var by the Tauri app; never written to disk)
+	if ac.IdentityPEM != "" {
+		signer, err := ssh.ParsePrivateKey([]byte(ac.IdentityPEM))
+		if err != nil {
+			return nil, fmt.Errorf("inline identity PEM: %w", err)
+		}
+		log.Printf("ssh-auth: loaded inline key type=%s fingerprint=%s",
+			signer.PublicKey().Type(), ssh.FingerprintSHA256(signer.PublicKey()))
+		allSigners = append(allSigners, signer)
+	}
+
+	// 3. Explicit identity file
 	if ac.IdentityFile != "" {
 		expanded := expandHome(ac.IdentityFile)
 		signers, err := signersFromFile(expanded)
@@ -58,8 +74,8 @@ func BuildSSHConfig(user string, ac AuthConfig) (*ssh.ClientConfig, error) {
 		}
 	}
 
-	// 3. Default identity files (only when no explicit file is given)
-	if ac.IdentityFile == "" {
+	// 4. Default identity files (only when no explicit file or inline PEM is given)
+	if ac.IdentityFile == "" && ac.IdentityPEM == "" {
 		for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
 			path := filepath.Join(expandHome("~"), ".ssh", name)
 			signers, err := signersFromFile(path)

@@ -10,6 +10,6 @@ import (
 )
 
 // ListenUDPTProxy is not supported on this platform.
-func ListenUDPTProxy(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	return fmt.Errorf("UDP TPROXY only supported on Linux")
 }

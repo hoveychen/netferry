@@ -45,7 +45,7 @@ type udpFlow struct {
 // ListenUDPTProxy starts a TPROXY-aware UDP listener that intercepts all UDP
 // traffic (except DNS) and forwards it through the mux tunnel. It uses
 // IP_RECVORIGDSTADDR to recover the original destination from redirected packets.
-func ListenUDPTProxy(port int, client *mux.MuxClient, counters *stats.Counters) error {
+func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters) error {
 	// Create a raw socket with IP_TRANSPARENT and IP_RECVORIGDSTADDR.
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {

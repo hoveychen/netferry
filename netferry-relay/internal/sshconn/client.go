@@ -22,6 +22,9 @@ type JumpHostSpec struct {
 	Remote string `json:"remote"`
 	// IdentityFile path (optional).
 	IdentityFile string `json:"identityFile,omitempty"`
+	// IdentityPEM is inline PEM key material (not serialized to JSON).
+	// Populated from NETFERRY_JUMP_KEY_{i} env vars by the caller.
+	IdentityPEM string `json:"-"`
 }
 
 // Dial establishes an *ssh.Client using HostConfig + AuthConfig.
@@ -175,7 +178,9 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 		log.Printf("jump[%d]: TCP connected to %s", i, jumpAddr)
 
 		jumpAC := ac
-		if jh.IdentityFile != "" {
+		if jh.IdentityPEM != "" {
+			jumpAC.IdentityPEM = jh.IdentityPEM
+		} else if jh.IdentityFile != "" {
 			jumpAC.IdentityFile = jh.IdentityFile
 		}
 		jumpCfg, err := BuildSSHConfig(user, jumpAC)
