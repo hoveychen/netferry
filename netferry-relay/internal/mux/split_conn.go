@@ -3,6 +3,7 @@ package mux
 import (
 	"encoding/binary"
 	"io"
+	"log"
 	"sync"
 )
 
@@ -105,17 +106,18 @@ func newMergedReader(data io.Reader, ctrl io.Reader) *mergedReader {
 		ch:   make(chan []byte, 128),
 		done: make(chan struct{}),
 	}
-	go mr.pump(data)
-	go mr.pump(ctrl)
+	go mr.pump(data, "data")
+	go mr.pump(ctrl, "ctrl")
 	return mr
 }
 
 // pump reads complete smux frames from r and forwards them to ch.
 // Any read error (including io.EOF) closes the done channel, unblocking Read.
-func (mr *mergedReader) pump(r io.Reader) {
+func (mr *mergedReader) pump(r io.Reader, label string) {
 	hdr := make([]byte, smuxHdrLen)
 	for {
 		if _, err := io.ReadFull(r, hdr); err != nil {
+			log.Printf("mux: split-conn %s pump closed: %v", label, err)
 			mr.close()
 			return
 		}
@@ -125,6 +127,7 @@ func (mr *mergedReader) pump(r io.Reader) {
 		copy(frame, hdr)
 		if size > 0 {
 			if _, err := io.ReadFull(r, frame[smuxHdrLen:]); err != nil {
+				log.Printf("mux: split-conn %s pump payload read: %v", label, err)
 				mr.close()
 				return
 			}

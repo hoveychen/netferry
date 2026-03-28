@@ -638,6 +638,10 @@ func startSplitMuxClient(
 		fatalf("split ctrl SSH connect %d/%d: %v", member, total, err)
 	}
 
+	// SSH-level keepalive on the ctrl connection — the goroutine exits
+	// automatically when the connection dies, so we don't need to store stop().
+	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second)
+
 	ctrlSess, err := ctrlClient.NewSession()
 	if err != nil {
 		fatalf("split ctrl session %d/%d: %v", member, total, err)
