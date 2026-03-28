@@ -557,6 +557,20 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       Disable IPv6
                     </label>
                   )}
+                  {activeFeatures.has("blockUdp") && (
+                    <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                      <input
+                        type="checkbox"
+                        checked={draft.blockUdp}
+                        onChange={(e) => setField("blockUdp", e.target.checked)}
+                        className="accent-[#0a84ff]"
+                      />
+                      <span>
+                        Block non-DNS UDP
+                        <span className="ml-1.5 text-xs text-white/30">(prevents QUIC leaks)</span>
+                      </span>
+                    </label>
+                  )}
                   {activeFeatures.has("udp") && (
                     <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
                       <input

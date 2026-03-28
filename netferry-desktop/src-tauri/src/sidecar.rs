@@ -394,6 +394,9 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
     }
+    if !profile.block_udp {
+        args.push("--no-block-udp".to_string());
+    }
     if profile.enable_udp {
         args.push("--udp".to_string());
     }

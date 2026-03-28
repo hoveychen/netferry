@@ -15,6 +15,7 @@ export function newProfile(): Profile {
     method: "auto",
     disableIpv6: false,
     enableUdp: false,
+    blockUdp: true,
     notes: "",
     autoExcludeLan: true,
     poolSize: 4,

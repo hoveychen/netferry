@@ -46,6 +46,7 @@ func main() {
 		dnsTarget    = flag.String("dns-target", "", "remote DNS server IP[@port]")
 		method       = flag.String("method", "auto", "firewall method: auto|pf|nft|ipt|tproxy|windivert|socks5")
 		noIPv6       = flag.Bool("no-ipv6", false, "disable IPv6 handling")
+		noBlockUDP   = flag.Bool("no-block-udp", false, "allow non-DNS UDP (disables QUIC leak prevention)")
 		udpProxy     = flag.Bool("udp", false, "enable generic UDP proxy (tproxy only)")
 		tproxyMark   = flag.Int("tproxy-mark", 1, "TPROXY fwmark value")
 		tproxyTable  = flag.Int("tproxy-table", 100, "TPROXY routing table number")
@@ -325,6 +326,8 @@ func main() {
 			fatalf("firewall: %v", err)
 		}
 	}
+	// Apply UDP blocking (default on; prevents QUIC leaks on pf).
+	firewall.SetUDPBlock(fw, !*noBlockUDP)
 	// Apply TPROXY configuration if applicable.
 	firewall.SetTProxyConfig(fw, firewall.TProxyConfig{
 		FWMark:     *tproxyMark,

@@ -4,6 +4,10 @@ fn default_auto_exclude_lan() -> bool {
     true
 }
 
+fn default_block_udp() -> bool {
+    true
+}
+
 fn default_pool_size() -> u32 {
     4
 }
@@ -51,6 +55,8 @@ pub struct Profile {
     pub disable_ipv6: bool,
     #[serde(default)]
     pub enable_udp: bool,
+    #[serde(default = "default_block_udp")]
+    pub block_udp: bool,
     pub notes: Option<String>,
     #[serde(default = "default_auto_exclude_lan")]
     pub auto_exclude_lan: bool,
@@ -97,6 +103,7 @@ impl Default for Profile {
             extra_ssh_options: None,
             disable_ipv6: false,
             enable_udp: false,
+            block_udp: true,
             notes: None,
             auto_exclude_lan: true,
             pool_size: 4,

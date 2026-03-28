@@ -172,15 +172,18 @@ func ntohs(v uint16) uint16 { return htons(v) }
 
 // pfMethod implements firewall.Method using macOS pf.
 type pfMethod struct {
-	anchor string
-	token  string
+	anchor   string
+	token    string
+	blockUDP bool
 }
 
 func (p *pfMethod) Name() string { return "pf" }
 
 func (p *pfMethod) SupportedFeatures() []Feature {
-	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6}
+	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6, FeatureBlockUDP}
 }
+
+func (p *pfMethod) SetBlockUDP(block bool) { p.blockUDP = block }
 
 func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
 	p.anchor = fmt.Sprintf("netferry-%d", proxyPort)
@@ -342,13 +345,18 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 			subnet.CIDR, subnet.PfPortExpr())
 	}
 	// DNS pass rules.
+	// When blockUDP is active, add "quick" so DNS wins over the block-all rule below.
+	dnsQuick := ""
+	if p.blockUDP {
+		dnsQuick = "quick "
+	}
 	if dnsPort > 0 && len(v4DNS) > 0 {
 		fmt.Fprintf(&b,
-			"pass out route-to lo0 inet proto udp to <dns_servers> port 53 keep state\n")
+			"pass out %sroute-to lo0 inet proto udp to <dns_servers> port 53 keep state\n", dnsQuick)
 	}
 	if dnsPort > 0 && len(v6DNS) > 0 {
 		fmt.Fprintf(&b,
-			"pass out route-to lo0 inet6 proto udp to <dns6_servers> port 53 keep state\n")
+			"pass out %sroute-to lo0 inet6 proto udp to <dns6_servers> port 53 keep state\n", dnsQuick)
 	}
 	// IPv4 excludes (last-match-wins: these override the route-to rules above).
 	for _, excl := range v4Excludes {
@@ -357,6 +365,24 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	// IPv6 excludes.
 	for _, excl := range v6Excludes {
 		fmt.Fprintf(&b, "pass out inet6 proto tcp to %s\n", excl)
+	}
+
+	// Block non-DNS UDP (prevents QUIC leaks). Uses "quick" to override any
+	// permissive rules in the outer pf ruleset.
+	if p.blockUDP {
+		// If DNS is not being proxied through the tunnel, allow port 53 directly
+		// so DNS resolution still works.
+		if !(dnsPort > 0 && len(v4DNS) > 0) {
+			fmt.Fprintf(&b, "pass out quick inet proto udp port 53\n")
+		}
+		fmt.Fprintf(&b, "block out quick inet proto udp all\n")
+
+		if len(v6Subnets) > 0 {
+			if !(dnsPort > 0 && len(v6DNS) > 0) {
+				fmt.Fprintf(&b, "pass out quick inet6 proto udp port 53\n")
+			}
+			fmt.Fprintf(&b, "block out quick inet6 proto udp all\n")
+		}
 	}
 
 	return b.Bytes()

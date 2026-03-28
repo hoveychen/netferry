@@ -17,6 +17,7 @@ const (
 	FeatureUDP       Feature = "udp"
 	FeatureDNS       Feature = "dns"
 	FeaturePortRange Feature = "portRange"
+	FeatureBlockUDP  Feature = "blockUdp"
 )
 
 // Method is implemented by each platform-specific backend.
@@ -43,6 +44,19 @@ type Method interface {
 // original destination of a redirected connection (e.g. WinDivert).
 type OrigDstQuerier interface {
 	QueryOrigDst(conn net.Conn) (ip string, port int, err error)
+}
+
+// UDPBlocker is optionally implemented by Methods that support blocking
+// non-DNS UDP traffic (e.g. to prevent QUIC leaks on macOS pf).
+type UDPBlocker interface {
+	SetBlockUDP(block bool)
+}
+
+// SetUDPBlock calls SetBlockUDP on the method if it implements UDPBlocker.
+func SetUDPBlock(m Method, block bool) {
+	if b, ok := m.(UDPBlocker); ok {
+		b.SetBlockUDP(block)
+	}
 }
 
 // QueryOrigDstFor returns a QueryOrigDst function if the Method implements

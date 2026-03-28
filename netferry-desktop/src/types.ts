@@ -28,6 +28,7 @@ export interface Profile {
   extraSshOptions?: string;
   disableIpv6: boolean;
   enableUdp: boolean;
+  blockUdp: boolean;
   notes?: string;
   autoExcludeLan: boolean;
   poolSize: number;
