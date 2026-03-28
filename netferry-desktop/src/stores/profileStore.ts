@@ -19,6 +19,7 @@ export function newProfile(): Profile {
     notes: "",
     autoExcludeLan: true,
     poolSize: 4,
+    splitConn: false,
     latencyBufferSize: 2097152,
   };
 }

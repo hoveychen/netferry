@@ -62,6 +62,8 @@ pub struct Profile {
     pub auto_exclude_lan: bool,
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
+    #[serde(default)]
+    pub split_conn: bool,
     #[serde(default = "default_latency_buffer_size")]
     pub latency_buffer_size: Option<u32>,
     #[serde(default)]
@@ -107,6 +109,7 @@ impl Default for Profile {
             notes: None,
             auto_exclude_lan: true,
             pool_size: 4,
+            split_conn: false,
             latency_buffer_size: Some(2097152),
             imported: false,
         }

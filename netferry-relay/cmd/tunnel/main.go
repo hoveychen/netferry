@@ -8,6 +8,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -55,6 +58,7 @@ func main() {
 		jumpHostsJSON = flag.String("jump", "", "explicit jump hosts as JSON array: [{\"remote\":\"user@host:port\",\"identityFile\":\"/path/to/key\"}]")
 		excludeNets   = flag.String("exclude", "", "comma-separated CIDRs to exclude from tunnel")
 		poolSize      = flag.Int("pool", 1, "number of parallel SSH TCP connections for connection bonding (1 = disabled; use 2-4 for high-concurrency workloads)")
+		splitConn     = flag.Bool("split", false, "open a second SSH connection per pool member to carry smux control frames (SYN/NOP/UPD) separately from data frames (PSH/FIN), preventing bulk data from delaying window updates")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
 	)
@@ -217,30 +221,35 @@ func main() {
 		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second)
 		defer stop()
 
-		sess, err := sc.NewSession()
-		if err != nil {
-			fatalf("new ssh session %d/%d: %v", i+1, n, err)
-		}
-		defer sess.Close()
+		var c *mux.MuxClient
+		if *splitConn {
+			c = startSplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, i+1, n)
+		} else {
+			sess, err := sc.NewSession()
+			if err != nil {
+				fatalf("new ssh session %d/%d: %v", i+1, n, err)
+			}
+			defer sess.Close()
 
-		sessStdin, err := sess.StdinPipe()
-		if err != nil {
-			fatalf("session %d stdin: %v", i+1, err)
-		}
-		sessStdout, err := sess.StdoutPipe()
-		if err != nil {
-			fatalf("session %d stdout: %v", i+1, err)
-		}
-		sess.Stderr = os.Stderr
+			sessStdin, err := sess.StdinPipe()
+			if err != nil {
+				fatalf("session %d stdin: %v", i+1, err)
+			}
+			sessStdout, err := sess.StdoutPipe()
+			if err != nil {
+				fatalf("session %d stdout: %v", i+1, err)
+			}
+			sess.Stderr = os.Stderr
 
-		if err := sess.Start(remoteCmd); err != nil {
-			fatalf("start remote server (session %d): %v", i+1, err)
-		}
-		if err := mux.ReadSyncHeader(sessStdout); err != nil {
-			fatalf("server handshake (session %d): %v — is the deployed binary corrupted?", i+1, err)
-		}
+			if err := sess.Start(remoteCmd); err != nil {
+				fatalf("start remote server (session %d): %v", i+1, err)
+			}
+			if err := mux.ReadSyncHeader(sessStdout); err != nil {
+				fatalf("server handshake (session %d): %v — is the deployed binary corrupted?", i+1, err)
+			}
 
-		c := mux.NewMuxClient(sessStdout, sessStdin)
+			c = mux.NewMuxClient(sessStdout, sessStdin)
+		}
 		c.SetCounters(counters)
 		clients[i] = c
 		if i == 0 {
@@ -255,6 +264,9 @@ func main() {
 				}
 			}()
 		}
+	}
+	if *splitConn {
+		log.Printf("mux: split-conn enabled (data/ctrl on separate TCP connections)")
 	}
 	if n > 1 {
 		log.Printf("mux pool: %d parallel TCP connections", n)
@@ -565,4 +577,112 @@ func pickFreePort(network string, preferredPort int) int {
 	default:
 		panic("unknown network: " + network)
 	}
+}
+
+// newSessionID returns a short random hex string used to coordinate the data
+// and ctrl SSH sessions in split-conn mode.
+func newSessionID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("rand: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// startSplitMuxClient opens two SSH sessions on sc:
+//
+//   - data session: runs the full server binary and carries PSH+FIN frames.
+//   - ctrl session: runs the server in relay mode and carries SYN+NOP+UPD frames.
+//
+// Both sessions share the same SSH TCP connection (sc). If the caller wants
+// separate TCP connections for each pool member the outer pool loop already
+// dials distinct ssh.Clients.
+//
+// The server coordinates the two sessions via a unix socket identified by a
+// random session ID generated here.
+func startSplitMuxClient(
+	sc *ssh.Client,
+	hc *sshconn.HostConfig,
+	ac sshconn.AuthConfig,
+	jumpHosts []sshconn.JumpHostSpec,
+	remoteCmd string,
+	member, total int,
+) *mux.MuxClient {
+	sid := newSessionID()
+
+	// ── data session ─────────────────────────────────────────────────────────
+	dataSess, err := sc.NewSession()
+	if err != nil {
+		fatalf("split data session %d/%d: %v", member, total, err)
+	}
+	dataStdin, err := dataSess.StdinPipe()
+	if err != nil {
+		fatalf("split data session %d/%d stdin: %v", member, total, err)
+	}
+	dataStdout, err := dataSess.StdoutPipe()
+	if err != nil {
+		fatalf("split data session %d/%d stdout: %v", member, total, err)
+	}
+	dataSess.Stderr = os.Stderr
+
+	dataCmd := remoteCmd + " --session-id " + sid + " --role main"
+	if err := dataSess.Start(dataCmd); err != nil {
+		fatalf("split data session %d/%d start: %v", member, total, err)
+	}
+
+	// ── ctrl session ──────────────────────────────────────────────────────────
+	// The ctrl session is opened on a second SSH TCP connection so that its
+	// send buffer is completely independent from the data session's.
+	ctrlClient, err := sshconn.Dial(hc, ac, jumpHosts...)
+	if err != nil {
+		fatalf("split ctrl SSH connect %d/%d: %v", member, total, err)
+	}
+
+	ctrlSess, err := ctrlClient.NewSession()
+	if err != nil {
+		fatalf("split ctrl session %d/%d: %v", member, total, err)
+	}
+	ctrlStdin, err := ctrlSess.StdinPipe()
+	if err != nil {
+		fatalf("split ctrl session %d/%d stdin: %v", member, total, err)
+	}
+	ctrlStdout, err := ctrlSess.StdoutPipe()
+	if err != nil {
+		fatalf("split ctrl session %d/%d stdout: %v", member, total, err)
+	}
+	ctrlSess.Stderr = os.Stderr
+
+	ctrlCmd := remoteCmd[:strings.IndexByte(remoteCmd, ' ')+0] // binary path only
+	if idx := strings.IndexByte(remoteCmd, ' '); idx >= 0 {
+		ctrlCmd = remoteCmd[:idx]
+	} else {
+		ctrlCmd = remoteCmd
+	}
+	ctrlCmd += " --session-id " + sid + " --role ctrl"
+	if err := ctrlSess.Start(ctrlCmd); err != nil {
+		fatalf("split ctrl session %d/%d start: %v", member, total, err)
+	}
+
+	// ── read sync headers concurrently ────────────────────────────────────────
+	var syncErr [2]error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		syncErr[0] = mux.ReadSyncHeader(dataStdout)
+	}()
+	go func() {
+		defer wg.Done()
+		syncErr[1] = mux.ReadSyncHeader(ctrlStdout)
+	}()
+	wg.Wait()
+
+	if syncErr[0] != nil {
+		fatalf("split data handshake %d/%d: %v", member, total, syncErr[0])
+	}
+	if syncErr[1] != nil {
+		fatalf("split ctrl handshake %d/%d: %v", member, total, syncErr[1])
+	}
+
+	return mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin)
 }

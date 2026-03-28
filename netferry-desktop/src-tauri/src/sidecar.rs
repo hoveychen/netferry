@@ -391,6 +391,9 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
         args.push("--pool".to_string());
         args.push(profile.pool_size.to_string());
     }
+    if profile.split_conn {
+        args.push("--split".to_string());
+    }
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
     }

@@ -61,6 +61,25 @@ func NewMuxClient(r io.Reader, w io.Writer) *MuxClient {
 	}
 }
 
+// NewMuxClientSplit creates a client backed by a SplitConn.
+//
+// dataR/dataW carry PSH and FIN frames (bulk stream data).
+// ctrlR/ctrlW carry SYN, NOP, and UPD frames (flow-control and keepalive).
+//
+// Routing over two independent TCP connections prevents large data writes from
+// delaying window-update frames in the OS send buffer.  Call Run() in a goroutine.
+func NewMuxClientSplit(dataR io.Reader, dataW io.Writer, ctrlR io.Reader, ctrlW io.Writer) *MuxClient {
+	conn := NewSplitConn(dataR, dataW, ctrlR, ctrlW)
+	sess, err := smux.Client(conn, smuxClientConfig())
+	if err != nil {
+		panic(fmt.Sprintf("mux: smux.Client (split): %v", err))
+	}
+	return &MuxClient{
+		session:  sess,
+		routesCh: make(chan []string, 1),
+	}
+}
+
 // SetCounters attaches stats counters. Must be called before Run().
 func (c *MuxClient) SetCounters(ct *stats.Counters) { c.counters = ct }
 

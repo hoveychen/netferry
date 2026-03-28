@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -23,10 +24,53 @@ import (
 
 var Version = "dev"
 
+// ctrlSocketPath returns the unix socket path used to coordinate the data and
+// ctrl SSH sessions when running in split-conn mode.
+func ctrlSocketPath(sessionID string) string {
+	return filepath.Join(os.TempDir(), "netferry-ctrl-"+sessionID+".sock")
+}
+
+// runCtrlRelay handles the --role=ctrl mode.
+//
+// The ctrl relay connects to the unix socket created by the main server
+// instance and bidirectionally forwards bytes between the socket and
+// stdin/stdout (the SSH session's data channel).  It then writes the sync
+// header so the client knows the ctrl channel is fully connected.
+func runCtrlRelay(sessionID string) {
+	sockPath := ctrlSocketPath(sessionID)
+	var conn net.Conn
+	var err error
+	for i := 0; i < 20; i++ {
+		conn, err = net.DialTimeout("unix", sockPath, time.Second)
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "s: ctrl relay: dial %s: %v\n", sockPath, err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	// Signal the client that the ctrl channel is ready.
+	if err := mux.WriteSyncHeader(os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "s: ctrl relay: write sync header: %v\n", err)
+		return
+	}
+
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(conn, os.Stdin); done <- struct{}{} }()
+	go func() { io.Copy(os.Stdout, conn); done <- struct{}{} }()
+	<-done
+}
+
 func main() {
 	autoNets := false
 	toNameserver := ""
 	verbose := false
+	sessionID := ""
+	role := "main"
 
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -39,6 +83,16 @@ func main() {
 			i++
 			if i < len(os.Args) {
 				toNameserver = os.Args[i]
+			}
+		case "--session-id":
+			i++
+			if i < len(os.Args) {
+				sessionID = os.Args[i]
+			}
+		case "--role":
+			i++
+			if i < len(os.Args) {
+				role = os.Args[i]
 			}
 		case "--version":
 			fmt.Println(Version)
@@ -53,15 +107,70 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
-	log.Printf("netferry-server %s on %s/%s", Version, runtime.GOOS, runtime.GOARCH)
-
-	// Write synchronisation header — client reads this to confirm server started.
-	if err := mux.WriteSyncHeader(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "s: fatal: write sync header: %v\n", err)
-		os.Exit(1)
+	// Handle ctrl relay mode: no smux session, just relay bytes to the main
+	// server's unix socket.
+	if role == "ctrl" {
+		if sessionID == "" {
+			fmt.Fprintln(os.Stderr, "s: --role=ctrl requires --session-id")
+			os.Exit(1)
+		}
+		runCtrlRelay(sessionID)
+		return
 	}
 
-	conn := &rwConn{r: os.Stdin, w: os.Stdout}
+	log.Printf("netferry-server %s on %s/%s", Version, runtime.GOOS, runtime.GOARCH)
+
+	// Split-conn mode: create a unix socket for the ctrl relay BEFORE writing
+	// the sync header so the ctrl relay can always connect after the client
+	// reads the sync header from the data session.
+	var ctrlConn net.Conn
+	if sessionID != "" {
+		sockPath := ctrlSocketPath(sessionID)
+		os.Remove(sockPath) // remove stale socket from a previous run
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "s: ctrl socket listen: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.Remove(sockPath)
+		defer ln.Close()
+
+		// Write sync header for the data session first so the client knows
+		// the main server is up and starts the ctrl session.
+		if err := mux.WriteSyncHeader(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "s: fatal: write sync header: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Block until the ctrl relay connects (it connects after the client
+		// reads the data sync header and starts the ctrl SSH session).
+		if ul, ok := ln.(*net.UnixListener); ok {
+			ul.SetDeadline(time.Now().Add(30 * time.Second))
+		}
+		ctrlConn, err = ln.Accept()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "s: ctrl socket accept: %v\n", err)
+			os.Exit(1)
+		}
+		if ul, ok := ln.(*net.UnixListener); ok {
+			ul.SetDeadline(time.Time{})
+		}
+		defer ctrlConn.Close()
+	} else {
+		// Write synchronisation header — client reads this to confirm server started.
+		if err := mux.WriteSyncHeader(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "s: fatal: write sync header: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	var conn io.ReadWriteCloser
+	if ctrlConn != nil {
+		conn = mux.NewSplitConn(os.Stdin, os.Stdout, ctrlConn, ctrlConn)
+	} else {
+		conn = &rwConn{r: os.Stdin, w: os.Stdout}
+	}
+
 	cfg := smux.DefaultConfig()
 	cfg.Version = 2
 	cfg.MaxFrameSize = 65535

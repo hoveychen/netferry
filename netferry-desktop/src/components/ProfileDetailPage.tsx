@@ -622,6 +622,23 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div className="col-span-2">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                    <input
+                      type="checkbox"
+                      checked={draft.splitConn}
+                      onChange={(e) => setField("splitConn", e.target.checked)}
+                      className="accent-[#0a84ff]"
+                    />
+                    <span>
+                      Split Control/Data Connection
+                      <span className="ml-1.5 text-xs text-white/30">
+                        (separate TCP for flow-control frames, reduces HOL blocking)
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="col-span-2">
                   <label className="mb-1.5 block text-sm font-medium text-white/60">
                     Extra SSH Options
                   </label>

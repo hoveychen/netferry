@@ -32,6 +32,7 @@ export interface Profile {
   notes?: string;
   autoExcludeLan: boolean;
   poolSize: number;
+  splitConn: boolean;
   latencyBufferSize?: number;
   imported?: boolean;
 }
