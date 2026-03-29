@@ -92,11 +92,13 @@ type splitWriter struct {
 
 // dataChSize is the capacity of the async data-frame queue.
 //
-// smux's flow control (MaxReceiveBuffer = 16 MB, MaxFrameSize = 64 KB) limits
-// the total in-flight data to ~256 frames.  512 provides headroom so the queue
-// never fills under normal operation; if it does, Write() blocks, giving
-// natural backpressure — but ctrl frames have already been dispatched.
-const dataChSize = 512
+// Keep this SMALL (2–4 frames).  A large buffer lets one heavy download stream
+// dump many frames into the channel before other streams get a turn, starving
+// lighter streams.  With a small buffer, smux's priority-based shaper controls
+// inter-stream fairness, and the maximum NOP delay is bounded by one frame
+// drain time (e.g. 64 KB @ 256 Kbps ≈ 2 s), well within the 30 s keepalive
+// timeout.
+const dataChSize = 4
 
 func newSplitWriter(data io.Writer, ctrl io.Writer) *splitWriter {
 	sw := &splitWriter{
