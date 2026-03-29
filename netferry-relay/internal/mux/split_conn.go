@@ -37,12 +37,17 @@ func isDataCmd(cmd byte) bool {
 // SplitConn presents a single io.ReadWriteCloser to smux while routing frames
 // over two physically separate connections:
 //
-//   - data connection: PSH and FIN frames
-//   - ctrl connection: SYN, NOP, and UPD frames
+//   - data connection: SYN, PSH, and FIN frames
+//   - ctrl connection: NOP and UPD frames
 //
-// This prevents large bulk writes (PSH) from delaying UPD window-update frames
-// in the OS send buffer, which is the primary cause of throughput collapse under
-// simultaneous upload and download.
+// Data frames are written asynchronously: Write() copies the frame into a
+// buffered channel and returns immediately, while a background goroutine
+// drains the channel into the data TCP connection.  This prevents a blocked
+// data TCP write from stalling smux's single-threaded write loop, which would
+// delay NOP/UPD frames and trigger keepalive timeouts.
+//
+// Ctrl frames are written synchronously (they are tiny and the ctrl TCP is
+// never congested).
 //
 // Assumption: smux always issues one Write call per complete frame
 // (header + payload in a single buffer).  This holds because smux only uses
@@ -54,11 +59,11 @@ type SplitConn struct {
 }
 
 // NewSplitConn creates a SplitConn backed by two independent read/write pairs.
-// dataR/dataW carry PSH+FIN frames; ctrlR/ctrlW carry SYN+NOP+UPD frames.
+// dataR/dataW carry SYN+PSH+FIN frames; ctrlR/ctrlW carry NOP+UPD frames.
 func NewSplitConn(dataR io.Reader, dataW io.Writer, ctrlR io.Reader, ctrlW io.Writer) *SplitConn {
 	return &SplitConn{
 		mr: newMergedReader(dataR, ctrlR),
-		sw: &splitWriter{data: dataW, ctrl: ctrlW},
+		sw: newSplitWriter(dataW, ctrlW),
 	}
 }
 
@@ -66,27 +71,100 @@ func (s *SplitConn) Read(b []byte) (int, error)  { return s.mr.Read(b) }
 func (s *SplitConn) Write(b []byte) (int, error) { return s.sw.Write(b) }
 func (s *SplitConn) Close() error {
 	s.mr.close()
+	s.sw.close()
 	return nil
 }
 
 // ── splitWriter ───────────────────────────────────────────────────────────────
 
+// splitWriter routes smux frames to two connections.  Data frames (SYN, PSH,
+// FIN) are queued into a buffered channel and written by a background goroutine
+// so that a blocked data TCP never stalls the smux write loop.  Ctrl frames
+// (NOP, UPD) are written synchronously.
 type splitWriter struct {
-	data io.Writer
-	ctrl io.Writer
+	data   io.Writer
+	ctrl   io.Writer
+	dataCh chan []byte    // async queue for data frames
+	done   chan struct{}  // closed on fatal data-write error
+	once   sync.Once
+	wErr   error         // first data-write error, readable after done closes
+}
+
+// dataChSize is the capacity of the async data-frame queue.
+//
+// smux's flow control (MaxReceiveBuffer = 16 MB, MaxFrameSize = 64 KB) limits
+// the total in-flight data to ~256 frames.  512 provides headroom so the queue
+// never fills under normal operation; if it does, Write() blocks, giving
+// natural backpressure — but ctrl frames have already been dispatched.
+const dataChSize = 512
+
+func newSplitWriter(data io.Writer, ctrl io.Writer) *splitWriter {
+	sw := &splitWriter{
+		data:   data,
+		ctrl:   ctrl,
+		dataCh: make(chan []byte, dataChSize),
+		done:   make(chan struct{}),
+	}
+	go sw.drainData()
+	return sw
+}
+
+// drainData writes queued data frames to the data TCP connection.
+// If a write fails, it records the error and signals via done.
+func (sw *splitWriter) drainData() {
+	for {
+		select {
+		case frame := <-sw.dataCh:
+			if _, err := sw.data.Write(frame); err != nil {
+				log.Printf("mux: split-conn data writer: %v", err)
+				sw.wErr = err
+				sw.once.Do(func() { close(sw.done) })
+				return
+			}
+		case <-sw.done:
+			return
+		}
+	}
+}
+
+func (sw *splitWriter) close() {
+	sw.once.Do(func() { close(sw.done) })
 }
 
 // Write routes a complete smux frame to either the data or ctrl channel.
-// b[1] is the cmd byte; routing is decided entirely from that byte.
+//
+// Data frames are copied into the async queue and return immediately.
+// Ctrl frames are written synchronously to the ctrl TCP.
 func (sw *splitWriter) Write(b []byte) (int, error) {
+	// Check for a previous async data-write error.
+	select {
+	case <-sw.done:
+		if sw.wErr != nil {
+			return 0, sw.wErr
+		}
+		return 0, io.ErrClosedPipe
+	default:
+	}
+
 	if len(b) < smuxHdrLen {
-		// Shouldn't happen with well-behaved smux, but route to ctrl as a
-		// safe fallback (small control-like fragment).
 		return sw.ctrl.Write(b)
 	}
+
 	if isDataCmd(b[1]) {
-		return sw.data.Write(b)
+		// Copy: smux reuses its write buffer across iterations.
+		frame := make([]byte, len(b))
+		copy(frame, b)
+		select {
+		case sw.dataCh <- frame:
+			return len(b), nil
+		case <-sw.done:
+			if sw.wErr != nil {
+				return 0, sw.wErr
+			}
+			return 0, io.ErrClosedPipe
+		}
 	}
+
 	return sw.ctrl.Write(b)
 }
 
