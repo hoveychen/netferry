@@ -20,10 +20,11 @@ import (
 // Each SSH stdin/stdout pair becomes one smux session.
 // TCP, DNS, and UDP requests each open a new smux stream.
 type MuxClient struct {
-	session  *smux.Session
-	counters *stats.Counters
-	routesCh chan []string
-	done     atomic.Bool
+	session   *smux.Session
+	counters  *stats.Counters
+	routesCh  chan []string
+	done      atomic.Bool
+	splitConn *SplitConn // non-nil in split mode
 }
 
 // rwConn adapts separate io.Reader / io.Writer into the io.ReadWriteCloser
@@ -75,8 +76,9 @@ func NewMuxClientSplit(dataR io.Reader, dataW io.Writer, ctrlR io.Reader, ctrlW 
 		panic(fmt.Sprintf("mux: smux.Client (split): %v", err))
 	}
 	return &MuxClient{
-		session:  sess,
-		routesCh: make(chan []string, 1),
+		session:   sess,
+		routesCh:  make(chan []string, 1),
+		splitConn: conn,
 	}
 }
 
@@ -85,6 +87,9 @@ func (c *MuxClient) SetCounters(ct *stats.Counters) { c.counters = ct }
 
 // SetFlowControl is a no-op: smux manages flow control internally.
 func (c *MuxClient) SetFlowControl(_ bool, _ int64) {}
+
+// IsClosed reports whether the client's mux session has terminated.
+func (c *MuxClient) IsClosed() bool { return c.done.Load() }
 
 // RoutesCh returns the channel on which the server-pushed route list arrives.
 func (c *MuxClient) RoutesCh() <-chan []string { return c.routesCh }
@@ -124,13 +129,39 @@ func (c *MuxClient) handleServerStream(stream *smux.Stream) {
 	}
 }
 
+// openStream opens a smux stream, serializing with openStreamOnCtrl in split mode.
+func (c *MuxClient) openStream() (*smux.Stream, error) {
+	if c.splitConn != nil {
+		c.splitConn.openMu.Lock()
+		defer c.splitConn.openMu.Unlock()
+	}
+	return c.session.OpenStream()
+}
+
+// openStreamOnCtrl opens a smux stream whose frames are routed via the ctrl
+// connection.  Only valid in split mode; falls back to a normal open otherwise.
+func (c *MuxClient) openStreamOnCtrl() (*smux.Stream, error) {
+	if c.splitConn == nil {
+		return c.session.OpenStream()
+	}
+	c.splitConn.openMu.Lock()
+	defer c.splitConn.openMu.Unlock()
+	c.splitConn.routeNextSYN = true
+	stream, err := c.session.OpenStream()
+	if err != nil {
+		c.splitConn.routeNextSYN = false
+		return nil, err
+	}
+	return stream, nil
+}
+
 // OpenTCP opens a new smux stream for a TCP connection to dstIP:dstPort.
 // family: 2=IPv4, 10=IPv6.
 func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, error) {
 	if c.done.Load() {
 		return nil, fmt.Errorf("mux: client closed")
 	}
-	stream, err := c.session.OpenStream()
+	stream, err := c.openStream()
 	if err != nil {
 		return nil, fmt.Errorf("mux: open stream: %w", err)
 	}
@@ -148,11 +179,13 @@ func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn,
 }
 
 // DNSRequest opens a stream, sends a DNS query, and returns the response.
+// In split mode, DNS streams are routed via the ctrl connection for lower
+// latency — DNS is small and idempotent, so it won't congest the ctrl channel.
 func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 	if c.done.Load() {
 		return nil, fmt.Errorf("mux: client closed")
 	}
-	stream, err := c.session.OpenStream()
+	stream, err := c.openStreamOnCtrl()
 	if err != nil {
 		return nil, fmt.Errorf("mux: open stream: %w", err)
 	}
@@ -176,7 +209,7 @@ func (c *MuxClient) OpenUDP(family int) (*UDPChannel, error) {
 	if c.done.Load() {
 		return nil, fmt.Errorf("mux: client closed")
 	}
-	stream, err := c.session.OpenStream()
+	stream, err := c.openStream()
 	if err != nil {
 		return nil, fmt.Errorf("mux: open stream: %w", err)
 	}

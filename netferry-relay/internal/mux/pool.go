@@ -1,6 +1,9 @@
 package mux
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // TunnelClient is the interface satisfied by both MuxClient and MuxPool.
 // The proxy layer uses this interface to open connections through the tunnel,
@@ -26,6 +29,7 @@ type TunnelClient interface {
 //
 // Suggested pool size for 50 concurrent TCP connections: 2–4.
 type MuxPool struct {
+	mu      sync.RWMutex
 	clients []*MuxClient
 	next    atomic.Uint64
 }
@@ -40,8 +44,28 @@ func NewMuxPool(clients []*MuxClient) *MuxPool {
 }
 
 func (p *MuxPool) pick() *MuxClient {
-	idx := p.next.Add(1) - 1
-	return p.clients[idx%uint64(len(p.clients))]
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	n := uint64(len(p.clients))
+	start := p.next.Add(1) - 1
+	// Try all clients starting from the round-robin position; skip dead ones.
+	for i := uint64(0); i < n; i++ {
+		c := p.clients[(start+i)%n]
+		if !c.IsClosed() {
+			return c
+		}
+	}
+	// All dead — return primary so the caller gets an error that propagates
+	// up to the muxErrCh and triggers a full tunnel restart.
+	return p.clients[0]
+}
+
+// ReplaceClient swaps the client at idx with a newly reconnected one.
+func (p *MuxPool) ReplaceClient(idx int, c *MuxClient) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.clients[idx] = c
 }
 
 // OpenTCP picks the next client in round-robin order and opens a TCP channel.

@@ -212,9 +212,6 @@ func main() {
 	}
 
 	clients := make([]*mux.MuxClient, n)
-	// muxErrCh receives only the primary client's error. Secondary pool member
-	// failures are logged but do not tear down the tunnel — they just reduce
-	// available bonded connections until the next reconnect.
 	muxErrCh := make(chan error, 1)
 	for i, sc := range sshClients {
 		// Start SSH-level keepalive on each connection.
@@ -225,46 +222,17 @@ func main() {
 		if *splitConn {
 			c = startSplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, i+1, n)
 		} else {
-			sess, err := sc.NewSession()
+			mc, err := tryMuxClient(sc, remoteCmd, i+1, n)
 			if err != nil {
-				fatalf("new ssh session %d/%d: %v", i+1, n, err)
+				fatalf("%v", err)
 			}
-			defer sess.Close()
-
-			sessStdin, err := sess.StdinPipe()
-			if err != nil {
-				fatalf("session %d stdin: %v", i+1, err)
-			}
-			sessStdout, err := sess.StdoutPipe()
-			if err != nil {
-				fatalf("session %d stdout: %v", i+1, err)
-			}
-			sess.Stderr = os.Stderr
-
-			if err := sess.Start(remoteCmd); err != nil {
-				fatalf("start remote server (session %d): %v", i+1, err)
-			}
-			if err := mux.ReadSyncHeader(sessStdout); err != nil {
-				fatalf("server handshake (session %d): %v — is the deployed binary corrupted?", i+1, err)
-			}
-
-			c = mux.NewMuxClient(sessStdout, sessStdin)
+			c = mc
 		}
 		c.SetCounters(counters)
 		clients[i] = c
-		if i == 0 {
-			// Primary: its death exits the tunnel (triggers Tauri reconnect).
-			go func() { muxErrCh <- c.Run() }()
-		} else {
-			// Secondary: just log and absorb the error.
-			idx := i
-			go func() {
-				if err := c.Run(); err != nil {
-					log.Printf("mux pool member %d/%d closed: %v", idx+1, n, err)
-				}
-			}()
-		}
 	}
+	// Primary: its death exits the tunnel (triggers Tauri reconnect).
+	go func() { muxErrCh <- clients[0].Run() }()
 	if *splitConn {
 		log.Printf("mux: split-conn enabled (data/ctrl on separate TCP connections)")
 	}
@@ -279,7 +247,13 @@ func main() {
 	if n == 1 {
 		tunnelClient = firstClient
 	} else {
-		tunnelClient = mux.NewMuxPool(clients)
+		pool := mux.NewMuxPool(clients)
+		tunnelClient = pool
+		// Start secondary pool members with auto-reconnect on death.
+		for i := 1; i < n; i++ {
+			idx := i
+			go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, jumpHosts, remoteCmd, *splitConn, counters)
+		}
 	}
 
 	// Collect CMD_ROUTES if --auto-nets (arrives within ~200ms of connect).
@@ -589,17 +563,8 @@ func newSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// startSplitMuxClient opens two SSH sessions on sc:
-//
-//   - data session: runs the full server binary and carries PSH+FIN frames.
-//   - ctrl session: runs the server in relay mode and carries SYN+NOP+UPD frames.
-//
-// Both sessions share the same SSH TCP connection (sc). If the caller wants
-// separate TCP connections for each pool member the outer pool loop already
-// dials distinct ssh.Clients.
-//
-// The server coordinates the two sessions via a unix socket identified by a
-// random session ID generated here.
+// startSplitMuxClient is the fatal wrapper around trySplitMuxClient for
+// initial connection setup.
 func startSplitMuxClient(
 	sc *ssh.Client,
 	hc *sshconn.HostConfig,
@@ -608,63 +573,102 @@ func startSplitMuxClient(
 	remoteCmd string,
 	member, total int,
 ) *mux.MuxClient {
+	c, err := trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	return c
+}
+
+// tryMuxClient creates a non-split MuxClient on the given SSH connection.
+func tryMuxClient(sc *ssh.Client, remoteCmd string, member, total int) (*mux.MuxClient, error) {
+	sess, err := sc.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("new ssh session %d/%d: %w", member, total, err)
+	}
+	sessStdin, err := sess.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("session %d stdin: %w", member, err)
+	}
+	sessStdout, err := sess.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("session %d stdout: %w", member, err)
+	}
+	sess.Stderr = os.Stderr
+	if err := sess.Start(remoteCmd); err != nil {
+		return nil, fmt.Errorf("start remote server (session %d): %w", member, err)
+	}
+	if err := mux.ReadSyncHeader(sessStdout); err != nil {
+		return nil, fmt.Errorf("server handshake (session %d): %w", member, err)
+	}
+	return mux.NewMuxClient(sessStdout, sessStdin), nil
+}
+
+// trySplitMuxClient opens two SSH sessions (data + ctrl) and returns a
+// split-conn MuxClient. Returns an error instead of calling fatalf so it
+// can be used in reconnection loops.
+func trySplitMuxClient(
+	sc *ssh.Client,
+	hc *sshconn.HostConfig,
+	ac sshconn.AuthConfig,
+	jumpHosts []sshconn.JumpHostSpec,
+	remoteCmd string,
+	member, total int,
+) (*mux.MuxClient, error) {
 	sid := newSessionID()
 
 	// ── data session ─────────────────────────────────────────────────────────
 	dataSess, err := sc.NewSession()
 	if err != nil {
-		fatalf("split data session %d/%d: %v", member, total, err)
+		return nil, fmt.Errorf("split data session %d/%d: %w", member, total, err)
 	}
 	dataStdin, err := dataSess.StdinPipe()
 	if err != nil {
-		fatalf("split data session %d/%d stdin: %v", member, total, err)
+		return nil, fmt.Errorf("split data session %d/%d stdin: %w", member, total, err)
 	}
 	dataStdout, err := dataSess.StdoutPipe()
 	if err != nil {
-		fatalf("split data session %d/%d stdout: %v", member, total, err)
+		return nil, fmt.Errorf("split data session %d/%d stdout: %w", member, total, err)
 	}
 	dataSess.Stderr = os.Stderr
 
 	dataCmd := remoteCmd + " --session-id " + sid + " --role main"
 	if err := dataSess.Start(dataCmd); err != nil {
-		fatalf("split data session %d/%d start: %v", member, total, err)
+		return nil, fmt.Errorf("split data session %d/%d start: %w", member, total, err)
 	}
 
 	// ── ctrl session ──────────────────────────────────────────────────────────
-	// The ctrl session is opened on a second SSH TCP connection so that its
-	// send buffer is completely independent from the data session's.
 	ctrlClient, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {
-		fatalf("split ctrl SSH connect %d/%d: %v", member, total, err)
+		return nil, fmt.Errorf("split ctrl SSH connect %d/%d: %w", member, total, err)
 	}
-
-	// SSH-level keepalive on the ctrl connection — the goroutine exits
-	// automatically when the connection dies, so we don't need to store stop().
 	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second)
 
 	ctrlSess, err := ctrlClient.NewSession()
 	if err != nil {
-		fatalf("split ctrl session %d/%d: %v", member, total, err)
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split ctrl session %d/%d: %w", member, total, err)
 	}
 	ctrlStdin, err := ctrlSess.StdinPipe()
 	if err != nil {
-		fatalf("split ctrl session %d/%d stdin: %v", member, total, err)
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split ctrl session %d/%d stdin: %w", member, total, err)
 	}
 	ctrlStdout, err := ctrlSess.StdoutPipe()
 	if err != nil {
-		fatalf("split ctrl session %d/%d stdout: %v", member, total, err)
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split ctrl session %d/%d stdout: %w", member, total, err)
 	}
 	ctrlSess.Stderr = os.Stderr
 
-	ctrlCmd := remoteCmd[:strings.IndexByte(remoteCmd, ' ')+0] // binary path only
+	ctrlCmd := remoteCmd
 	if idx := strings.IndexByte(remoteCmd, ' '); idx >= 0 {
 		ctrlCmd = remoteCmd[:idx]
-	} else {
-		ctrlCmd = remoteCmd
 	}
 	ctrlCmd += " --session-id " + sid + " --role ctrl"
 	if err := ctrlSess.Start(ctrlCmd); err != nil {
-		fatalf("split ctrl session %d/%d start: %v", member, total, err)
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split ctrl session %d/%d start: %w", member, total, err)
 	}
 
 	// ── read sync headers concurrently ────────────────────────────────────────
@@ -682,11 +686,89 @@ func startSplitMuxClient(
 	wg.Wait()
 
 	if syncErr[0] != nil {
-		fatalf("split data handshake %d/%d: %v", member, total, syncErr[0])
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split data handshake %d/%d: %w", member, total, syncErr[0])
 	}
 	if syncErr[1] != nil {
-		fatalf("split ctrl handshake %d/%d: %v", member, total, syncErr[1])
+		ctrlClient.Close()
+		return nil, fmt.Errorf("split ctrl handshake %d/%d: %w", member, total, syncErr[1])
 	}
 
-	return mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin)
+	return mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin), nil
+}
+
+// connectPoolMember dials a fresh SSH connection and creates a MuxClient.
+// Used by reconnectPoolMember for reconnecting dead secondary pool members.
+func connectPoolMember(
+	hc *sshconn.HostConfig,
+	ac sshconn.AuthConfig,
+	jumpHosts []sshconn.JumpHostSpec,
+	remoteCmd string,
+	split bool,
+	counters *stats.Counters,
+	member, total int,
+) (*mux.MuxClient, error) {
+	sc, err := sshconn.Dial(hc, ac, jumpHosts...)
+	if err != nil {
+		return nil, fmt.Errorf("ssh dial: %w", err)
+	}
+	sshconn.StartSSHKeepalive(sc, 30*time.Second)
+
+	var c *mux.MuxClient
+	if split {
+		c, err = trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total)
+	} else {
+		c, err = tryMuxClient(sc, remoteCmd, member, total)
+	}
+	if err != nil {
+		sc.Close()
+		return nil, err
+	}
+	c.SetCounters(counters)
+	return c, nil
+}
+
+// reconnectPoolMember runs the given MuxClient and, when it dies, reconnects
+// with exponential backoff and replaces it in the pool. This function never
+// returns — it is meant to be called as a goroutine for each secondary pool
+// member.
+func reconnectPoolMember(
+	pool *mux.MuxPool,
+	idx, total int,
+	initial *mux.MuxClient,
+	hc *sshconn.HostConfig,
+	ac sshconn.AuthConfig,
+	jumpHosts []sshconn.JumpHostSpec,
+	remoteCmd string,
+	split bool,
+	counters *stats.Counters,
+) {
+	c := initial
+	backoff := 5 * time.Second
+	const maxBackoff = 60 * time.Second
+
+	for {
+		if err := c.Run(); err != nil {
+			log.Printf("mux pool member %d/%d closed: %v", idx+1, total, err)
+		}
+
+		// Reconnect loop with exponential backoff.
+		for {
+			log.Printf("mux pool member %d/%d: reconnecting in %v", idx+1, total, backoff)
+			time.Sleep(backoff)
+
+			newClient, err := connectPoolMember(hc, ac, jumpHosts, remoteCmd, split, counters, idx+1, total)
+			if err != nil {
+				log.Printf("mux pool member %d/%d reconnect failed: %v", idx+1, total, err)
+				backoff = min(backoff*2, maxBackoff)
+				continue
+			}
+
+			pool.ReplaceClient(idx, newClient)
+			c = newClient
+			backoff = 5 * time.Second
+			log.Printf("mux pool member %d/%d: reconnected successfully", idx+1, total)
+			break
+		}
+	}
 }

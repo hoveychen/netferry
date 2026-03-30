@@ -17,28 +17,34 @@ const (
 	smuxHdrLen      = 8 // fixed header size for both v1 and v2
 )
 
-// isDataCmd reports whether the smux command belongs on the data channel.
+// isDataCmd reports whether the smux command is a stream-data command
+// (as opposed to session-level NOP/UPD).
 //
-// SYN, PSH, and FIN must all travel on the same connection to preserve
-// ordering: SYN opens a stream before PSH carries its payload, and FIN
-// signals EOF after the last PSH.  Putting SYN on a faster ctrl connection
-// would be safe in one direction, but a slower ctrl connection would let PSH
-// arrive before SYN — causing the remote smux to reject the frame for a
-// nonexistent stream.
-//
-// The ctrl channel carries only NOP (keepalive) and UPD (v2 window update).
-// These are the frames whose latency matters most — UPD unblocks the remote
-// sender, and NOP detects dead connections — and they have no ordering
-// dependency on data frames.
+// Note: although SYN is classified as a data command by this function,
+// splitWriter fast-paths ALL SYN frames through the ctrl channel for low
+// latency.  This is ordering-safe because ctrl is at least as fast as data,
+// so SYN always arrives before any PSH for the same stream.  PSH and FIN
+// continue to travel on the data channel (unless the stream is explicitly
+// registered for full ctrl routing, e.g. DNS).
 func isDataCmd(cmd byte) bool {
 	return cmd == smuxCmdSYN || cmd == smuxCmdPSH || cmd == smuxCmdFIN
+}
+
+// streamID extracts the little-endian stream ID from a smux frame header.
+func streamID(frame []byte) uint32 {
+	return binary.LittleEndian.Uint32(frame[4:8])
 }
 
 // SplitConn presents a single io.ReadWriteCloser to smux while routing frames
 // over two physically separate connections:
 //
-//   - data connection: SYN, PSH, and FIN frames
-//   - ctrl connection: NOP and UPD frames
+//   - data connection: PSH and FIN frames (bulk stream data)
+//   - ctrl connection: SYN, NOP, UPD frames, plus selected low-latency streams
+//
+// Certain streams (e.g. DNS) can be routed via the ctrl connection for lower
+// latency.  The client side pre-registers a stream via routeNextSYN before
+// calling OpenStream; the server side auto-learns by observing data-cmd frames
+// arriving on the ctrl connection.
 //
 // Data frames are written asynchronously: Write() copies the frame into a
 // buffered channel and returns immediately, while a background goroutine
@@ -46,25 +52,31 @@ func isDataCmd(cmd byte) bool {
 // data TCP write from stalling smux's single-threaded write loop, which would
 // delay NOP/UPD frames and trigger keepalive timeouts.
 //
-// Ctrl frames are written synchronously (they are tiny and the ctrl TCP is
-// never congested).
+// Ctrl frames (including ctrl-routed stream frames) are written synchronously
+// — they are small and the ctrl TCP is never congested.
 //
 // Assumption: smux always issues one Write call per complete frame
 // (header + payload in a single buffer).  This holds because smux only uses
 // scatter-gather I/O (WriteBuffers) when the underlying conn implements that
 // interface; SplitConn does not, so smux always takes the combined-buffer path.
 type SplitConn struct {
-	mr *mergedReader
-	sw *splitWriter
+	mr          *mergedReader
+	sw          *splitWriter
+	ctrlStreams sync.Map // uint32 → struct{}: stream IDs routed via ctrl
+
+	// openMu serializes OpenStream calls so that routeNextSYN is consumed by
+	// the correct SYN frame.  Only the client side uses this.
+	openMu       sync.Mutex
+	routeNextSYN bool
 }
 
 // NewSplitConn creates a SplitConn backed by two independent read/write pairs.
 // dataR/dataW carry SYN+PSH+FIN frames; ctrlR/ctrlW carry NOP+UPD frames.
 func NewSplitConn(dataR io.Reader, dataW io.Writer, ctrlR io.Reader, ctrlW io.Writer) *SplitConn {
-	return &SplitConn{
-		mr: newMergedReader(dataR, ctrlR),
-		sw: newSplitWriter(dataW, ctrlW),
-	}
+	sc := &SplitConn{}
+	sc.mr = newMergedReader(dataR, ctrlR, &sc.ctrlStreams)
+	sc.sw = newSplitWriter(dataW, ctrlW, sc)
+	return sc
 }
 
 func (s *SplitConn) Read(b []byte) (int, error)  { return s.mr.Read(b) }
@@ -84,6 +96,7 @@ func (s *SplitConn) Close() error {
 type splitWriter struct {
 	data   io.Writer
 	ctrl   io.Writer
+	sc     *SplitConn    // back-pointer for ctrlStreams & routeNextSYN
 	dataCh chan []byte    // async queue for data frames
 	done   chan struct{}  // closed on fatal data-write error
 	once   sync.Once
@@ -100,10 +113,11 @@ type splitWriter struct {
 // timeout.
 const dataChSize = 4
 
-func newSplitWriter(data io.Writer, ctrl io.Writer) *splitWriter {
+func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter {
 	sw := &splitWriter{
 		data:   data,
 		ctrl:   ctrl,
+		sc:     sc,
 		dataCh: make(chan []byte, dataChSize),
 		done:   make(chan struct{}),
 	}
@@ -153,6 +167,35 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 	}
 
 	if isDataCmd(b[1]) {
+		sid := streamID(b)
+
+		// SYN frames always travel via ctrl for low latency.  They are
+		// header-only (8 bytes) and must not queue behind bulk PSH frames
+		// in dataCh — otherwise a single congested download can starve new
+		// stream creation for tens of seconds.
+		//
+		// Ordering is safe: ctrl is at least as fast as data, so SYN
+		// always arrives before any PSH for the same stream.
+		//
+		// If routeNextSYN is set, the stream is additionally registered
+		// for full ctrl routing (e.g. DNS) so that subsequent PSH/FIN
+		// also bypass the data channel.
+		if b[1] == smuxCmdSYN {
+			if sw.sc.routeNextSYN {
+				sw.sc.routeNextSYN = false
+				sw.sc.ctrlStreams.Store(sid, struct{}{})
+			}
+			return sw.ctrl.Write(b)
+		}
+
+		// Check if this stream was registered for full ctrl routing.
+		if _, ok := sw.sc.ctrlStreams.Load(sid); ok {
+			if b[1] == smuxCmdFIN {
+				sw.sc.ctrlStreams.Delete(sid)
+			}
+			return sw.ctrl.Write(b)
+		}
+
 		// Copy: smux reuses its write buffer across iterations.
 		frame := make([]byte, len(b))
 		copy(frame, b)
@@ -175,16 +218,18 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 // mergedReader combines two byte-stream sources into one by reading complete
 // smux frames from each and forwarding them in arrival order.
 type mergedReader struct {
-	ch   chan []byte
-	buf  []byte
-	done chan struct{}
-	once sync.Once
+	ch          chan []byte
+	buf         []byte
+	done        chan struct{}
+	once        sync.Once
+	ctrlStreams *sync.Map // shared with SplitConn for auto-learning
 }
 
-func newMergedReader(data io.Reader, ctrl io.Reader) *mergedReader {
+func newMergedReader(data io.Reader, ctrl io.Reader, ctrlStreams *sync.Map) *mergedReader {
 	mr := &mergedReader{
-		ch:   make(chan []byte, 128),
-		done: make(chan struct{}),
+		ch:          make(chan []byte, 128),
+		done:        make(chan struct{}),
+		ctrlStreams: ctrlStreams,
 	}
 	go mr.pump(data, "data")
 	go mr.pump(ctrl, "ctrl")
@@ -210,6 +255,18 @@ func (mr *mergedReader) pump(r io.Reader, label string) {
 				log.Printf("mux: split-conn %s pump payload read: %v", label, err)
 				mr.close()
 				return
+			}
+		}
+		// Auto-learn: if a non-SYN data-cmd frame arrives on ctrl, the
+		// remote side explicitly routed this stream for full ctrl transport.
+		// SYN is excluded because ALL SYN frames travel via ctrl for low
+		// latency; that alone does not mean the stream is fully ctrl-routed.
+		if label == "ctrl" && isDataCmd(frame[1]) && frame[1] != smuxCmdSYN {
+			sid := streamID(frame)
+			if frame[1] == smuxCmdFIN {
+				mr.ctrlStreams.Delete(sid)
+			} else {
+				mr.ctrlStreams.Store(sid, struct{}{})
 			}
 		}
 		select {
