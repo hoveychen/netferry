@@ -74,20 +74,18 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 		host = dstIP
 	}
 	log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
-	var connID uint64
-	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host)
-	}
 
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
 	if err != nil {
 		log.Printf("socks5: open channel to %s:%d: %v", dstIP, dstPort, err)
-		if counters != nil {
-			counters.ConnClose(connID, srcAddr, dstAddr)
-		}
 		return
 	}
 	defer muxConn.Close()
+
+	var connID uint64
+	if counters != nil {
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex)
+	}
 
 	touch := func() {
 		deadline := time.Now().Add(connIdleTimeout)

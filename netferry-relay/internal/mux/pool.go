@@ -3,6 +3,18 @@ package mux
 import (
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+// LBStrategy controls how TCP connections are assigned to pool members.
+type LBStrategy int
+
+const (
+	// LBRoundRobin assigns TCP connections in round-robin order (default).
+	LBRoundRobin LBStrategy = iota
+	// LBLeastLoaded assigns TCP connections to the pool member with the fewest
+	// open smux streams, mirroring the strategy already used for DNS/UDP.
+	LBLeastLoaded
 )
 
 // TunnelClient is the interface satisfied by both MuxClient and MuxPool.
@@ -30,18 +42,24 @@ type TunnelClient interface {
 //
 // Suggested pool size for 50 concurrent TCP connections: 2–4.
 type MuxPool struct {
-	mu      sync.RWMutex
-	clients []*MuxClient
-	next    atomic.Uint64
+	mu          sync.RWMutex
+	clients     []*MuxClient
+	next        atomic.Uint64
+	tcpStrategy LBStrategy
 }
 
-// NewMuxPool creates a pool from the given clients. All clients should
-// already have Run() called (or be about to be started in goroutines).
+// NewMuxPool creates a pool with the default round-robin TCP strategy.
 func NewMuxPool(clients []*MuxClient) *MuxPool {
+	return NewMuxPoolWithStrategy(clients, LBRoundRobin)
+}
+
+// NewMuxPoolWithStrategy creates a pool from the given clients using the
+// specified TCP load-balancing strategy.
+func NewMuxPoolWithStrategy(clients []*MuxClient, strategy LBStrategy) *MuxPool {
 	if len(clients) == 0 {
 		panic("mux: NewMuxPool requires at least one client")
 	}
-	return &MuxPool{clients: clients}
+	return &MuxPool{clients: clients, tcpStrategy: strategy}
 }
 
 func (p *MuxPool) pick() *MuxClient {
@@ -69,28 +87,52 @@ func (p *MuxPool) ReplaceClient(idx int, c *MuxClient) {
 	p.clients[idx] = c
 }
 
-// OpenTCP picks the next client in round-robin order and opens a TCP channel.
+// OpenTCP picks a client according to the configured TCP strategy and opens a
+// TCP channel. Default is round-robin; use LBLeastLoaded for least-loaded.
 func (p *MuxPool) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, error) {
-	return p.pick().OpenTCP(family, dstIP, dstPort)
+	switch p.tcpStrategy {
+	case LBLeastLoaded:
+		return p.pickLeastLoaded().OpenTCP(family, dstIP, dstPort)
+	default:
+		return p.pick().OpenTCP(family, dstIP, dstPort)
+	}
 }
 
-// pickLeastLoaded returns the live client with the fewest open smux streams.
-// DNS and UDP are latency-sensitive and small, so we want the client whose
-// smux write queue is least congested. Falls back to clients[0] if all are
-// equally idle or all are dead.
+// congestionScore computes a quality score for a client.
+// Lower score = better candidate for the next connection.
+//
+// Formula: streams × (1 + rtt_ms/50)
+//
+//   - A tunnel with 0 RTT data (not yet measured) is treated as 0ms, giving it
+//     a pure stream-count score. This is intentional: new tunnels should be
+//     considered as good candidates until proven otherwise.
+//   - A tunnel with 10 streams and 10ms RTT scores 10×1.2 = 12.
+//   - A tunnel with 8 streams and 100ms RTT scores 8×3.0 = 24.
+//
+// The RTT factor prevents a fast-but-overloaded tunnel from always winning
+// over a slightly-less-loaded but high-latency peer.
+func congestionScore(c *MuxClient) float64 {
+	streams := float64(c.NumStreams())
+	rttMs := float64(c.LastRTT() / time.Millisecond)
+	return streams * (1.0 + rttMs/50.0)
+}
+
+// pickLeastLoaded returns the live client with the lowest congestion score.
+// Score = streams × (1 + rtt_ms/50), so it jointly minimises open streams and
+// keepalive latency. Falls back to clients[0] if all are dead.
 func (p *MuxPool) pickLeastLoaded() *MuxClient {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	best := p.clients[0]
-	bestN := p.clients[0].NumStreams()
+	bestScore := congestionScore(p.clients[0])
 	for _, c := range p.clients[1:] {
 		if c.IsClosed() {
 			continue
 		}
-		if n := c.NumStreams(); n < bestN {
+		if s := congestionScore(c); s < bestScore {
 			best = c
-			bestN = n
+			bestScore = s
 		}
 	}
 	return best

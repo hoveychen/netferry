@@ -33,6 +33,7 @@ export interface Profile {
   autoExcludeLan: boolean;
   poolSize: number;
   splitConn: boolean;
+  tcpBalanceMode?: "round-robin" | "least-loaded";
   latencyBufferSize?: number;
   imported?: boolean;
 }
@@ -57,6 +58,16 @@ export interface ConnectionStatus {
   message?: string;
 }
 
+export interface TunnelSnapshot {
+  index: number;            // 1-based pool member index
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+  activeConns: number;
+  totalConns: number;
+  lastKeepaliveRtt: number; // SSH keepalive RTT in ms (0 = not yet measured)
+  maxKeepaliveRtt: number;  // max RTT seen on this tunnel in ms
+}
+
 export interface TunnelStats {
   rxBytesPerSec: number;
   txBytesPerSec: number;
@@ -65,6 +76,7 @@ export interface TunnelStats {
   activeConns: number;
   totalConns: number;
   dnsQueries: number;
+  tunnels?: TunnelSnapshot[]; // per-pool-member stats; absent when pool size == 1
 }
 
 export interface ConnectionEvent {
@@ -73,6 +85,7 @@ export interface ConnectionEvent {
   srcAddr: string;
   dstAddr: string;
   host?: string;
+  tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
   timestampMs: number;
 }
 

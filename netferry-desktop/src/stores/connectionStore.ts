@@ -15,6 +15,7 @@ export interface ActiveConnection {
   srcAddr: string;
   dstAddr: string;
   host?: string;
+  tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
   openedAt: number;
 }
 
@@ -36,6 +37,7 @@ interface ConnectionStore {
   setStatus: (status: ConnectionStatus) => void;
   setTunnelStats: (stats: TunnelStats) => void;
   handleConnectionEvent: (event: ConnectionEvent) => void;
+  handleConnectionsSnapshot: (events: ConnectionEvent[]) => void;
   pushTunnelError: (error: TunnelError) => void;
   setDeployProgress: (progress: DeployProgress | null) => void;
   setDeployReason: (reason: string | null) => void;
@@ -119,6 +121,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           srcAddr: event.srcAddr,
           dstAddr: event.dstAddr,
           host: event.host,
+          tunnelIndex: event.tunnelIndex,
           openedAt: event.timestampMs,
         });
       } else {
@@ -129,6 +132,22 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           ? [...s.recentClosed.slice(-99), event]
           : s.recentClosed;
       return { activeConnections: active, recentClosed };
+    }),
+
+  handleConnectionsSnapshot: (events: ConnectionEvent[]) =>
+    set(() => {
+      const active = new Map<number, ActiveConnection>();
+      for (const ev of events) {
+        active.set(ev.id, {
+          id: ev.id,
+          srcAddr: ev.srcAddr,
+          dstAddr: ev.dstAddr,
+          host: ev.host,
+          tunnelIndex: ev.tunnelIndex,
+          openedAt: ev.timestampMs,
+        });
+      }
+      return { activeConnections: active };
     }),
 
   pushTunnelError: (error) =>
@@ -157,6 +176,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       try {
         const event: ConnectionEvent = JSON.parse((e as MessageEvent).data);
         get().handleConnectionEvent(event);
+      } catch {}
+    });
+
+    es.addEventListener("connections_snapshot", (e) => {
+      try {
+        const events: ConnectionEvent[] = JSON.parse((e as MessageEvent).data);
+        get().handleConnectionsSnapshot(events);
       } catch {}
     });
 

@@ -59,6 +59,7 @@ func main() {
 		excludeNets   = flag.String("exclude", "", "comma-separated CIDRs to exclude from tunnel")
 		poolSize      = flag.Int("pool", 1, "number of parallel SSH TCP connections for connection bonding (1 = disabled; use 2-4 for high-concurrency workloads)")
 		splitConn     = flag.Bool("split", false, "open a second SSH connection per pool member to carry smux control frames (SYN/NOP/UPD) separately from data frames (PSH/FIN), preventing bulk data from delaying window updates")
+		tcpBalance    = flag.String("tcp-balance", "round-robin", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
 	)
@@ -215,8 +216,15 @@ func main() {
 	clients := make([]*mux.MuxClient, n)
 	muxErrCh := make(chan error, 1)
 	for i, sc := range sshClients {
-		// Start SSH-level keepalive on each connection.
-		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second)
+		// Register per-tunnel counters before keepalive so RTT can be reported.
+		var tc *stats.TunnelCounters
+		if n > 1 {
+			tc = counters.RegisterTunnel(i + 1)
+		}
+
+		// Start SSH-level keepalive with per-tunnel RTT measurement.
+		rttCb := buildRTTCallback(counters, tc, i == 0)
+		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
 		defer stop()
 
 		var c *mux.MuxClient
@@ -230,6 +238,9 @@ func main() {
 			c = mc
 		}
 		c.SetCounters(counters)
+		if tc != nil {
+			c.SetTunnelIndex(i+1, tc)
+		}
 		clients[i] = c
 	}
 	// Primary: its death exits the tunnel (triggers Tauri reconnect).
@@ -248,7 +259,11 @@ func main() {
 	if n == 1 {
 		tunnelClient = firstClient
 	} else {
-		pool := mux.NewMuxPool(clients)
+		strategy := mux.LBRoundRobin
+		if *tcpBalance == "least-loaded" {
+			strategy = mux.LBLeastLoaded
+		}
+		pool := mux.NewMuxPoolWithStrategy(clients, strategy)
 		tunnelClient = pool
 		// Start secondary pool members with auto-reconnect on death.
 		for i := 1; i < n; i++ {
@@ -647,7 +662,7 @@ func trySplitMuxClient(
 	if err != nil {
 		return nil, fmt.Errorf("split ctrl SSH connect %d/%d: %w", member, total, err)
 	}
-	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second)
+	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second, nil)
 
 	ctrlSess, err := ctrlClient.NewSession()
 	if err != nil {
@@ -717,7 +732,8 @@ func connectPoolMember(
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
-	sshconn.StartSSHKeepalive(sc, 30*time.Second)
+	tc := counters.TunnelCounterAt(member)
+	sshconn.StartSSHKeepalive(sc, 30*time.Second, buildRTTCallback(counters, tc, false))
 
 	var c *mux.MuxClient
 	if split {
@@ -730,6 +746,9 @@ func connectPoolMember(
 		return nil, err
 	}
 	c.SetCounters(counters)
+	if tc != nil {
+		c.SetTunnelIndex(member, tc)
+	}
 	return c, nil
 }
 
@@ -774,6 +793,20 @@ func reconnectPoolMember(
 			backoff = 5 * time.Second
 			log.Printf("mux pool member %d/%d: reconnected successfully", idx+1, total)
 			break
+		}
+	}
+}
+
+// buildRTTCallback returns a keepalive RTT observer that records measurements
+// in both the per-tunnel counter (if non-nil) and, when primary is true, the
+// global counter (for backward-compatible display when pool size == 1).
+func buildRTTCallback(counters *stats.Counters, tc *stats.TunnelCounters, primary bool) func(time.Duration) {
+	return func(rtt time.Duration) {
+		if tc != nil {
+			tc.ObserveRTT(rtt)
+		}
+		if primary {
+			counters.ObserveKeepaliveRTT(rtt)
 		}
 	}
 }

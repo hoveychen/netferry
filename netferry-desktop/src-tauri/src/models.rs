@@ -12,6 +12,10 @@ fn default_pool_size() -> u32 {
     4
 }
 
+fn default_tcp_balance_mode() -> String {
+    "round-robin".to_string()
+}
+
 fn default_latency_buffer_size() -> Option<u32> {
     Some(2097152)
 }
@@ -64,6 +68,8 @@ pub struct Profile {
     pub pool_size: u32,
     #[serde(default)]
     pub split_conn: bool,
+    #[serde(default = "default_tcp_balance_mode")]
+    pub tcp_balance_mode: String,
     #[serde(default = "default_latency_buffer_size")]
     pub latency_buffer_size: Option<u32>,
     #[serde(default)]
@@ -110,6 +116,7 @@ impl Default for Profile {
             auto_exclude_lan: true,
             pool_size: 4,
             split_conn: false,
+            tcp_balance_mode: "round-robin".to_string(),
             latency_buffer_size: Some(2097152),
             imported: false,
         }

@@ -267,10 +267,13 @@ func setTCPKeepAlive(conn net.Conn) {
 // NAT timeout or abrupt network drop) on platforms like Windows where the OS
 // may not surface TCP errors promptly.
 //
+// If onRTT is non-nil it is called after each successful request with the
+// measured round-trip time, which can be used to track per-tunnel latency.
+//
 // The returned stop function cancels the keepalive goroutine. If the SSH
 // connection dies, the goroutine exits automatically (SendRequest will return
 // an error and the ssh.Client will close all channels).
-func StartSSHKeepalive(client *ssh.Client, interval time.Duration) (stop func()) {
+func StartSSHKeepalive(client *ssh.Client, interval time.Duration, onRTT func(time.Duration)) (stop func()) {
 	done := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -280,11 +283,15 @@ func StartSSHKeepalive(client *ssh.Client, interval time.Duration) (stop func())
 			case <-done:
 				return
 			case <-ticker.C:
+				start := time.Now()
 				if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
 					// Connection is dead; ssh.Client has already started
 					// shutting down all channels.
 					log.Printf("ssh keepalive: connection lost: %v", err)
 					return
+				}
+				if onRTT != nil {
+					onRTT(time.Since(start))
 				}
 			}
 		}

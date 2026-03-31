@@ -92,21 +92,18 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 		log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
 	}
 
-	var connID uint64
-	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host)
-	}
-
-	// Open a mux channel.
+	// Open a mux channel first so we can record the tunnel index in ConnOpen.
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
 	if err != nil {
 		log.Printf("proxy: open channel to %s:%d: %v", dstIP, dstPort, err)
-		if counters != nil {
-			counters.ConnClose(connID, srcAddr, dstAddr)
-		}
 		return
 	}
 	defer muxConn.Close()
+
+	var connID uint64
+	if counters != nil {
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex)
+	}
 
 	// touch resets the idle deadline on both ends. Called after each successful
 	// write so any data flowing in either direction keeps the connection alive.

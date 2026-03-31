@@ -40,6 +40,9 @@ type udpFlow struct {
 	ch       *mux.UDPChannel
 	lastSeen time.Time
 	srcAddr  *net.UDPAddr // original client address for sending replies back
+	connID   uint64       // stats connection ID for ConnClose; 0 if counters == nil
+	srcStr   string
+	dstStr   string
 }
 
 // ListenUDPTProxy starts a TPROXY-aware UDP listener that intercepts all UDP
@@ -89,6 +92,9 @@ func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters
 			for key, flow := range flows {
 				if now.Sub(flow.lastSeen) > udpFlowIdleTimeout {
 					flow.ch.Close()
+					if counters != nil && flow.connID != 0 {
+						counters.ConnClose(flow.connID, flow.srcStr, flow.dstStr)
+					}
 					delete(flows, key)
 				}
 			}
@@ -155,28 +161,28 @@ func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters
 				continue
 			}
 
+			srcStr := fmt.Sprintf("%s:%d", srcIP, srcPort)
+			dstStr := fmt.Sprintf("%s:%d", dstIP, dstPort)
 			srcAddr := &net.UDPAddr{IP: net.ParseIP(srcIP), Port: srcPort}
 			flow = &udpFlow{
 				ch:       ch,
 				lastSeen: time.Now(),
 				srcAddr:  srcAddr,
+				srcStr:   srcStr,
+				dstStr:   dstStr,
+			}
+
+			log.Printf("c : Accept UDP: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
+			if counters != nil {
+				flow.connID = counters.ConnOpen(srcStr, dstStr, "", 0)
 			}
 
 			mu.Lock()
 			flows[key] = flow
 			mu.Unlock()
 
-			log.Printf("c : Accept UDP: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
-			if counters != nil {
-				counters.ConnOpen(
-					fmt.Sprintf("%s:%d", srcIP, srcPort),
-					fmt.Sprintf("%s:%d", dstIP, dstPort),
-					"",
-				)
-			}
-
 			// Start receiver goroutine for this flow.
-			go udpFlowReceiver(fd, ch, srcAddr, dstIP, dstPort, &mu, flows, key)
+			go udpFlowReceiver(fd, ch, srcAddr, dstIP, dstPort, &mu, flows, key, flow.connID, srcStr, dstStr, counters)
 		}
 
 		// Forward data to remote.
@@ -188,9 +194,12 @@ func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters
 
 // udpFlowReceiver reads datagrams from the mux channel and sends them back
 // to the original client using the TPROXY socket.
-func udpFlowReceiver(fd int, ch *mux.UDPChannel, srcAddr *net.UDPAddr, origDstIP string, origDstPort int, mu *sync.Mutex, flows map[udpFlowKey]*udpFlow, key udpFlowKey) {
+func udpFlowReceiver(fd int, ch *mux.UDPChannel, srcAddr *net.UDPAddr, origDstIP string, origDstPort int, mu *sync.Mutex, flows map[udpFlowKey]*udpFlow, key udpFlowKey, connID uint64, srcStr, dstStr string, counters *stats.Counters) {
 	defer func() {
 		ch.Close()
+		if counters != nil && connID != 0 {
+			counters.ConnClose(connID, srcStr, dstStr)
+		}
 		mu.Lock()
 		delete(flows, key)
 		mu.Unlock()

@@ -390,6 +390,10 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     if profile.pool_size > 1 {
         args.push("--pool".to_string());
         args.push(profile.pool_size.to_string());
+        if profile.tcp_balance_mode == "least-loaded" {
+            args.push("--tcp-balance".to_string());
+            args.push("least-loaded".to_string());
+        }
     }
     if profile.split_conn {
         args.push("--split".to_string());

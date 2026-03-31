@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActiveConnection } from "@/stores/connectionStore";
-import type { ConnectionEvent, ConnectionStatus, DeployProgress, Profile, TunnelError, TunnelStats } from "@/types";
+import type { ConnectionEvent, ConnectionStatus, DeployProgress, Profile, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -197,6 +197,61 @@ const AVATAR_GRADIENTS = [
   "from-amber-500 to-orange-600",
   "from-emerald-500 to-green-600",
 ];
+
+// Colors for tunnel index badges (0-based slot → color pair)
+const TUNNEL_COLORS = [
+  { bg: "bg-[#0a84ff]/20", text: "text-[#0a84ff]", dot: "bg-[#0a84ff]" },
+  { bg: "bg-[#30d158]/20", text: "text-[#30d158]", dot: "bg-[#30d158]" },
+  { bg: "bg-[#bf5af2]/20", text: "text-[#bf5af2]", dot: "bg-[#bf5af2]" },
+  { bg: "bg-[#ff9f0a]/20", text: "text-[#ff9f0a]", dot: "bg-[#ff9f0a]" },
+  { bg: "bg-[#ff453a]/20", text: "text-[#ff453a]", dot: "bg-[#ff453a]" },
+  { bg: "bg-[#ffd60a]/20", text: "text-[#ffd60a]", dot: "bg-[#ffd60a]" },
+];
+
+function tunnelColor(idx: number) {
+  return TUNNEL_COLORS[(idx - 1) % TUNNEL_COLORS.length];
+}
+
+function TunnelBreakdown({ tunnels }: { tunnels: TunnelSnapshot[] }) {
+  if (tunnels.length === 0) return null;
+  return (
+    <div className="mt-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(tunnels.length, 4)}, minmax(0, 1fr))` }}>
+      {tunnels.map((t) => {
+        const c = tunnelColor(t.index);
+        return (
+          <div key={t.index} className={`rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2.5`}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+              <span className={`text-[11px] font-semibold uppercase tracking-wider ${c.text}`}>
+                Tunnel {t.index}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-white/30">↓</span>
+                <span className={`font-mono text-xs font-semibold ${c.text}`}>{formatBytes(t.rxBytesPerSec)}/s</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-white/30">↑</span>
+                <span className="font-mono text-xs text-white/50">{formatBytes(t.txBytesPerSec)}/s</span>
+              </div>
+              <div className="flex justify-between items-baseline mt-0.5">
+                <span className="text-[10px] text-white/30">conns</span>
+                <span className="font-mono text-xs text-white/50">{t.activeConns}</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-white/30">rtt</span>
+                <span className={`font-mono text-xs ${t.lastKeepaliveRtt === 0 ? "text-white/25" : t.lastKeepaliveRtt > 200 ? "text-[#ff453a]" : t.lastKeepaliveRtt > 80 ? "text-[#ffd60a]" : "text-white/50"}`}>
+                  {t.lastKeepaliveRtt === 0 ? "—" : `${t.lastKeepaliveRtt}ms`}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Extract display host + scheme from connection info. Prefers the resolved host (SNI/HTTP Host). */
 function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port: number; scheme?: string } {
@@ -448,6 +503,14 @@ export function ConnectionPage({
                   </div>
                   <span className="ml-auto text-xs text-white/20">Last {speedHistory.length}s</span>
                 </div>
+                {tunnelStats?.tunnels && tunnelStats.tunnels.length > 1 && (
+                  <>
+                    <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                      Per Tunnel
+                    </p>
+                    <TunnelBreakdown tunnels={tunnelStats.tunnels} />
+                  </>
+                )}
               </>
             )}
           </div>
@@ -468,6 +531,7 @@ export function ConnectionPage({
                       .sort((a, b) => b.openedAt - a.openedAt)
                       .map((conn) => {
                         const { host, port, scheme } = parseHost(conn.dstAddr, conn.host);
+                        const tc = conn.tunnelIndex ? tunnelColor(conn.tunnelIndex) : null;
                         return (
                           <div
                             key={conn.id}
@@ -475,6 +539,11 @@ export function ConnectionPage({
                           >
                             <span className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-[#30d158]" />
                             <span className="shrink-0 text-white/20">{formatTime(conn.openedAt)}</span>
+                            {tc && (
+                              <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${tc.bg} ${tc.text}`}>
+                                T{conn.tunnelIndex}
+                              </span>
+                            )}
                             {scheme && (
                               <span className="rounded bg-white/[0.08] px-1 py-0.5 text-[10px] text-white/40">
                                 {scheme}

@@ -20,11 +20,13 @@ import (
 // Each SSH stdin/stdout pair becomes one smux session.
 // TCP, DNS, and UDP requests each open a new smux stream.
 type MuxClient struct {
-	session   *smux.Session
-	counters  *stats.Counters
-	routesCh  chan []string
-	done      atomic.Bool
-	splitConn *SplitConn // non-nil in split mode
+	session    *smux.Session
+	counters   *stats.Counters
+	routesCh   chan []string
+	done       atomic.Bool
+	splitConn  *SplitConn // non-nil in split mode
+	tunnelIdx  int                  // 1-based pool member index; 0 = single-tunnel mode
+	tunnelCtrs *stats.TunnelCounters // nil when not in pool mode
 }
 
 // rwConn adapts separate io.Reader / io.Writer into the io.ReadWriteCloser
@@ -85,6 +87,13 @@ func NewMuxClientSplit(dataR io.Reader, dataW io.Writer, ctrlR io.Reader, ctrlW 
 // SetCounters attaches stats counters. Must be called before Run().
 func (c *MuxClient) SetCounters(ct *stats.Counters) { c.counters = ct }
 
+// SetTunnelIndex sets the 1-based pool member index and per-tunnel counters.
+// Must be called before the client starts accepting connections.
+func (c *MuxClient) SetTunnelIndex(idx int, ct *stats.TunnelCounters) {
+	c.tunnelIdx = idx
+	c.tunnelCtrs = ct
+}
+
 // SetFlowControl is a no-op: smux manages flow control internally.
 func (c *MuxClient) SetFlowControl(_ bool, _ int64) {}
 
@@ -93,6 +102,15 @@ func (c *MuxClient) IsClosed() bool { return c.done.Load() }
 
 // NumStreams returns the number of currently open smux streams on this client.
 func (c *MuxClient) NumStreams() int { return c.session.NumStreams() }
+
+// LastRTT returns the most recently measured SSH keepalive round-trip time for
+// this tunnel member (0 if not yet measured or not in pool mode).
+func (c *MuxClient) LastRTT() time.Duration {
+	if c.tunnelCtrs == nil {
+		return 0
+	}
+	return c.tunnelCtrs.LastRTT()
+}
 
 // RoutesCh returns the channel on which the server-pushed route list arrives.
 func (c *MuxClient) RoutesCh() <-chan []string { return c.routesCh }
@@ -178,7 +196,16 @@ func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn,
 		c.counters.TotalTCP.Add(1)
 		c.counters.NoteActiveConns(active)
 	}
-	return &ClientConn{stream: stream, counters: c.counters}, nil
+	if c.tunnelCtrs != nil {
+		c.tunnelCtrs.ActiveTCP.Add(1)
+		c.tunnelCtrs.TotalTCP.Add(1)
+	}
+	return &ClientConn{
+		stream:      stream,
+		counters:    c.counters,
+		tunnelCtrs:  c.tunnelCtrs,
+		TunnelIndex: c.tunnelIdx,
+	}, nil
 }
 
 // DNSRequest opens a stream, sends a DNS query, and returns the response.
@@ -236,8 +263,10 @@ func (c *MuxClient) OpenUDP(family int) (*UDPChannel, error) {
 //   - Data frame:   [uint16 BE length > 0][payload bytes]
 //   - Half-close:   [uint16 BE length == 0]  (maps to CloseWrite)
 type ClientConn struct {
-	stream   *smux.Stream
-	counters *stats.Counters
+	stream      *smux.Stream
+	counters    *stats.Counters
+	tunnelCtrs  *stats.TunnelCounters // nil in single-tunnel mode
+	TunnelIndex int                   // 1-based pool member; 0 = single-tunnel or unknown
 
 	readBuf []byte     // leftover bytes from the last data frame
 	readEOF bool       // received half-close from remote
@@ -262,8 +291,13 @@ func (cc *ClientConn) Read(b []byte) (int, error) {
 	}
 	n := copy(b, cc.readBuf)
 	cc.readBuf = cc.readBuf[n:]
-	if cc.counters != nil && n > 0 {
-		cc.counters.AddRx(int64(n))
+	if n > 0 {
+		if cc.counters != nil {
+			cc.counters.AddRx(int64(n))
+		}
+		if cc.tunnelCtrs != nil {
+			cc.tunnelCtrs.AddRx(int64(n))
+		}
 	}
 	return n, nil
 }
@@ -284,8 +318,13 @@ func (cc *ClientConn) Write(b []byte) (int, error) {
 		total += len(chunk)
 		b = b[len(chunk):]
 	}
-	if cc.counters != nil && total > 0 {
-		cc.counters.AddTx(int64(total))
+	if total > 0 {
+		if cc.counters != nil {
+			cc.counters.AddTx(int64(total))
+		}
+		if cc.tunnelCtrs != nil {
+			cc.tunnelCtrs.AddTx(int64(total))
+		}
 	}
 	return total, nil
 }
@@ -308,6 +347,9 @@ func (cc *ClientConn) Close() error {
 		if cc.counters != nil {
 			active := cc.counters.ActiveTCP.Add(-1)
 			cc.counters.NoteActiveConns(active)
+		}
+		if cc.tunnelCtrs != nil {
+			cc.tunnelCtrs.ActiveTCP.Add(-1)
 		}
 	})
 	return nil

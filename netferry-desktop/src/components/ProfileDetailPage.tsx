@@ -621,6 +621,25 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   />
                 </div>
 
+                {draft.poolSize > 1 && (
+                  <div className="col-span-2">
+                    <label className="mb-1.5 block text-sm font-medium text-white/60">
+                      TCP Load Balancing
+                      <span className="ml-1.5 font-normal text-white/30">
+                        (how new TCP connections are distributed across pool members)
+                      </span>
+                    </label>
+                    <select
+                      value={draft.tcpBalanceMode ?? "round-robin"}
+                      onChange={(e) => setField("tcpBalanceMode", e.target.value as "round-robin" | "least-loaded")}
+                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white/80 focus:border-[#0a84ff]/50 focus:outline-none"
+                    >
+                      <option value="round-robin">Round-Robin (default)</option>
+                      <option value="least-loaded">Least-Loaded (fewest open streams)</option>
+                    </select>
+                  </div>
+                )}
+
                 <div className="col-span-2">
                   <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
                     <input
