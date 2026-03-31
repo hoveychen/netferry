@@ -91,6 +91,9 @@ func (c *MuxClient) SetFlowControl(_ bool, _ int64) {}
 // IsClosed reports whether the client's mux session has terminated.
 func (c *MuxClient) IsClosed() bool { return c.done.Load() }
 
+// NumStreams returns the number of currently open smux streams on this client.
+func (c *MuxClient) NumStreams() int { return c.session.NumStreams() }
+
 // RoutesCh returns the channel on which the server-pushed route list arrives.
 func (c *MuxClient) RoutesCh() <-chan []string { return c.routesCh }
 

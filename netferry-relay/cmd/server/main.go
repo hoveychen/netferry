@@ -188,6 +188,12 @@ func main() {
 	// Push routes to the client via a server-opened stream.
 	go pushRoutes(sess, autoNets)
 
+	// maxStreamConcurrency caps the number of streams handled simultaneously.
+	// Each stream holds ~2 goroutines + a 64 KB read buffer; without a limit,
+	// a congested network causes streams to accumulate until the process OOMs.
+	const maxStreamConcurrency = 256
+	sem := make(chan struct{}, maxStreamConcurrency)
+
 	// Accept and dispatch client streams.
 	for {
 		stream, err := sess.AcceptStream()
@@ -195,7 +201,17 @@ func main() {
 			// Session closed (SSH channel died) — exit cleanly.
 			break
 		}
-		go handleStream(stream, toNameserver)
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() { <-sem }()
+				handleStream(stream, toNameserver)
+			}()
+		default:
+			log.Printf("stream limit (%d) reached; rejecting stream %d", maxStreamConcurrency, stream.ID())
+			writeMsg(stream, nil) // signal EOF to client
+			stream.Close()
+		}
 	}
 }
 

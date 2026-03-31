@@ -19,9 +19,10 @@ type TunnelClient interface {
 // connection to the server, so aggregate throughput across many concurrent
 // connections scales with pool size.
 //
-// DNS and UDP requests are always routed through clients[0] (the primary
-// connection) to avoid timeouts from distributing latency-sensitive requests
-// across connections with unequal congestion.
+// DNS and UDP requests are routed to the least-loaded client (fewest open
+// smux streams) to avoid queueing behind bulk TCP data on a congested
+// connection. If all clients are equally idle the primary (clients[0]) is
+// preferred.
 //
 // Note: connection bonding improves aggregate bandwidth when many channels
 // are active simultaneously. It does NOT increase the throughput of a single
@@ -73,15 +74,37 @@ func (p *MuxPool) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, e
 	return p.pick().OpenTCP(family, dstIP, dstPort)
 }
 
-// DNSRequest routes through the primary client (clients[0]) only.
-// DNS is latency-sensitive; round-robining across connections with unequal
-// congestion causes timeouts that stall name resolution for the whole system.
-func (p *MuxPool) DNSRequest(data []byte) ([]byte, error) {
-	return p.clients[0].DNSRequest(data)
+// pickLeastLoaded returns the live client with the fewest open smux streams.
+// DNS and UDP are latency-sensitive and small, so we want the client whose
+// smux write queue is least congested. Falls back to clients[0] if all are
+// equally idle or all are dead.
+func (p *MuxPool) pickLeastLoaded() *MuxClient {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	best := p.clients[0]
+	bestN := p.clients[0].NumStreams()
+	for _, c := range p.clients[1:] {
+		if c.IsClosed() {
+			continue
+		}
+		if n := c.NumStreams(); n < bestN {
+			best = c
+			bestN = n
+		}
+	}
+	return best
 }
 
-// OpenUDP routes through the primary client (clients[0]) only.
+// DNSRequest routes through the least-loaded client (fewest open smux
+// streams). This prevents DNS queries from queuing behind bulk TCP data on a
+// congested connection, which would cause name-resolution timeouts.
+func (p *MuxPool) DNSRequest(data []byte) ([]byte, error) {
+	return p.pickLeastLoaded().DNSRequest(data)
+}
+
+// OpenUDP routes through the least-loaded client.
 // UDP flows are typically low-volume and latency-sensitive.
 func (p *MuxPool) OpenUDP(family int) (*UDPChannel, error) {
-	return p.clients[0].OpenUDP(family)
+	return p.pickLeastLoaded().OpenUDP(family)
 }

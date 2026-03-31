@@ -28,6 +28,11 @@ var UseTProxy bool
 // non-loopback interface address.
 var BindAddr = "127.0.0.1"
 
+// connIdleTimeout is the maximum time a proxied connection may be idle
+// (no data flowing in either direction) before it is forcibly closed.
+// Prevents stuck connections from accumulating during network congestion.
+const connIdleTimeout = 2 * time.Minute
+
 // Listen accepts connections on the local proxy port and forwards them via mux.
 // Blocks until the listener is closed.
 func Listen(port int, client mux.TunnelClient, counters *stats.Counters) error {
@@ -103,11 +108,20 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 	}
 	defer muxConn.Close()
 
+	// touch resets the idle deadline on both ends. Called after each successful
+	// write so any data flowing in either direction keeps the connection alive.
+	touch := func() {
+		deadline := time.Now().Add(connIdleTimeout)
+		conn.SetDeadline(deadline)
+		muxConn.SetDeadline(deadline)
+	}
+	touch() // set initial deadline before first I/O
+
 	// Bidirectional copy. Use the buffered reader (br) so peeked bytes are
 	// replayed into the mux channel.
 	done := make(chan copyResult, 2)
 	go func() {
-		n, err := io.Copy(&countingWriter{w: muxConn, onWrite: func(wrote int) {
+		n, err := io.Copy(&countingWriter{w: muxConn, touch: touch, onWrite: func(wrote int) {
 			if counters != nil {
 				counters.ConnAddTx(connID, int64(wrote))
 			}
@@ -116,7 +130,7 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 		done <- copyResult{direction: "upload", bytes: n, err: normalizeCopyErr(err)}
 	}()
 	go func() {
-		n, err := io.Copy(&countingWriter{w: conn, onWrite: func(wrote int) {
+		n, err := io.Copy(&countingWriter{w: conn, touch: touch, onWrite: func(wrote int) {
 			if counters != nil {
 				counters.ConnAddRx(connID, int64(wrote))
 			}
@@ -137,12 +151,18 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 type countingWriter struct {
 	w       io.Writer
 	onWrite func(int)
+	touch   func() // called after each successful write to reset idle deadline
 }
 
 func (cw *countingWriter) Write(p []byte) (int, error) {
 	n, err := cw.w.Write(p)
-	if n > 0 && cw.onWrite != nil {
-		cw.onWrite(n)
+	if n > 0 {
+		if cw.onWrite != nil {
+			cw.onWrite(n)
+		}
+		if cw.touch != nil {
+			cw.touch()
+		}
 	}
 	return n, err
 }
@@ -156,6 +176,10 @@ type copyResult struct {
 func normalizeCopyErr(err error) error {
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		return nil
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return nil // idle timeout fired; not a real error
 	}
 	msg := err.Error()
 	switch {

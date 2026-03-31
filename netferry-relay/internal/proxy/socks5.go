@@ -89,9 +89,16 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 	}
 	defer muxConn.Close()
 
+	touch := func() {
+		deadline := time.Now().Add(connIdleTimeout)
+		conn.SetDeadline(deadline)
+		muxConn.SetDeadline(deadline)
+	}
+	touch()
+
 	done := make(chan copyResult, 2)
 	go func() {
-		n, err := io.Copy(&countingWriter{w: muxConn, onWrite: func(wrote int) {
+		n, err := io.Copy(&countingWriter{w: muxConn, touch: touch, onWrite: func(wrote int) {
 			if counters != nil {
 				counters.ConnAddTx(connID, int64(wrote))
 			}
@@ -100,7 +107,7 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 		done <- copyResult{direction: "upload", bytes: n, err: normalizeCopyErr(err)}
 	}()
 	go func() {
-		n, err := io.Copy(&countingWriter{w: conn, onWrite: func(wrote int) {
+		n, err := io.Copy(&countingWriter{w: conn, touch: touch, onWrite: func(wrote int) {
 			if counters != nil {
 				counters.ConnAddRx(connID, int64(wrote))
 			}
