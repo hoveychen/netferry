@@ -111,24 +111,14 @@ def main() -> int:
     print(f"Sidecar generated: {tunnel_out}")
 
     # Step 3: WinDivert DLL and driver.
-    # Always download to cmd/tunnel/windivert/ for Go embed (used at runtime).
-    # On Windows: also copy to binaries_dir for Tauri bundling.
-    # On other platforms: create empty placeholders so Tauri's resource bundler
-    # does not fail (they are never loaded at runtime on non-Windows).
+    # Download to cmd/tunnel/windivert/ for Go embed — the tunnel binary
+    # extracts them at runtime to a fixed versioned directory under
+    # %LOCALAPPDATA%. They are NOT shipped in the Tauri installer bundle
+    # (removing them from the install directory avoids kernel driver file
+    # locking issues during upgrades).
     tunnel_windivert_dir = relay_dir / "cmd" / "tunnel" / "windivert"
     tunnel_windivert_dir.mkdir(parents=True, exist_ok=True)
     fetch_windivert(tunnel_windivert_dir)
-
-    if goos_target == "windows":
-        # Copy to Tauri binaries dir for bundling
-        for name in ("WinDivert.dll", "WinDivert64.sys"):
-            src = tunnel_windivert_dir / name
-            dst = binaries_dir / name
-            if src.exists() and not dst.exists():
-                dst.write_bytes(src.read_bytes())
-                print(f"  copied {name} to {binaries_dir}")
-    else:
-        ensure_windivert_placeholders(binaries_dir)
 
     return 0
 
@@ -164,15 +154,6 @@ def fetch_windivert(binaries_dir: Path) -> None:
             dest.write_bytes(zf.read(name))
 
     print("WinDivert files ready.")
-
-
-def ensure_windivert_placeholders(binaries_dir: Path) -> None:
-    """Create empty placeholder files so Tauri's resource bundler doesn't fail."""
-    for name in ("WinDivert.dll", "WinDivert64.sys"):
-        path = binaries_dir / name
-        if not path.exists():
-            path.touch()
-            print(f"  created placeholder {path}")
 
 
 if __name__ == "__main__":

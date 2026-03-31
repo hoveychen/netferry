@@ -4,10 +4,7 @@ LDFLAGS := -ldflags "-X main.Version=$(VERSION) -s -w"
 # Server cross-compilation targets (remote side, zero CGO)
 SERVER_TARGETS := \
     linux/amd64 \
-    linux/arm64 \
-    linux/mipsle \
-    darwin/amd64 \
-    darwin/arm64
+    linux/arm64
 
 HOST_GOOS   := $(shell go env GOOS)
 HOST_GOARCH := $(shell go env GOARCH)

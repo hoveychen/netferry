@@ -78,10 +78,11 @@ func main() {
 	}
 
 	// Extract embedded WinDivert DLL on Windows (no-op on other platforms).
-	if dir, err := extractWinDivert(); err != nil {
+	// Files are placed in a fixed, content-addressed directory and deliberately
+	// NOT cleaned up — they are reused across restarts and tolerate a locked
+	// .sys from a previous crash.
+	if _, err := extractWinDivert(); err != nil {
 		log.Printf("windivert extract: %v (WinDivert may not be available)", err)
-	} else if dir != "" {
-		defer os.RemoveAll(dir)
 	}
 
 	if *remote == "" {
@@ -343,6 +344,7 @@ func main() {
 	}
 
 	// Configure proxy mode based on the selected firewall method.
+	proxy.BindAddr = firewall.ProxyBindAddrFor(fw)
 	switch fw.Name() {
 	case "tproxy":
 		proxy.UseTProxy = true
@@ -372,14 +374,15 @@ func main() {
 			}
 		} else {
 			preferred := cachedPorts.DNSPort
-			addr := "127.0.0.1:0"
+			dnsBindAddr := proxy.BindAddr
+			addr := fmt.Sprintf("%s:0", dnsBindAddr)
 			if preferred > 0 {
-				addr = fmt.Sprintf("127.0.0.1:%d", preferred)
+				addr = fmt.Sprintf("%s:%d", dnsBindAddr, preferred)
 			}
 			dnsListener, err = net.ListenPacket("udp", addr)
 			if err != nil && preferred > 0 {
 				log.Printf("preferred DNS port %d in use, picking a new one", preferred)
-				dnsListener, err = net.ListenPacket("udp", "127.0.0.1:0")
+				dnsListener, err = net.ListenPacket("udp", fmt.Sprintf("%s:0", dnsBindAddr))
 			}
 		}
 		if err != nil {
@@ -511,18 +514,20 @@ func savePortCache(pc portCache) {
 }
 
 // pickFreePort tries to bind to preferredPort first; if that fails (or is 0),
-// it falls back to an OS-assigned port.
+// it falls back to an OS-assigned port. Uses proxy.BindAddr for TCP.
 func pickFreePort(network string, preferredPort int) int {
+	bindAddr := proxy.BindAddr
+
 	if preferredPort > 0 {
 		switch network {
 		case "tcp":
-			ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+			ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", bindAddr, preferredPort))
 			if err == nil {
 				ln.Close()
 				return preferredPort
 			}
 		case "udp":
-			ln, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+			ln, err := net.ListenPacket("udp", fmt.Sprintf("%s:%d", bindAddr, preferredPort))
 			if err == nil {
 				ln.Close()
 				return preferredPort
@@ -533,7 +538,7 @@ func pickFreePort(network string, preferredPort int) int {
 
 	switch network {
 	case "tcp":
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := net.Listen("tcp", fmt.Sprintf("%s:0", bindAddr))
 		if err != nil {
 			fatalf("pick free TCP port: %v", err)
 		}
@@ -541,7 +546,7 @@ func pickFreePort(network string, preferredPort int) int {
 		ln.Close()
 		return port
 	case "udp":
-		ln, err := net.ListenPacket("udp", "127.0.0.1:0")
+		ln, err := net.ListenPacket("udp", fmt.Sprintf("%s:0", bindAddr))
 		if err != nil {
 			fatalf("pick free UDP port: %v", err)
 		}

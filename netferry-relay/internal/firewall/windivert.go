@@ -17,10 +17,22 @@ import (
 // packet-level interception on Windows. Unlike the SOCKS5 system proxy
 // approach (winMethod), this intercepts all TCP traffic regardless of whether
 // the application honours system proxy settings.
+//
+// IMPORTANT: WinDivert cannot redirect packets from a public source address
+// to a loopback destination (127.0.0.1). Windows silently drops packets that
+// cross from public to loopback address space. The proxy must therefore bind
+// to a non-loopback address and packets are redirected there instead.
+// See: https://github.com/basil00/Divert/issues/82
+//
+// Additionally, WinDivert classifies ALL local-process traffic as "outbound",
+// including responses from the proxy back to the application. We detect proxy
+// responses by matching source IP/port against the proxy address.
 type winDivertMethod struct {
 	handle    *divert.Handle
 	proxyPort int
 	dnsPort   int
+	proxyIPv4 net.IP // non-loopback IPv4 address for the proxy
+	proxyIPv6 net.IP // non-loopback IPv6 address for the proxy (may be nil)
 	subnets   []net.IPNet
 	excludes  []net.IPNet
 
@@ -60,6 +72,17 @@ func (w *winDivertMethod) Setup(subnets []SubnetRule, excludes []string, proxyPo
 	w.stopCh = make(chan struct{})
 	w.portRanges = make(map[int][2]uint16)
 
+	// WinDivert cannot redirect packets to loopback addresses — Windows
+	// drops packets that cross from public to loopback address space.
+	// Find a non-loopback interface IP to use as the proxy target.
+	ipv4, ipv6, err := findNonLoopbackIPs()
+	if err != nil {
+		return fmt.Errorf("windivert: %w", err)
+	}
+	w.proxyIPv4 = ipv4
+	w.proxyIPv6 = ipv6
+	log.Printf("windivert: proxy target IPv4=%v IPv6=%v", ipv4, ipv6)
+
 	for i, s := range subnets {
 		_, ipnet, err := net.ParseCIDR(s.CIDR)
 		if err != nil {
@@ -78,9 +101,10 @@ func (w *winDivertMethod) Setup(subnets []SubnetRule, excludes []string, proxyPo
 		w.excludes = append(w.excludes, *ipnet)
 	}
 
-	// Capture all outbound IPv4/IPv6 TCP/UDP. Subnet matching is done in
-	// userspace for flexibility (WinDivert filter language has limited CIDR
-	// support).
+	// Capture all outbound IPv4/IPv6 TCP/UDP. WinDivert classifies ALL
+	// local-process traffic as "outbound" (including proxy responses), so
+	// this single filter captures both directions. Subnet matching and
+	// proxy-response detection are done in userspace.
 	filter := "outbound and (ip or ipv6) and (tcp or udp)"
 
 	handle, err := divert.Open(filter, divert.LayerNetwork, 0, divert.FlagDefault)
@@ -98,6 +122,47 @@ func (w *winDivertMethod) Setup(subnets []SubnetRule, excludes []string, proxyPo
 	go w.cleanupLoop()
 
 	return nil
+}
+
+// findNonLoopbackIPs returns the first non-loopback, non-link-local unicast
+// IPv4 and IPv6 addresses found on the system's interfaces.
+func findNonLoopbackIPs() (ipv4, ipv6 net.IP, err error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list interfaces: %w", err)
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipnet.IP
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				if ipv4 == nil {
+					ipv4 = ip4
+				}
+			} else if ip.To16() != nil {
+				if ipv6 == nil {
+					ipv6 = ip.To16()
+				}
+			}
+		}
+	}
+	if ipv4 == nil {
+		return nil, nil, fmt.Errorf("no non-loopback IPv4 address found; WinDivert requires a LAN interface")
+	}
+	return ipv4, ipv6, nil
 }
 
 func (w *winDivertMethod) Restore() error {
@@ -221,76 +286,122 @@ func (w *winDivertMethod) processPacket(pkt []byte, addr *divert.Address) {
 	srcPort := binary.BigEndian.Uint16(transport[portSrc:])
 	dstPort := binary.BigEndian.Uint16(transport[portDst:])
 
-	if addr.Outbound() {
-		if !w.shouldIntercept(dstIP, dstPort) {
-			w.handle.Send(pkt, addr)
-			return
-		}
+	// WinDivert classifies ALL local-process traffic as "outbound", so we
+	// cannot rely on addr.Outbound() to distinguish directions. Instead we
+	// detect proxy responses by matching src IP/port against the proxy.
 
-		if proto == 6 { // TCP
-			// Skip traffic already destined for our proxy.
-			if isLoopback(dstIP) && dstPort == uint16(w.proxyPort) {
-				w.handle.Send(pkt, addr)
-				return
-			}
-
-			// Record original destination and rewrite to local proxy.
-			key := connKey{proto: 6, ipVer: ipVer, srcPort: srcPort}
-			w.connTrack.Store(key, connEntry{
-				origDstIP:   append(net.IP(nil), dstIP...),
-				origDstPort: dstPort,
-				created:     time.Now(),
-			})
-
-			// Rewrite destination to loopback.
-			if ipVer == 4 {
-				copy(pkt[dstAddrOff:dstAddrOff+addrLen], net.IPv4(127, 0, 0, 1).To4())
-			} else {
-				copy(pkt[dstAddrOff:dstAddrOff+addrLen], net.IPv6loopback)
-			}
-			binary.BigEndian.PutUint16(transport[portDst:], uint16(w.proxyPort))
-
-		} else if proto == 17 && dstPort == 53 && w.dnsPort > 0 { // UDP DNS
-			key := connKey{proto: 17, ipVer: ipVer, srcPort: srcPort}
-			w.connTrack.Store(key, connEntry{
-				origDstIP:   append(net.IP(nil), dstIP...),
-				origDstPort: 53,
-				created:     time.Now(),
-			})
-
-			if ipVer == 4 {
-				copy(pkt[dstAddrOff:dstAddrOff+addrLen], net.IPv4(127, 0, 0, 1).To4())
-			} else {
-				copy(pkt[dstAddrOff:dstAddrOff+addrLen], net.IPv6loopback)
-			}
-			binary.BigEndian.PutUint16(transport[portDst:], uint16(w.dnsPort))
-		} else {
-			w.handle.Send(pkt, addr)
-			return
-		}
-	} else {
-		// Inbound: restore source address for responses from our proxy.
+	// ── Proxy response (reverse NAT) ─────────────────────────────────────
+	// Packets FROM our proxy back to the application need their source
+	// address restored to the original remote destination.
+	if w.isFromProxy(srcIP, srcPort, proto) {
 		key := connKey{proto: proto, ipVer: ipVer, srcPort: dstPort}
 		if entry, ok := w.connTrack.Load(key); ok {
 			e := entry.(connEntry)
-			if isLoopback(srcIP) {
-				if ipVer == 4 {
-					copy(pkt[srcAddrOff:srcAddrOff+addrLen], e.origDstIP.To4())
-				} else {
-					copy(pkt[srcAddrOff:srcAddrOff+addrLen], e.origDstIP.To16())
-				}
-				binary.BigEndian.PutUint16(transport[portSrc:], e.origDstPort)
+			if ipVer == 4 {
+				copy(pkt[srcAddrOff:srcAddrOff+addrLen], e.origDstIP.To4())
+			} else {
+				copy(pkt[srcAddrOff:srcAddrOff+addrLen], e.origDstIP.To16())
 			}
-		} else {
-			// No conntrack entry — pass through unchanged.
+			binary.BigEndian.PutUint16(transport[portSrc:], e.origDstPort)
+			divert.HelperCalcChecksum(&divert.Packet{Content: pkt, Addr: addr}, divert.All)
 			w.handle.Send(pkt, addr)
 			return
 		}
+		// No conntrack entry — pass through unchanged (not a redirected conn).
+		w.handle.Send(pkt, addr)
+		return
+	}
+
+	// ── Skip traffic already destined for our proxy ──────────────────────
+	if w.isToProxy(dstIP, dstPort) {
+		w.handle.Send(pkt, addr)
+		return
+	}
+
+	// ── Outbound: subnet matching + DNAT to proxy ────────────────────────
+	if !w.shouldIntercept(dstIP, dstPort) {
+		w.handle.Send(pkt, addr)
+		return
+	}
+
+	proxyIP := w.proxyIPForVer(ipVer)
+	if proxyIP == nil {
+		// No proxy address for this IP version — pass through.
+		w.handle.Send(pkt, addr)
+		return
+	}
+
+	if proto == 6 { // TCP
+		key := connKey{proto: 6, ipVer: ipVer, srcPort: srcPort}
+		w.connTrack.Store(key, connEntry{
+			origDstIP:   append(net.IP(nil), dstIP...),
+			origDstPort: dstPort,
+			created:     time.Now(),
+		})
+		copy(pkt[dstAddrOff:dstAddrOff+addrLen], proxyIP)
+		binary.BigEndian.PutUint16(transport[portDst:], uint16(w.proxyPort))
+
+	} else if proto == 17 && dstPort == 53 && w.dnsPort > 0 { // UDP DNS
+		key := connKey{proto: 17, ipVer: ipVer, srcPort: srcPort}
+		w.connTrack.Store(key, connEntry{
+			origDstIP:   append(net.IP(nil), dstIP...),
+			origDstPort: 53,
+			created:     time.Now(),
+		})
+		copy(pkt[dstAddrOff:dstAddrOff+addrLen], proxyIP)
+		binary.BigEndian.PutUint16(transport[portDst:], uint16(w.dnsPort))
+
+	} else {
+		w.handle.Send(pkt, addr)
+		return
 	}
 
 	// Recalculate checksums after header modification.
 	divert.HelperCalcChecksum(&divert.Packet{Content: pkt, Addr: addr}, divert.All)
 	w.handle.Send(pkt, addr)
+}
+
+// isFromProxy returns true if the packet originates from our local proxy.
+func (w *winDivertMethod) isFromProxy(srcIP net.IP, srcPort uint16, proto uint8) bool {
+	port := uint16(w.proxyPort)
+	if proto == 17 {
+		port = uint16(w.dnsPort)
+		if port == 0 {
+			return false
+		}
+	}
+	if srcPort != port {
+		return false
+	}
+	if w.proxyIPv4 != nil && srcIP.Equal(w.proxyIPv4) {
+		return true
+	}
+	if w.proxyIPv6 != nil && srcIP.Equal(w.proxyIPv6) {
+		return true
+	}
+	return false
+}
+
+// isToProxy returns true if the packet is already destined for our proxy.
+func (w *winDivertMethod) isToProxy(dstIP net.IP, dstPort uint16) bool {
+	if dstPort != uint16(w.proxyPort) && dstPort != uint16(w.dnsPort) {
+		return false
+	}
+	if w.proxyIPv4 != nil && dstIP.Equal(w.proxyIPv4) {
+		return true
+	}
+	if w.proxyIPv6 != nil && dstIP.Equal(w.proxyIPv6) {
+		return true
+	}
+	return false
+}
+
+// proxyIPForVer returns the proxy target IP for the given IP version.
+func (w *winDivertMethod) proxyIPForVer(ipVer uint8) net.IP {
+	if ipVer == 4 {
+		return w.proxyIPv4
+	}
+	return w.proxyIPv6
 }
 
 func (w *winDivertMethod) shouldIntercept(ip net.IP, dstPort uint16) bool {
@@ -349,9 +460,9 @@ func (w *winDivertMethod) QueryOrigDst(conn net.Conn) (string, int, error) {
 	return "", 0, fmt.Errorf("windivert: no conntrack entry for srcPort %d", ra.Port)
 }
 
-func isLoopback(ip net.IP) bool {
-	if ip4 := ip.To4(); ip4 != nil {
-		return ip4[0] == 127
-	}
-	return ip.Equal(net.IPv6loopback)
+// ProxyBindAddr returns the address the proxy should bind to on Windows.
+// WinDivert requires a non-loopback address.
+func (w *winDivertMethod) ProxyBindAddr() string {
+	return "0.0.0.0"
 }
+

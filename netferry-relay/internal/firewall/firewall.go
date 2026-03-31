@@ -46,6 +46,21 @@ type OrigDstQuerier interface {
 	QueryOrigDst(conn net.Conn) (ip string, port int, err error)
 }
 
+// ProxyBinder is optionally implemented by Methods that require the proxy to
+// bind to a specific address (e.g. WinDivert requires a non-loopback address).
+type ProxyBinder interface {
+	ProxyBindAddr() string
+}
+
+// ProxyBindAddrFor returns the bind address required by the method, or
+// "127.0.0.1" if the method has no special requirement.
+func ProxyBindAddrFor(m Method) string {
+	if pb, ok := m.(ProxyBinder); ok {
+		return pb.ProxyBindAddr()
+	}
+	return "127.0.0.1"
+}
+
 // UDPBlocker is optionally implemented by Methods that support blocking
 // non-DNS UDP traffic (e.g. to prevent QUIC leaks on macOS pf).
 type UDPBlocker interface {

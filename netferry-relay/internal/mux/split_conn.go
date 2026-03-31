@@ -97,13 +97,14 @@ type splitWriter struct {
 	data   io.Writer
 	ctrl   io.Writer
 	sc     *SplitConn    // back-pointer for ctrlStreams & routeNextSYN
-	dataCh chan []byte    // async queue for data frames
+	dataCh chan []byte    // async queue for PSH data frames
+	finCh  chan []byte    // high-priority queue for FIN frames
 	done   chan struct{}  // closed on fatal data-write error
 	once   sync.Once
 	wErr   error         // first data-write error, readable after done closes
 }
 
-// dataChSize is the capacity of the async data-frame queue.
+// dataChSize is the capacity of the async PSH data-frame queue.
 //
 // Keep this SMALL (2–4 frames).  A large buffer lets one heavy download stream
 // dump many frames into the channel before other streams get a turn, starving
@@ -113,12 +114,19 @@ type splitWriter struct {
 // timeout.
 const dataChSize = 4
 
+// finChSize is the capacity of the FIN priority queue.  FIN frames are tiny
+// (8 bytes, header only) and must not queue behind bulk PSH frames — otherwise
+// connections accumulate because SYN (via ctrl) opens streams instantly while
+// FIN (stuck behind PSH in dataCh) takes ages to close them.
+const finChSize = 64
+
 func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter {
 	sw := &splitWriter{
 		data:   data,
 		ctrl:   ctrl,
 		sc:     sc,
 		dataCh: make(chan []byte, dataChSize),
+		finCh:  make(chan []byte, finChSize),
 		done:   make(chan struct{}),
 	}
 	go sw.drainData()
@@ -126,21 +134,59 @@ func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter 
 }
 
 // drainData writes queued data frames to the data TCP connection.
-// If a write fails, it records the error and signals via done.
+// FIN frames are prioritized: when a FIN is ready, all pending PSH frames
+// are drained first (to preserve per-stream PSH→FIN ordering), then the
+// FIN is written.  This prevents FIN from being blocked behind bulk PSH
+// frames from other streams.
 func (sw *splitWriter) drainData() {
 	for {
 		select {
 		case frame := <-sw.dataCh:
-			if _, err := sw.data.Write(frame); err != nil {
-				log.Printf("mux: split-conn data writer: %v", err)
-				sw.wErr = err
-				sw.once.Do(func() { close(sw.done) })
+			if !sw.writeDataFrame(frame) {
+				return
+			}
+		case frame := <-sw.finCh:
+			// Drain all pending PSH frames before writing FIN.
+			// This preserves ordering: by the time smux writes FIN(stream X),
+			// all PSH(stream X) frames are already in dataCh.  Draining
+			// dataCh first ensures they hit the wire before FIN.
+			if !sw.drainPendingData() {
+				return
+			}
+			if !sw.writeDataFrame(frame) {
 				return
 			}
 		case <-sw.done:
 			return
 		}
 	}
+}
+
+// drainPendingData writes all currently queued PSH frames from dataCh.
+// Returns false if a write error occurred.
+func (sw *splitWriter) drainPendingData() bool {
+	for {
+		select {
+		case frame := <-sw.dataCh:
+			if !sw.writeDataFrame(frame) {
+				return false
+			}
+		default:
+			return true
+		}
+	}
+}
+
+// writeDataFrame writes a single frame to the data TCP connection.
+// Returns false and records the error if the write fails.
+func (sw *splitWriter) writeDataFrame(frame []byte) bool {
+	if _, err := sw.data.Write(frame); err != nil {
+		log.Printf("mux: split-conn data writer: %v", err)
+		sw.wErr = err
+		sw.once.Do(func() { close(sw.done) })
+		return false
+	}
+	return true
 }
 
 func (sw *splitWriter) close() {
@@ -196,7 +242,24 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 			return sw.ctrl.Write(b)
 		}
 
-		// Copy: smux reuses its write buffer across iterations.
+		// FIN: route to high-priority finCh so it doesn't queue behind
+		// bulk PSH frames from other streams.  drainData ensures all
+		// pending PSH for this stream are flushed before the FIN is sent.
+		if b[1] == smuxCmdFIN {
+			frame := make([]byte, len(b))
+			copy(frame, b)
+			select {
+			case sw.finCh <- frame:
+				return len(b), nil
+			case <-sw.done:
+				if sw.wErr != nil {
+					return 0, sw.wErr
+				}
+				return 0, io.ErrClosedPipe
+			}
+		}
+
+		// PSH: normal data queue.
 		frame := make([]byte, len(b))
 		copy(frame, b)
 		select {

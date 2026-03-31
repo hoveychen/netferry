@@ -23,10 +23,15 @@ var QueryOrigDstFunc func(conn net.Conn) (ip string, port int, err error)
 // Set by cmd/tunnel when --method=tproxy is chosen. Only used on Linux.
 var UseTProxy bool
 
+// BindAddr is the address the proxy listens on. Defaults to "127.0.0.1".
+// WinDivert on Windows requires "0.0.0.0" because it redirects packets to a
+// non-loopback interface address.
+var BindAddr = "127.0.0.1"
+
 // Listen accepts connections on the local proxy port and forwards them via mux.
 // Blocks until the listener is closed.
 func Listen(port int, client mux.TunnelClient, counters *stats.Counters) error {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", BindAddr, port))
 	if err != nil {
 		return fmt.Errorf("proxy listen :%d: %w", port, err)
 	}

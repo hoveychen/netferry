@@ -175,6 +175,121 @@ func TestSplitWriterDNSFullCtrlRouting(t *testing.T) {
 	}
 }
 
+// TestSplitWriterFINBypassesCongestedDataCh verifies that FIN frames are
+// written promptly via the high-priority finCh even when dataCh is full,
+// and that ordering is preserved (PSH before FIN on the wire).
+func TestSplitWriterFINBypassesCongestedDataCh(t *testing.T) {
+	// dataW: buffered so we can inspect the write order.
+	dataW := &chanWriter{ch: make(chan []byte, 100)}
+	ctrlW := &chanWriter{ch: make(chan []byte, 100)}
+
+	sc := &SplitConn{}
+	sw := newSplitWriter(dataW, ctrlW, sc)
+	defer sw.close()
+
+	tcpSID := uint32(10)
+
+	// Write SYN (goes to ctrl).
+	sw.Write(buildFrame(smuxCmdSYN, tcpSID, nil))
+
+	// Write some PSH frames for this stream.
+	sw.Write(buildFrame(smuxCmdPSH, tcpSID, []byte("chunk1")))
+	sw.Write(buildFrame(smuxCmdPSH, tcpSID, []byte("chunk2")))
+
+	// Write FIN — should NOT block even if dataCh were full.
+	finDone := make(chan struct{})
+	go func() {
+		sw.Write(buildFrame(smuxCmdFIN, tcpSID, nil))
+		close(finDone)
+	}()
+	select {
+	case <-finDone:
+		// Good — FIN returned promptly.
+	case <-time.After(2 * time.Second):
+		t.Fatal("FIN blocked — not routed to finCh")
+	}
+
+	// Let drainData flush everything.
+	time.Sleep(100 * time.Millisecond)
+
+	// Collect all frames written to dataW and verify ordering:
+	// PSH(chunk1), PSH(chunk2) must appear before FIN.
+	var frames []byte
+	for {
+		select {
+		case f := <-dataW.ch:
+			frames = append(frames, f[1]) // collect cmd bytes
+		default:
+			goto done
+		}
+	}
+done:
+	// Find FIN position and verify all PSH come before it.
+	finIdx := -1
+	pshCount := 0
+	for i, cmd := range frames {
+		if cmd == smuxCmdFIN {
+			finIdx = i
+		}
+		if cmd == smuxCmdPSH {
+			pshCount++
+			if finIdx >= 0 {
+				t.Fatalf("PSH at index %d appeared after FIN at index %d", i, finIdx)
+			}
+		}
+	}
+	if finIdx < 0 {
+		t.Fatal("FIN not found in data writer output")
+	}
+	if pshCount < 2 {
+		t.Fatalf("expected at least 2 PSH frames before FIN, got %d", pshCount)
+	}
+}
+
+// TestSplitWriterFINNotBlockedByCongestedDataCh verifies FIN is promptly
+// delivered even when the data channel is completely saturated.
+func TestSplitWriterFINNotBlockedByCongestedDataCh(t *testing.T) {
+	// dataW: unbuffered → every Write blocks until someone receives.
+	dataW := &chanWriter{ch: make(chan []byte)}
+	ctrlW := &chanWriter{ch: make(chan []byte, 100)}
+
+	sc := &SplitConn{}
+	sw := newSplitWriter(dataW, ctrlW, sc)
+	defer sw.close()
+
+	// Congest: one frame blocks in drainData, then fill dataCh.
+	sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
+	time.Sleep(50 * time.Millisecond)
+	for i := 0; i < dataChSize; i++ {
+		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
+	}
+
+	// Verify PSH IS blocked (proves data channel is congested).
+	pshDone := make(chan struct{})
+	go func() {
+		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
+		close(pshDone)
+	}()
+	select {
+	case <-pshDone:
+		t.Fatal("PSH should be blocked when dataCh is full")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// FIN should NOT block — it goes to finCh, not dataCh.
+	finDone := make(chan struct{})
+	go func() {
+		sw.Write(buildFrame(smuxCmdFIN, 99, nil))
+		close(finDone)
+	}()
+	select {
+	case <-finDone:
+		t.Log("FIN bypassed congested dataCh via finCh")
+	case <-time.After(2 * time.Second):
+		t.Fatal("FIN blocked by full dataCh — should use finCh")
+	}
+}
+
 // TestSplitWriterNonDNSSYNDoesNotRegisterCtrl verifies that a normal TCP
 // stream's SYN going through ctrl does NOT register the stream for full
 // ctrl routing — subsequent PSH/FIN should still go through dataCh.

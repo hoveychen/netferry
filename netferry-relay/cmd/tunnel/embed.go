@@ -15,9 +15,6 @@ import (
 //
 //go:embed binaries/server-linux-amd64
 //go:embed binaries/server-linux-arm64
-//go:embed binaries/server-linux-mipsle
-//go:embed binaries/server-darwin-amd64
-//go:embed binaries/server-darwin-arm64
 var serverBinaries embed.FS
 
 func init() {
