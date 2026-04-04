@@ -184,7 +184,12 @@ func CleanStaleAnchors() {
 // --- nftMethod ---
 
 // nftMethod implements firewall.Method using nftables.
-type nftMethod struct{}
+type nftMethod struct {
+	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
+	subnets   []SubnetRule
+	excludes  []string
+	proxyPort int
+}
 
 func (n *nftMethod) Name() string { return "nft" }
 
@@ -193,6 +198,10 @@ func (n *nftMethod) SupportedFeatures() []Feature {
 }
 
 func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
+	n.subnets = subnets
+	n.excludes = excludes
+	n.proxyPort = proxyPort
+
 	// Remove any leftover table first.
 	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
 	exec.Command("nft", "delete", "table", "ip", "netferry").Run()
@@ -314,6 +323,15 @@ func (n *nftMethod) Restore() error {
 	return nil
 }
 
+// DisableDNS atomically replaces the nftables ruleset without DNS redirect
+// entries.  TCP redirect rules are preserved so traffic does not leak during
+// reconnect.
+func (n *nftMethod) DisableDNS() error {
+	// Rebuild rules with dnsPort=0 ��� generates TCP-only rules.
+	// "flush table" + new definition in a single nft -f load is atomic.
+	return n.Setup(n.subnets, n.excludes, n.proxyPort, 0, nil)
+}
+
 // FlushExistingConnections removes conntrack entries whose destination matches
 // any of the given subnets. This disrupts existing connections so apps
 // reconnect through the newly installed redirect rules. Call AFTER
@@ -341,7 +359,12 @@ func joinQuoted(ss []string) string {
 // --- iptMethod ---
 
 // iptMethod implements firewall.Method using iptables.
-type iptMethod struct{}
+type iptMethod struct {
+	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
+	subnets   []SubnetRule
+	excludes  []string
+	proxyPort int
+}
 
 func (p *iptMethod) Name() string { return "iptables" }
 
@@ -350,6 +373,10 @@ func (p *iptMethod) SupportedFeatures() []Feature {
 }
 
 func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
+	p.subnets = subnets
+	p.excludes = excludes
+	p.proxyPort = proxyPort
+
 	v4Subnets, v6Subnets := SplitByFamily(subnets)
 	v4Excludes, v6Excludes := SplitExcludesByFamily(excludes)
 	v4DNS, v6DNS := SplitDNSByFamily(dnsServers)
@@ -473,4 +500,11 @@ func (p *iptMethod) Restore() error {
 	exec.Command("ip6tables", "-t", "nat", "-F", "NETFERRY6").Run()
 	exec.Command("ip6tables", "-t", "nat", "-X", "NETFERRY6").Run()
 	return nil
+}
+
+// DisableDNS reinstalls iptables rules without DNS redirect entries.
+// TCP redirect rules are preserved so traffic does not leak during reconnect.
+func (p *iptMethod) DisableDNS() error {
+	p.Restore()
+	return p.Setup(p.subnets, p.excludes, p.proxyPort, 0, nil)
 }

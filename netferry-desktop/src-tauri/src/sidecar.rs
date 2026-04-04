@@ -176,6 +176,10 @@ pub struct AppState {
     pub last_connected_profile: Mutex<Option<Profile>>,
     /// Set to true to cancel an in-progress reconnection loop.
     pub reconnect_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Cached resolved address of the SSH server.  Used by the reconnect loop
+    /// so that the reachability check does not depend on DNS (which may be
+    /// broken while old firewall rules redirect DNS to the dead proxy port).
+    pub resolved_remote_addr: Mutex<Option<std::net::SocketAddr>>,
 }
 
 impl AppState {
@@ -194,6 +198,7 @@ impl AppState {
             sudo_helper: Mutex::new(None),
             last_connected_profile: Mutex::new(None),
             reconnect_cancel: Mutex::new(None),
+            resolved_remote_addr: Mutex::new(None),
         }
     }
 }
@@ -658,6 +663,9 @@ fn spawn_helper_event_thread(
                         if let Ok(mut g) = app.state::<AppState>().last_connected_profile.lock() {
                             *g = Some(profile.clone());
                         }
+                        // Cache the resolved SSH server address for reconnect
+                        // reachability checks (avoids DNS dependency).
+                        cache_remote_addr(&app, &profile.remote);
                         let status = ConnectionStatus {
                             state: "connected".to_string(),
                             profile_id: Some(profile_id.clone()),
@@ -763,19 +771,34 @@ fn parse_remote_host_port(remote: &str) -> (String, u16) {
     }
 }
 
-/// Check if the remote host is reachable by attempting a TCP connection to its SSH port.
-fn is_network_reachable(remote: &str) -> bool {
+/// Resolve the SSH server's address and cache it in AppState for reconnect
+/// reachability checks.  Called once when the tunnel first reports "Connected".
+fn cache_remote_addr(app: &AppHandle, remote: &str) {
     let (host, port) = parse_remote_host_port(remote);
-    let addr = format!("{host}:{port}");
-    std::net::TcpStream::connect_timeout(
-        &addr
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut a| a.next())
-            .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
-        std::time::Duration::from_secs(5),
-    )
-    .is_ok()
+    if let Ok(mut addrs) = format!("{host}:{port}").to_socket_addrs() {
+        if let Some(addr) = addrs.next() {
+            if let Ok(mut g) = app.state::<AppState>().resolved_remote_addr.lock() {
+                *g = Some(addr);
+                log::info!("Cached remote addr for reconnect: {addr}");
+            }
+        }
+    }
+}
+
+/// Check if the remote host is reachable by attempting a TCP connection to its SSH port.
+///
+/// When `cached_addr` is provided (from a previous successful connection), it is
+/// used directly — this avoids depending on DNS which may be broken while old
+/// firewall rules redirect DNS traffic to the dead proxy port.
+fn is_network_reachable(remote: &str, cached_addr: Option<std::net::SocketAddr>) -> bool {
+    let addr = cached_addr.or_else(|| {
+        let (host, port) = parse_remote_host_port(remote);
+        format!("{host}:{port}").to_socket_addrs().ok()?.next()
+    });
+    let Some(addr) = addr else {
+        return false;
+    };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)).is_ok()
 }
 
 /// Spawn a background thread that polls the network and reconnects when available.
@@ -789,6 +812,15 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
     }
 
     let profile_id = profile.id.clone();
+
+    // Read the cached resolved address (if any) so the reachability check
+    // can bypass DNS — DNS may be broken while old firewall rules are active.
+    let cached_addr = app
+        .state::<AppState>()
+        .resolved_remote_addr
+        .lock()
+        .ok()
+        .and_then(|g| *g);
 
     // Emit reconnecting status.
     let status = ConnectionStatus {
@@ -847,7 +879,7 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
             }
 
             // Check network reachability.
-            if !is_network_reachable(&profile.remote) {
+            if !is_network_reachable(&profile.remote, cached_addr) {
                 log::info!("Network not yet reachable for {}, will retry", profile.remote);
                 let status = ConnectionStatus {
                     state: "reconnecting".to_string(),
@@ -1072,6 +1104,9 @@ pub fn connect(
                     if let Ok(mut g) = app_clone.state::<AppState>().last_connected_profile.lock() {
                         *g = Some(profile_clone.clone());
                     }
+                    // Cache the resolved SSH server address for reconnect
+                    // reachability checks (avoids DNS dependency).
+                    cache_remote_addr(&app_clone, &profile_clone.remote);
                     let status = ConnectionStatus {
                         state: "connected".to_string(),
                         profile_id: Some(profile_id.clone()),

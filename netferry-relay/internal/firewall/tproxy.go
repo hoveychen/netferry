@@ -15,6 +15,11 @@ import (
 type tproxyMethod struct {
 	useNft bool
 	cfg    TProxyConfig
+
+	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
+	subnets   []SubnetRule
+	excludes  []string
+	proxyPort int
 }
 
 func (t *tproxyMethod) Name() string { return "tproxy" }
@@ -26,6 +31,10 @@ func (t *tproxyMethod) SupportedFeatures() []Feature {
 }
 
 func (t *tproxyMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
+	t.subnets = subnets
+	t.excludes = excludes
+	t.proxyPort = proxyPort
+
 	_, v6Subnets := SplitByFamily(subnets)
 
 	mark := strconv.Itoa(t.cfg.FWMark)
@@ -367,6 +376,13 @@ func (t *tproxyMethod) Restore() error {
 		exec.Command("ip6tables", "-t", "mangle", "-X", "NETFERRY").Run()
 	}
 	return nil
+}
+
+// DisableDNS reinstalls TPROXY rules without DNS redirect entries.
+// TCP redirect rules are preserved so traffic does not leak during reconnect.
+func (t *tproxyMethod) DisableDNS() error {
+	t.Restore()
+	return t.Setup(t.subnets, t.excludes, t.proxyPort, 0, nil)
 }
 
 // run executes a command and returns an error if it fails.

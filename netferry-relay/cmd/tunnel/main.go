@@ -506,8 +506,11 @@ func main() {
 		if err != nil {
 			log.Printf("mux closed: %v", err)
 		}
-		// Mux dying means the SSH connection dropped — keep firewall rules
-		// so traffic is blocked rather than leaking during reconnect.
+		// Mux dying means the SSH connection dropped — keep TCP redirect
+		// rules so traffic is blocked rather than leaking during reconnect,
+		// but remove DNS redirect rules so the reconnecting tunnel process
+		// can resolve the SSH server hostname via normal system DNS.
+		firewall.DisableDNSRedirect(fw)
 		skipFWRestore = true
 		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
 	case err := <-proxyErrCh:
@@ -521,7 +524,10 @@ func main() {
 		} else {
 			log.Printf("network change detected, exiting for reconnect")
 		}
-		// Network change — keep firewall rules during reconnect window.
+		// Network change — keep TCP redirect rules during reconnect window,
+		// but remove DNS redirect rules so the reconnecting tunnel process
+		// can resolve the SSH server hostname via normal system DNS.
+		firewall.DisableDNSRedirect(fw)
 		skipFWRestore = true
 		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
 	}

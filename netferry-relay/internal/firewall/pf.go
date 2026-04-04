@@ -176,6 +176,11 @@ type pfMethod struct {
 	anchor   string
 	token    string
 	blockUDP bool
+
+	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
+	subnets   []SubnetRule
+	excludes  []string
+	proxyPort int
 }
 
 func (p *pfMethod) Name() string { return "pf" }
@@ -188,6 +193,9 @@ func (p *pfMethod) SetBlockUDP(block bool) { p.blockUDP = block }
 
 func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
 	p.anchor = fmt.Sprintf("netferry-%d", proxyPort)
+	p.subnets = subnets
+	p.excludes = excludes
+	p.proxyPort = proxyPort
 
 	// pfctl -E: enable pf and capture reference token.
 	out, err := pfctl("-E")
@@ -398,6 +406,16 @@ func (p *pfMethod) Restore() error {
 		pfctl("-X", p.token)
 	}
 	return nil
+}
+
+// DisableDNS reloads the pf anchor rules without DNS redirect entries.
+// TCP redirect rules are preserved so traffic does not leak during reconnect.
+func (p *pfMethod) DisableDNS() error {
+	if p.anchor == "" {
+		return nil
+	}
+	rules := p.buildRules(p.subnets, p.excludes, p.proxyPort, 0, nil)
+	return pfctlStdin(rules, "-a", p.anchor, "-f", "/dev/stdin")
 }
 
 // pfctl runs pfctl with the given args and returns combined output.

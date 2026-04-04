@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -72,6 +73,29 @@ func SetUDPBlock(m Method, block bool) {
 	if b, ok := m.(UDPBlocker); ok {
 		b.SetBlockUDP(block)
 	}
+}
+
+// DNSDisabler is optionally implemented by Methods that can selectively
+// remove DNS redirect rules while keeping TCP redirect rules in place.
+// Used when the tunnel exits for reconnect: TCP rules must stay to prevent
+// traffic from leaking to the public internet, but DNS rules must be removed
+// so the reconnecting process can resolve the SSH server hostname via
+// normal system DNS.
+type DNSDisabler interface {
+	DisableDNS() error
+}
+
+// DisableDNSRedirect calls DisableDNS on the method if it implements
+// DNSDisabler.  Returns true if the method supported the operation.
+func DisableDNSRedirect(m Method) bool {
+	if d, ok := m.(DNSDisabler); ok {
+		if err := d.DisableDNS(); err != nil {
+			log.Printf("DisableDNS: %v", err)
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // QueryOrigDstFor returns a QueryOrigDst function if the Method implements
