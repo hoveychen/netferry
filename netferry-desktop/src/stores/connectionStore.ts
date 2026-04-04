@@ -1,9 +1,11 @@
 import { create } from "zustand";
 import { connectProfile, disconnectProfile, getConnectionStatus, getStatsUrl, updateTraySpeed } from "@/api";
+import { onSidecarConnected, onSidecarDisconnected } from "@/stores/ruleStore";
 import type {
   ConnectionEvent,
   ConnectionStatus,
   DeployProgress,
+  DestinationSnapshot,
   Profile,
   TunnelError,
   TunnelStats,
@@ -28,6 +30,8 @@ interface ConnectionStore {
   /** Recently closed connection ids (kept briefly for UI fade-out). */
   recentClosed: ConnectionEvent[];
   tunnelErrors: TunnelError[];
+  /** Per-destination aggregate stats. */
+  destinations: DestinationSnapshot[];
   deployProgress: DeployProgress | null;
   deployReason: string | null;
   syncStatus: () => Promise<void>;
@@ -37,7 +41,9 @@ interface ConnectionStore {
   setStatus: (status: ConnectionStatus) => void;
   setTunnelStats: (stats: TunnelStats) => void;
   handleConnectionEvent: (event: ConnectionEvent) => void;
+  handleConnectionEventBatch: (events: ConnectionEvent[]) => void;
   handleConnectionsSnapshot: (events: ConnectionEvent[]) => void;
+  handleDestinationsSnapshot: (dests: DestinationSnapshot[]) => void;
   pushTunnelError: (error: TunnelError) => void;
   setDeployProgress: (progress: DeployProgress | null) => void;
   setDeployReason: (reason: string | null) => void;
@@ -47,11 +53,30 @@ interface ConnectionStore {
 
 let sseSource: EventSource | null = null;
 
+// Buffer connection events and flush at most once per 500ms to avoid
+// per-event React re-renders that can pin the CPU at 100%.
+let connEventBuffer: ConnectionEvent[] = [];
+let connFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushConnEvents(store: ReturnType<typeof useConnectionStore.getState>) {
+  connFlushTimer = null;
+  if (connEventBuffer.length === 0) return;
+  const batch = connEventBuffer;
+  connEventBuffer = [];
+  store.handleConnectionEventBatch(batch);
+}
+
 function stopSSEInternal() {
   if (sseSource) {
     sseSource.close();
     sseSource = null;
   }
+  onSidecarDisconnected();
+  if (connFlushTimer) {
+    clearTimeout(connFlushTimer);
+    connFlushTimer = null;
+  }
+  connEventBuffer = [];
 }
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
@@ -61,6 +86,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   activeConnections: new Map(),
   recentClosed: [],
   tunnelErrors: [],
+  destinations: [],
   deployProgress: null,
   deployReason: null,
 
@@ -82,6 +108,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       activeConnections: new Map(),
       recentClosed: [],
       tunnelErrors: [],
+      destinations: [],
       deployProgress: null,
       deployReason: null,
     });
@@ -102,7 +129,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   disconnect: async () => {
     stopSSEInternal();
     const status = await disconnectProfile();
-    set({ status, tunnelStats: null, activeConnections: new Map(), recentClosed: [], deployProgress: null, deployReason: null });
+    set({ status, tunnelStats: null, activeConnections: new Map(), recentClosed: [], destinations: [], deployProgress: null, deployReason: null });
   },
 
   pushLog: (line) =>
@@ -134,6 +161,28 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       return { activeConnections: active, recentClosed };
     }),
 
+  handleConnectionEventBatch: (events: ConnectionEvent[]) =>
+    set((s) => {
+      const active = new Map(s.activeConnections);
+      let closed = s.recentClosed;
+      for (const event of events) {
+        if (event.action === "open") {
+          active.set(event.id, {
+            id: event.id,
+            srcAddr: event.srcAddr,
+            dstAddr: event.dstAddr,
+            host: event.host,
+            tunnelIndex: event.tunnelIndex,
+            openedAt: event.timestampMs,
+          });
+        } else {
+          active.delete(event.id);
+          closed = [...closed.slice(-99), event];
+        }
+      }
+      return { activeConnections: active, recentClosed: closed };
+    }),
+
   handleConnectionsSnapshot: (events: ConnectionEvent[]) =>
     set(() => {
       const active = new Map<number, ActiveConnection>();
@@ -150,6 +199,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       return { activeConnections: active };
     }),
 
+  handleDestinationsSnapshot: (dests: DestinationSnapshot[]) =>
+    set({ destinations: dests }),
+
   pushTunnelError: (error) =>
     set((s) => ({
       tunnelErrors: [...s.tunnelErrors.slice(-49), error],
@@ -164,6 +216,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     const es = new EventSource(`${url}/events`);
     sseSource = es;
 
+    // Notify ruleStore so it pushes current rules to the sidecar.
+    onSidecarConnected(url);
+
     es.addEventListener("stats", (e) => {
       try {
         const stats: TunnelStats = JSON.parse((e as MessageEvent).data);
@@ -175,7 +230,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     es.addEventListener("connection", (e) => {
       try {
         const event: ConnectionEvent = JSON.parse((e as MessageEvent).data);
-        get().handleConnectionEvent(event);
+        connEventBuffer.push(event);
+        if (!connFlushTimer) {
+          connFlushTimer = setTimeout(() => flushConnEvents(get()), 500);
+        }
       } catch {}
     });
 
@@ -183,6 +241,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       try {
         const events: ConnectionEvent[] = JSON.parse((e as MessageEvent).data);
         get().handleConnectionsSnapshot(events);
+      } catch {}
+    });
+
+    es.addEventListener("destinations_snapshot", (e) => {
+      try {
+        const dests: DestinationSnapshot[] = JSON.parse((e as MessageEvent).data);
+        get().handleDestinationsSnapshot(dests);
       } catch {}
     });
 

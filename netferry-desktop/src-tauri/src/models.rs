@@ -13,7 +13,7 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_tcp_balance_mode() -> String {
-    "round-robin".to_string()
+    "least-loaded".to_string()
 }
 
 fn default_latency_buffer_size() -> Option<u32> {
@@ -116,7 +116,7 @@ impl Default for Profile {
             auto_exclude_lan: true,
             pool_size: 4,
             split_conn: false,
-            tcp_balance_mode: "round-robin".to_string(),
+            tcp_balance_mode: "least-loaded".to_string(),
             latency_buffer_size: Some(2097152),
             imported: false,
         }

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -212,17 +213,15 @@ func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dns
 		return fmt.Errorf("load pf rules: %w", err)
 	}
 
-	// Flush existing PF states for intercepted subnets so they are re-evaluated
-	// by the new rules. Without this, connections established before Setup was
-	// called continue to bypass the redirect rules (PF keeps state per-connection).
-	p.flushStates(subnets)
 	return nil
 }
 
-// flushStates kills PF state table entries destined for the given subnets.
-// This forces existing connections to be re-evaluated by the new redirect rules.
-// pfctl -k sends RSTs to both endpoints, so apps reconnect quickly.
-func (p *pfMethod) flushStates(subnets []SubnetRule) {
+// FlushExistingConnections kills PF state table entries destined for the given
+// subnets. This forces existing connections to be re-evaluated by the new
+// redirect rules. pfctl -k sends RSTs to both endpoints, so apps reconnect
+// quickly. Call AFTER FlushDNSCache so reconnecting apps resolve through the
+// tunnel's DNS interceptor.
+func FlushExistingConnections(subnets []SubnetRule) {
 	for _, subnet := range subnets {
 		if subnet.IsIPv6() {
 			pfctl("-k", "::/0", "-k", subnet.CIDR)
@@ -230,6 +229,7 @@ func (p *pfMethod) flushStates(subnets []SubnetRule) {
 			pfctl("-k", "0/0", "-k", subnet.CIDR)
 		}
 	}
+	log.Printf("flushed PF states for %d subnets", len(subnets))
 }
 
 func (p *pfMethod) addAnchors() {
@@ -333,15 +333,19 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	// to override the broader route-to lo0 rules.
 
 	// IPv4 subnet pass rules.
+	// "user != root" prevents the tunnel process (running as root) from having
+	// its own outgoing connections redirected back to the proxy — which would
+	// create an infinite loop when "direct" route mode tries to dial the
+	// destination directly.
 	for _, subnet := range v4Subnets {
 		fmt.Fprintf(&b,
-			"pass out route-to lo0 inet proto tcp to %s%s keep state\n",
+			"pass out route-to lo0 inet proto tcp to %s%s user != root keep state\n",
 			subnet.CIDR, subnet.PfPortExpr())
 	}
 	// IPv6 subnet pass rules.
 	for _, subnet := range v6Subnets {
 		fmt.Fprintf(&b,
-			"pass out route-to lo0 inet6 proto tcp to %s%s keep state\n",
+			"pass out route-to lo0 inet6 proto tcp to %s%s user != root keep state\n",
 			subnet.CIDR, subnet.PfPortExpr())
 	}
 	// DNS pass rules.
@@ -415,6 +419,15 @@ func pfctlStdin(stdin []byte, args ...string) error {
 		return fmt.Errorf("pfctl %v: %w\n%s", args, err, out)
 	}
 	return nil
+}
+
+// FlushDNSCache clears the macOS DNS cache so that stale/poisoned entries
+// resolved before the tunnel started are discarded. Apps that reconnect
+// (after flushStates sends RSTs) will re-resolve through the tunnel's DNS.
+func FlushDNSCache() {
+	exec.Command("dscacheutil", "-flushcache").Run()
+	exec.Command("killall", "-HUP", "mDNSResponder").Run()
+	log.Printf("flushed macOS DNS cache")
 }
 
 // CleanStaleAnchors removes any leftover netferry-* pf anchors from a previous

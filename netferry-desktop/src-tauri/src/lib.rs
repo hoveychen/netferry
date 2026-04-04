@@ -4,6 +4,7 @@ mod crypto;
 mod helper_ipc;
 pub mod logging;
 mod models;
+mod priorities;
 mod profiles;
 mod settings;
 mod sidecar;
@@ -146,6 +147,10 @@ pub fn run() {
             commands::get_connection_status,
             commands::get_global_settings,
             commands::save_global_settings,
+            commands::get_priorities,
+            commands::save_priorities,
+            commands::get_routes,
+            commands::save_routes,
             commands::lookup_geoip,
             commands::get_stats_url,
             commands::list_method_features,

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { Globe, Network, Settings } from "lucide-react";
 import { ConnectionPage } from "@/components/ConnectionPage";
+import { DestinationsPage } from "@/components/DestinationsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
 import { NewProfileDialog } from "@/components/NewProfileDialog";
@@ -9,22 +12,25 @@ import { ProfileList } from "@/components/ProfileList";
 import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useProfileStore } from "@/stores/profileStore";
+import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { getHelperStatus, importProfile, importProfileFromFile } from "@/api";
 import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
 
-// Page state union
-type Page =
-  | { kind: "list" }
-  | { kind: "detail"; profile: Profile; isNew: boolean }
-  | { kind: "connected" }
-  | { kind: "settings" };
+// Sub-page state for profile detail (pushed on top of nav).
+type SubPage =
+  | null
+  | { kind: "detail"; profile: Profile; isNew: boolean };
+
+type NavTab = "profiles" | "destinations" | "settings";
 
 function App() {
-  const [page, setPage] = useState<Page>({ kind: "list" });
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<NavTab>("profiles");
+  const [subPage, setSubPage] = useState<SubPage>(null);
   const [newProfileDialogOpen, setNewProfileDialogOpen] = useState(false);
   const [sshImporterOpen, setSshImporterOpen] = useState(false);
-  const [showHelperSetup, setShowHelperSetup] = useState<boolean | null>(null); // null = checking
+  const [showHelperSetup, setShowHelperSetup] = useState<boolean | null>(null);
 
   const {
     profiles,
@@ -48,6 +54,7 @@ function App() {
     tunnelErrors,
     activeConnections,
     recentClosed,
+    destinations,
     deployProgress,
     deployReason,
     syncStatus,
@@ -62,12 +69,15 @@ function App() {
     stopSSE,
   } = useConnectionStore();
 
+  const { loadRules } = useRuleStore();
+
   // Initial load
   useEffect(() => {
     loadProfiles();
     loadSettings();
+    loadRules();
     syncStatus();
-  }, [loadProfiles, loadSettings, syncStatus]);
+  }, [loadProfiles, loadSettings, loadRules, syncStatus]);
 
   // Check if helper setup guide should be shown (macOS only, first time)
   useEffect(() => {
@@ -94,15 +104,8 @@ function App() {
     if (!profileId) return;
     const profile = profiles.find((p) => p.id === profileId);
     if (!profile) return;
-    connect(profile).then(() => setPage({ kind: "connected" }));
+    connect(profile);
   }, [profilesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // If we're connected but not on the connected page, navigate there
-  useEffect(() => {
-    if (status.state === "connected" || status.state === "connecting" || status.state === "reconnecting") {
-      setPage({ kind: "connected" });
-    }
-  }, [status.state]);
 
   // Tauri event listeners
   useEffect(() => {
@@ -115,7 +118,6 @@ function App() {
     const offError = listen<TunnelError>("tunnel-error", (event) => {
       pushTunnelError(event.payload);
     });
-    // stats-port is emitted by Rust when the tunnel prints its HTTP SSE port.
     const offStatsPort = listen<number>("stats-port", (event) => {
       startSSE(`http://127.0.0.1:${event.payload}`);
     });
@@ -125,7 +127,6 @@ function App() {
     const offDeployReason = listen<string>("deploy-reason", (event) => {
       setDeployReason(event.payload);
     });
-    // Handle .nfprofile file opened from OS (double-click / CLI arg).
     const offImportFile = listen<string>("import-profile-file", async (event) => {
       try {
         await importProfileFromFile(event.payload);
@@ -146,25 +147,21 @@ function App() {
     };
   }, [setStatus, pushLog, pushTunnelError, setDeployProgress, setDeployReason, startSSE, stopSSE, loadProfiles]);
 
-  // Disconnect goes back to list
   const handleDisconnect = async () => {
     await disconnect();
-    setPage({ kind: "list" });
   };
 
-  // Connect navigates to connection page
   const handleConnect = async (profile: Profile) => {
-    setPage({ kind: "connected" });
     await connect(profile);
   };
 
-  // Find the active profile by profileId from status
   const activeProfile =
     status.profileId ? profiles.find((p) => p.id === status.profileId) ?? null : null;
 
+  const isConnected = status.state === "connected" || status.state === "connecting" || status.state === "reconnecting";
+
   // Show helper setup guide on first launch (macOS)
   if (showHelperSetup === null) {
-    // Still checking — show nothing (very brief)
     return <div className="h-screen bg-[#1c1c1e]" />;
   }
   if (showHelperSetup) {
@@ -178,7 +175,28 @@ function App() {
     );
   }
 
-  if (page.kind === "connected") {
+  // Profile detail page (pushed on top).
+  if (subPage?.kind === "detail") {
+    return (
+      <ProfileDetailPage
+        profile={subPage.profile}
+        isNew={subPage.isNew}
+        onBack={() => setSubPage(null)}
+        onSave={async (saved) => {
+          await updateProfile(saved);
+          await loadProfiles();
+          setSubPage(null);
+        }}
+        onDelete={async (id) => {
+          await removeProfile(id);
+          setSubPage(null);
+        }}
+      />
+    );
+  }
+
+  // Connected page (shown as overlay when tunnel is active).
+  if (isConnected) {
     return (
       <ConnectionPage
         status={status}
@@ -188,6 +206,7 @@ function App() {
         activeConnections={activeConnections}
         recentClosed={recentClosed}
         tunnelErrors={tunnelErrors}
+        destinations={destinations}
         deployProgress={deployProgress}
         deployReason={deployReason}
         onDisconnect={handleDisconnect}
@@ -195,76 +214,94 @@ function App() {
     );
   }
 
-  if (page.kind === "settings") {
-    return (
-      <GlobalSettingsPage
-        settings={settings}
-        profiles={profiles}
-        onBack={() => setPage({ kind: "list" })}
-        onSave={updateSettings}
-      />
-    );
-  }
+  // Main layout: nav bar + tab content.
+  const navItems: { id: NavTab; label: string; icon: typeof Globe }[] = [
+    { id: "profiles", label: t("nav.profiles"), icon: Network },
+    { id: "destinations", label: t("nav.destinations"), icon: Globe },
+    { id: "settings", label: t("nav.settings"), icon: Settings },
+  ];
 
-  if (page.kind === "detail") {
-    return (
-      <ProfileDetailPage
-        profile={page.profile}
-        isNew={page.isNew}
-        onBack={() => setPage({ kind: "list" })}
-        onSave={async (saved) => {
-          await updateProfile(saved);
-          await loadProfiles();
-          setPage({ kind: "list" });
-        }}
-        onDelete={async (id) => {
-          await removeProfile(id);
-          setPage({ kind: "list" });
-        }}
-      />
-    );
-  }
-
-  // Default: list page
   return (
-    <>
-      <ProfileList
-        profiles={profiles}
-        onNew={() => setNewProfileDialogOpen(true)}
-        onConnect={handleConnect}
-        onEdit={(id) => {
-          const profile = profiles.find((p) => p.id === id);
-          if (profile) setPage({ kind: "detail", profile, isNew: false });
-        }}
-        onOpenSettings={() => setPage({ kind: "settings" })}
-        onImport={async (data) => {
-          await importProfile(data);
-          await loadProfiles();
-        }}
-        onImportFile={async (path) => {
-          await importProfileFromFile(path);
-          await loadProfiles();
-        }}
-      />
+    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+      {/* Tab content */}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {activeTab === "profiles" && (
+          <>
+            <ProfileList
+              profiles={profiles}
+              onNew={() => setNewProfileDialogOpen(true)}
+              onConnect={handleConnect}
+              onEdit={(id) => {
+                const profile = profiles.find((p) => p.id === id);
+                if (profile) setSubPage({ kind: "detail", profile, isNew: false });
+              }}
+              onImport={async (data) => {
+                await importProfile(data);
+                await loadProfiles();
+              }}
+              onImportFile={async (path) => {
+                await importProfileFromFile(path);
+                await loadProfiles();
+              }}
+            />
 
-      <NewProfileDialog
-        open={newProfileDialogOpen}
-        onClose={() => setNewProfileDialogOpen(false)}
-        onBlank={async () => {
-          const profile = await buildBlankProfile();
-          setPage({ kind: "detail", profile, isNew: true });
-        }}
-        onImportSsh={() => setSshImporterOpen(true)}
-      />
+            <NewProfileDialog
+              open={newProfileDialogOpen}
+              onClose={() => setNewProfileDialogOpen(false)}
+              onBlank={async () => {
+                const profile = await buildBlankProfile();
+                setSubPage({ kind: "detail", profile, isNew: true });
+              }}
+              onImportSsh={() => setSshImporterOpen(true)}
+            />
 
-      <SshConfigImporter
-        open={sshImporterOpen}
-        onClose={() => setSshImporterOpen(false)}
-        onImport={(profile) => {
-          setPage({ kind: "detail", profile, isNew: true });
-        }}
-      />
-    </>
+            <SshConfigImporter
+              open={sshImporterOpen}
+              onClose={() => setSshImporterOpen(false)}
+              onImport={(profile) => {
+                setSubPage({ kind: "detail", profile, isNew: true });
+              }}
+            />
+          </>
+        )}
+
+        {activeTab === "destinations" && (
+          <DestinationsPage />
+        )}
+
+        {activeTab === "settings" && (
+          <GlobalSettingsPage
+            settings={settings}
+            profiles={profiles}
+            onBack={() => setActiveTab("profiles")}
+            onSave={updateSettings}
+          />
+        )}
+      </div>
+
+      {/* Bottom navigation bar */}
+      <nav className="flex items-center justify-around border-t border-white/[0.06] bg-[#1c1c1e]/95 backdrop-blur-xl px-2 py-1.5">
+        {navItems.map(({ id, label, icon: Icon }) => {
+          const active = activeTab === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex flex-col items-center gap-0.5 rounded-lg px-4 py-1 transition-all ${
+                active
+                  ? "text-[#0a84ff]"
+                  : "text-white/30 hover:text-white/50"
+              }`}
+            >
+              <Icon size={18} strokeWidth={active ? 2.2 : 1.5} />
+              <span className={`text-[10px] font-medium ${active ? "text-[#0a84ff]" : ""}`}>
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
   );
 }
 

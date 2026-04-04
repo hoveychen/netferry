@@ -177,8 +177,9 @@ func (c *MuxClient) openStreamOnCtrl() (*smux.Stream, error) {
 }
 
 // OpenTCP opens a new smux stream for a TCP connection to dstIP:dstPort.
-// family: 2=IPv4, 10=IPv6.
-func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, error) {
+// family: 2=IPv4, 10=IPv6. priority is ignored for single clients (only used
+// by MuxPool for tunnel selection).
+func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int, _ int) (*ClientConn, error) {
 	if c.done.Load() {
 		return nil, fmt.Errorf("mux: client closed")
 	}

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { FileText, Import } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -9,13 +10,15 @@ interface Props {
 }
 
 export function NewProfileDialog({ open, onClose, onBlank, onImportSsh }: Props) {
+  const { t } = useTranslation();
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
       <div className="w-full max-w-sm rounded-2xl border border-white/[0.10] bg-[#2c2c2e] p-6 shadow-2xl shadow-black/60">
-        <h3 className="mb-1 text-[17px] font-semibold text-white/90">Create Profile</h3>
-        <p className="mb-5 text-sm text-white/45">How would you like to get started?</p>
+        <h3 className="mb-1 text-[17px] font-semibold text-white/90">{t("newProfile.title")}</h3>
+        <p className="mb-5 text-sm text-white/45">{t("newProfile.subtitle")}</p>
 
         <div className="flex flex-col gap-2.5">
           <button
@@ -30,8 +33,8 @@ export function NewProfileDialog({ open, onClose, onBlank, onImportSsh }: Props)
               <FileText className="h-5 w-5 text-white/55" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-white/85">Blank Profile</p>
-              <p className="text-xs text-white/40">Start from scratch with default settings.</p>
+              <p className="text-sm font-semibold text-white/85">{t("newProfile.blank")}</p>
+              <p className="text-xs text-white/40">{t("newProfile.blankDesc")}</p>
             </div>
           </button>
 
@@ -47,15 +50,15 @@ export function NewProfileDialog({ open, onClose, onBlank, onImportSsh }: Props)
               <Import className="h-5 w-5 text-white/55" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-white/85">Import from SSH Config</p>
-              <p className="text-xs text-white/40">Pre-fill from a host in ~/.ssh/config.</p>
+              <p className="text-sm font-semibold text-white/85">{t("newProfile.importSsh")}</p>
+              <p className="text-xs text-white/40">{t("newProfile.importSshDesc")}</p>
             </div>
           </button>
         </div>
 
         <div className="mt-5 flex justify-end">
           <Button variant="secondary" size="sm" onClick={onClose}>
-            Cancel
+            {t("nav.cancel")}
           </Button>
         </div>
       </div>

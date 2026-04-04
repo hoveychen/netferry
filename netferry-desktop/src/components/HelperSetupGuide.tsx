@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getHelperStatus, registerHelper, type HelperStatus } from "@/api";
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +10,7 @@ interface Props {
 type Step = "checking" | "needs_approval" | "registering" | "success" | "not_needed";
 
 export function HelperSetupGuide({ onDone }: Props) {
+  const { t } = useTranslation();
   const [step, setStep] = useState<Step>("checking");
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +47,7 @@ export function HelperSetupGuide({ onDone }: Props) {
         setStep("success");
         setTimeout(onDone, 1200);
       } else {
-        setError("Helper registration was not completed. Please try again.");
+        setError(t("helper.registrationFailed"));
         setStep("needs_approval");
       }
     } catch (e) {
@@ -63,7 +65,7 @@ export function HelperSetupGuide({ onDone }: Props) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-[#1c1c1e] px-8">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-[#0a84ff]" />
-        <p className="mt-4 text-sm text-white/40">Checking system setup...</p>
+        <p className="mt-4 text-sm text-white/40">{t("helper.checkingSetup")}</p>
       </div>
     );
   }
@@ -78,8 +80,8 @@ export function HelperSetupGuide({ onDone }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <p className="text-lg font-semibold text-white/90">All set!</p>
-        <p className="mt-1 text-sm text-white/40">Background service is running.</p>
+        <p className="text-lg font-semibold text-white/90">{t("helper.allSet")}</p>
+        <p className="mt-1 text-sm text-white/40">{t("helper.backgroundRunning")}</p>
       </div>
     );
   }
@@ -93,9 +95,9 @@ export function HelperSetupGuide({ onDone }: Props) {
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-[1.5rem] bg-gradient-to-br from-[#0a84ff]/20 to-[#5e5ce6]/20 ring-1 ring-white/[0.1]">
             <img src="/icon.png" alt="NetFerry" className="h-12 w-12 rounded-2xl" />
           </div>
-          <h1 className="text-xl font-bold text-white/90">One More Step</h1>
+          <h1 className="text-xl font-bold text-white/90">{t("helper.oneMoreStep")}</h1>
           <p className="mt-2 max-w-sm text-sm leading-relaxed text-white/40">
-            NetFerry needs permission to run a background service for managing network tunnels without repeated password prompts.
+            {t("helper.permissionDesc")}
           </p>
         </div>
 
@@ -103,18 +105,18 @@ export function HelperSetupGuide({ onDone }: Props) {
         <div className="mb-6 space-y-3">
           <StepCard
             number={1}
-            title="Click 'Enable' below"
-            description="macOS will show a system dialog asking for permission."
+            title={t("helper.step1Title")}
+            description={t("helper.step1Desc")}
           />
           <StepCard
             number={2}
-            title="Allow in System Settings"
-            description='If prompted, open System Settings → Privacy & Security → Login Items & Extensions, and enable NetFerry.'
+            title={t("helper.step2Title")}
+            description={t("helper.step2Desc")}
           />
           <StepCard
             number={3}
-            title="You're all set"
-            description="The background service will start automatically. No more password prompts!"
+            title={t("helper.step3Title")}
+            description={t("helper.step3Desc")}
           />
         </div>
 
@@ -133,16 +135,16 @@ export function HelperSetupGuide({ onDone }: Props) {
             {step === "registering" ? (
               <>
                 <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Registering...
+                {t("helper.registering")}
               </>
             ) : (
-              "Enable Background Service"
+              t("helper.enableService")
             )}
           </Button>
 
           {error && (
             <Button variant="ghost" className="w-full justify-center" onClick={handleRecheck}>
-              I've enabled it — check again
+              {t("helper.checkAgain")}
             </Button>
           )}
 
@@ -151,7 +153,7 @@ export function HelperSetupGuide({ onDone }: Props) {
             className="mt-2 text-center text-xs text-white/25 transition-colors hover:text-white/40"
             onClick={onDone}
           >
-            Skip for now (will use password prompt instead)
+            {t("helper.skipForNow")}
           </button>
         </div>
       </div>

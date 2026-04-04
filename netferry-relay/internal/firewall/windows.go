@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os/exec"
 	"strings"
@@ -38,6 +39,18 @@ func winDivertAvailable() bool {
 	dll.Release()
 	return true
 }
+
+// FlushDNSCache clears the Windows DNS resolver cache so that stale/poisoned
+// entries resolved before the tunnel started are discarded.
+func FlushDNSCache() {
+	exec.Command("ipconfig", "/flushdns").Run()
+	log.Printf("flushed Windows DNS cache")
+}
+
+// FlushExistingConnections is a no-op on Windows. The SOCKS5 method uses
+// system proxy settings; the WinDivert method uses userspace conntrack that
+// is already empty at Setup time.
+func FlushExistingConnections(_ []SubnetRule) {}
 
 // CleanStaleAnchors is a no-op on Windows.
 func CleanStaleAnchors() {}

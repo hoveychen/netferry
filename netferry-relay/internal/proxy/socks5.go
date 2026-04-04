@@ -75,7 +75,23 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 	}
 	log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
 
-	muxConn, err := client.OpenTCP(family, dstIP, dstPort)
+	priority := stats.DefaultPriority
+	routeMode := stats.RouteTunnel
+	if counters != nil {
+		priority = counters.LookupPriority(dstAddr, host)
+		routeMode = counters.LookupRouteMode(dstAddr, host)
+	}
+
+	switch routeMode {
+	case stats.RouteBlocked:
+		log.Printf("socks5: blocked %s -> %s", srcAddr, dstAddr)
+		return
+	case stats.RouteDirect:
+		handleDirect(conn, conn, dstAddr, srcAddr, host, counters, startedAt)
+		return
+	}
+
+	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("socks5: open channel to %s:%d: %v", dstIP, dstPort, err)
 		return

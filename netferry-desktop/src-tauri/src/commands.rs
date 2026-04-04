@@ -1,5 +1,5 @@
 use crate::models::{ConnectionStatus, GlobalSettings, Profile, SshHostEntry};
-use crate::{crypto, profiles, settings, sidecar, ssh_config, tray};
+use crate::{crypto, priorities, profiles, settings, sidecar, ssh_config, tray};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -75,6 +75,32 @@ pub fn get_global_settings(app: AppHandle) -> Result<GlobalSettings, String> {
 #[tauri::command]
 pub fn save_global_settings(app: AppHandle, settings: GlobalSettings) -> Result<(), String> {
     crate::settings::save_settings(&app, &settings)
+}
+
+#[tauri::command]
+pub fn get_priorities(app: AppHandle) -> Result<HashMap<String, i32>, String> {
+    priorities::load_priorities(&app)
+}
+
+#[tauri::command]
+pub fn save_priorities(
+    app: AppHandle,
+    priorities: HashMap<String, i32>,
+) -> Result<(), String> {
+    priorities::save_priorities(&app, &priorities)
+}
+
+#[tauri::command]
+pub fn get_routes(app: AppHandle) -> Result<HashMap<String, String>, String> {
+    priorities::load_routes(&app)
+}
+
+#[tauri::command]
+pub fn save_routes(
+    app: AppHandle,
+    routes: HashMap<String, String>,
+) -> Result<(), String> {
+    priorities::save_routes(&app, &routes)
 }
 
 #[tauri::command]

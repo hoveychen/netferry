@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/hoveychen/netferry/relay/internal/deploy"
 	"github.com/hoveychen/netferry/relay/internal/firewall"
+	"github.com/hoveychen/netferry/relay/internal/logfile"
 	"github.com/hoveychen/netferry/relay/internal/mux"
 	"github.com/hoveychen/netferry/relay/internal/netmon"
 	"github.com/hoveychen/netferry/relay/internal/proxy"
@@ -35,6 +37,10 @@ import (
 )
 
 var Version = "dev"
+
+// serverStderr is the writer used for remote server stderr output.
+// It is set up in main() to tee to both os.Stderr and the server log file.
+var serverStderr io.Writer = os.Stderr
 
 func main() {
 	log.SetFlags(0)
@@ -59,7 +65,7 @@ func main() {
 		excludeNets   = flag.String("exclude", "", "comma-separated CIDRs to exclude from tunnel")
 		poolSize      = flag.Int("pool", 1, "number of parallel SSH TCP connections for connection bonding (1 = disabled; use 2-4 for high-concurrency workloads)")
 		splitConn     = flag.Bool("split", false, "open a second SSH connection per pool member to carry smux control frames (SYN/NOP/UPD) separately from data frames (PSH/FIN), preventing bulk data from delaying window updates")
-		tcpBalance    = flag.String("tcp-balance", "round-robin", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
+		tcpBalance    = flag.String("tcp-balance", "least-loaded", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
 	)
@@ -95,6 +101,17 @@ func main() {
 	if !*verbose {
 		// Keep stderr output, but suppress extra debug noise.
 		log.SetOutput(os.Stderr)
+	}
+
+	// ── Log files (client.log + server.log with size-based rotation) ────────
+	if logDir, err := os.UserCacheDir(); err == nil {
+		logDir = filepath.Join(logDir, "netferry", "logs")
+		if cw, err := logfile.New(filepath.Join(logDir, "client.log"), logfile.DefaultMaxSize, logfile.DefaultMaxBackups); err == nil {
+			log.SetOutput(io.MultiWriter(log.Writer(), cw))
+		}
+		if sw, err := logfile.New(filepath.Join(logDir, "server.log"), logfile.DefaultMaxSize, logfile.DefaultMaxBackups); err == nil {
+			serverStderr = io.MultiWriter(os.Stderr, sw)
+		}
 	}
 
 	// ── SSH config resolution ────────────────────────────────────────────────
@@ -243,8 +260,6 @@ func main() {
 		}
 		clients[i] = c
 	}
-	// Primary: its death exits the tunnel (triggers Tauri reconnect).
-	go func() { muxErrCh <- clients[0].Run() }()
 	if *splitConn {
 		log.Printf("mux: split-conn enabled (data/ctrl on separate TCP connections)")
 	}
@@ -257,18 +272,21 @@ func main() {
 	firstClient := clients[0]
 	var tunnelClient mux.TunnelClient
 	if n == 1 {
+		// Single tunnel: its death exits the tunnel process (Tauri will reconnect).
+		go func() { muxErrCh <- firstClient.Run() }()
 		tunnelClient = firstClient
 	} else {
-		strategy := mux.LBRoundRobin
-		if *tcpBalance == "least-loaded" {
-			strategy = mux.LBLeastLoaded
+		strategy := mux.LBLeastLoaded
+		if *tcpBalance == "round-robin" {
+			strategy = mux.LBRoundRobin
 		}
 		pool := mux.NewMuxPoolWithStrategy(clients, strategy)
 		tunnelClient = pool
-		// Start secondary pool members with auto-reconnect on death.
-		for i := 1; i < n; i++ {
+		// All pool members reconnect independently on death.
+		// The process only exits if all members die at the same time (network-level failure).
+		for i := 0; i < n; i++ {
 			idx := i
-			go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, jumpHosts, remoteCmd, *splitConn, counters)
+			go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, jumpHosts, remoteCmd, *splitConn, counters, muxErrCh)
 		}
 	}
 
@@ -420,8 +438,16 @@ func main() {
 		fatalf("firewall setup: %v", err)
 	}
 
-	// Ensure firewall cleanup on any exit path.
-	defer fw.Restore()
+	// Ensure firewall cleanup on any exit path — unless we are exiting for
+	// reconnect, in which case we deliberately keep the rules in place so
+	// traffic is blocked (redirected to the dead proxy port) rather than
+	// leaking to the public internet during the reconnect window.
+	skipFWRestore := false
+	defer func() {
+		if !skipFWRestore {
+			fw.Restore()
+		}
+	}()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
@@ -433,6 +459,15 @@ func main() {
 
 	// ── Signal tunnel is ready (Tauri sidecar.rs watches for this exact line) ─
 	fmt.Fprintln(os.Stderr, "c : Connected to server.")
+
+	// Flush DNS cache BEFORE resetting TCP connections. Order matters:
+	// 1. FlushDNSCache — discard stale/poisoned DNS entries
+	// 2. FlushExistingConnections — RST existing TCP connections
+	// If we reset TCP first, apps reconnect immediately using the still-
+	// poisoned DNS cache and hit the wrong IPs. By flushing DNS first,
+	// reconnecting apps re-resolve through the tunnel's DNS interceptor.
+	firewall.FlushDNSCache()
+	firewall.FlushExistingConnections(effectiveSubnets)
 
 	// ── Start DNS proxy ───────────────────────────────────────────────────────
 	if *dns && dnsListener != nil {
@@ -471,16 +506,24 @@ func main() {
 		if err != nil {
 			log.Printf("mux closed: %v", err)
 		}
+		// Mux dying means the SSH connection dropped — keep firewall rules
+		// so traffic is blocked rather than leaking during reconnect.
+		skipFWRestore = true
+		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
 	case err := <-proxyErrCh:
 		if err != nil {
 			log.Printf("proxy closed: %v", err)
 		}
+		// Local proxy error — not a network issue, restore firewall.
 	case err := <-netChangeCh:
 		if err != nil {
 			log.Printf("netmon error: %v", err)
 		} else {
 			log.Printf("network change detected, exiting for reconnect")
 		}
+		// Network change — keep firewall rules during reconnect window.
+		skipFWRestore = true
+		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
 	}
 }
 
@@ -614,7 +657,7 @@ func tryMuxClient(sc *ssh.Client, remoteCmd string, member, total int) (*mux.Mux
 	if err != nil {
 		return nil, fmt.Errorf("session %d stdout: %w", member, err)
 	}
-	sess.Stderr = os.Stderr
+	sess.Stderr = serverStderr
 	if err := sess.Start(remoteCmd); err != nil {
 		return nil, fmt.Errorf("start remote server (session %d): %w", member, err)
 	}
@@ -650,7 +693,7 @@ func trySplitMuxClient(
 	if err != nil {
 		return nil, fmt.Errorf("split data session %d/%d stdout: %w", member, total, err)
 	}
-	dataSess.Stderr = os.Stderr
+	dataSess.Stderr = serverStderr
 
 	dataCmd := remoteCmd + " --session-id " + sid + " --role main"
 	if err := dataSess.Start(dataCmd); err != nil {
@@ -679,7 +722,7 @@ func trySplitMuxClient(
 		ctrlClient.Close()
 		return nil, fmt.Errorf("split ctrl session %d/%d stdout: %w", member, total, err)
 	}
-	ctrlSess.Stderr = os.Stderr
+	ctrlSess.Stderr = serverStderr
 
 	ctrlCmd := remoteCmd
 	if idx := strings.IndexByte(remoteCmd, ' '); idx >= 0 {
@@ -752,10 +795,15 @@ func connectPoolMember(
 	return c, nil
 }
 
+// maxReconnectAttempts is the number of consecutive reconnect failures before
+// a pool member gives up and signals a fatal error (triggering a full tunnel
+// restart via Tauri).
+const maxReconnectAttempts = 10
+
 // reconnectPoolMember runs the given MuxClient and, when it dies, reconnects
-// with exponential backoff and replaces it in the pool. This function never
-// returns — it is meant to be called as a goroutine for each secondary pool
-// member.
+// with exponential backoff and replaces it in the pool. If reconnection fails
+// maxReconnectAttempts times in a row, it sends a fatal error on fatalCh so
+// the process can exit and let Tauri restart the whole tunnel.
 func reconnectPoolMember(
 	pool *mux.MuxPool,
 	idx, total int,
@@ -766,19 +814,43 @@ func reconnectPoolMember(
 	remoteCmd string,
 	split bool,
 	counters *stats.Counters,
+	fatalCh chan<- error,
 ) {
 	c := initial
 	backoff := 5 * time.Second
 	const maxBackoff = 60 * time.Second
+
+	// Update tunnel state.
+	if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+		tc.SetState(stats.TunnelAlive)
+	}
 
 	for {
 		if err := c.Run(); err != nil {
 			log.Printf("mux pool member %d/%d closed: %v", idx+1, total, err)
 		}
 
+		if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+			tc.SetState(stats.TunnelReconnecting)
+		}
+
 		// Reconnect loop with exponential backoff.
+		attempts := 0
 		for {
-			log.Printf("mux pool member %d/%d: reconnecting in %v", idx+1, total, backoff)
+			attempts++
+			if attempts > maxReconnectAttempts {
+				log.Printf("mux pool member %d/%d: giving up after %d failed reconnect attempts", idx+1, total, maxReconnectAttempts)
+				if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+					tc.SetState(stats.TunnelDead)
+				}
+				select {
+				case fatalCh <- fmt.Errorf("pool member %d/%d: exhausted %d reconnect attempts", idx+1, total, maxReconnectAttempts):
+				default:
+				}
+				return
+			}
+
+			log.Printf("mux pool member %d/%d: reconnecting in %v (attempt %d/%d)", idx+1, total, backoff, attempts, maxReconnectAttempts)
 			time.Sleep(backoff)
 
 			newClient, err := connectPoolMember(hc, ac, jumpHosts, remoteCmd, split, counters, idx+1, total)
@@ -791,6 +863,9 @@ func reconnectPoolMember(
 			pool.ReplaceClient(idx, newClient)
 			c = newClient
 			backoff = 5 * time.Second
+			if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+				tc.SetState(stats.TunnelAlive)
+			}
 			log.Printf("mux pool member %d/%d: reconnected successfully", idx+1, total)
 			break
 		}

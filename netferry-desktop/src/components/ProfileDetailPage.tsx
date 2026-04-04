@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, FolderOpen, Plus, Trash2, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { JumpHost, MethodFeatures, Profile } from "@/types";
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: Props) {
+  const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -62,18 +64,18 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
   const validation = useMemo(() => {
     const errors: string[] = [];
-    if (!draft.name.trim()) errors.push("Profile name is required.");
+    if (!draft.name.trim()) errors.push(t("profileDetail.validation.nameRequired"));
     if (!remoteRegex.test(draft.remote.trim()))
-      errors.push("SSH remote must be in the format user@host[:port].");
-    if (draft.subnets.length === 0) errors.push("At least one included subnet is required.");
+      errors.push(t("profileDetail.validation.invalidRemote"));
+    if (draft.subnets.length === 0) errors.push(t("profileDetail.validation.subnetRequired"));
     const badInclude = draft.subnets.find((s) => !cidrRegex.test(s));
-    if (badInclude) errors.push(`Invalid include subnet: ${badInclude}`);
+    if (badInclude) errors.push(t("profileDetail.validation.invalidIncludeSubnet", { subnet: badInclude }));
     const badExclude = draft.excludeSubnets.find((s) => !cidrRegex.test(s));
-    if (badExclude) errors.push(`Invalid exclude subnet: ${badExclude}`);
+    if (badExclude) errors.push(t("profileDetail.validation.invalidExcludeSubnet", { subnet: badExclude }));
     if (draft.dns === "specific" && !draft.dnsTarget?.trim())
-      errors.push("DNS target is required when DNS mode is specific.");
+      errors.push(t("profileDetail.validation.dnsTargetRequired"));
     return { valid: errors.length === 0, errors };
-  }, [draft]);
+  }, [draft, t]);
 
   const setField = <K extends keyof Profile>(key: K, value: Profile[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -107,22 +109,22 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
             onClick={onBack}
           >
             <ArrowLeft className="h-4 w-4" />
-            Back
+            {t("nav.back")}
           </button>
           <span className="text-white/20">/</span>
           <h1 className="text-[15px] font-semibold text-white/90">
-            {draft.name || "Imported Profile"}
+            {draft.name || t("profileDetail.importedProfile")}
           </h1>
           <div className="ml-auto flex items-center gap-2">
             {!confirmDelete && (
               <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
                 <Trash2 className="mr-1 h-3.5 w-3.5" />
-                Delete
+                {t("nav.delete")}
               </Button>
             )}
             {confirmDelete && (
               <>
-                <span className="text-sm text-[#ff453a]/80">Are you sure?</span>
+                <span className="text-sm text-[#ff453a]/80">{t("profileDetail.confirmDelete")}</span>
                 <Button
                   variant="danger"
                   size="sm"
@@ -131,10 +133,10 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                     onBack();
                   }}
                 >
-                  Yes, delete
+                  {t("profileDetail.yesDelete")}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-                  Cancel
+                  {t("nav.cancel")}
                 </Button>
               </>
             )}
@@ -143,7 +145,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               onClick={save}
               disabled={saving || !draft.name.trim()}
             >
-              {saving ? "Saving..." : "Save"}
+              {saving ? t("nav.saving") : t("nav.save")}
             </Button>
           </div>
         </div>
@@ -151,15 +153,15 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-2xl space-y-4">
             <div className="rounded-xl border border-[#0a84ff]/20 bg-[#0a84ff]/[0.06] px-4 py-3 text-sm text-[#0a84ff]/80">
-              This profile was imported. Only the name can be changed.
+              {t("profileDetail.importedNotice")}
             </div>
             <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-white/60">Name</label>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.name")}</label>
                 <Input
                   value={draft.name}
                   onChange={(e) => setField("name", e.target.value)}
-                  placeholder="Profile name"
+                  placeholder={t("profileDetail.namePlaceholder")}
                 />
               </div>
             </div>
@@ -179,22 +181,22 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          {t("nav.back")}
         </button>
         <span className="text-white/20">/</span>
         <h1 className="text-[15px] font-semibold text-white/90">
-          {isNew ? "New Profile" : draft.name || "Edit Profile"}
+          {isNew ? t("profileDetail.newProfile") : draft.name || t("profileDetail.editProfile")}
         </h1>
         <div className="ml-auto flex items-center gap-2">
           {!isNew && !confirmDelete && (
             <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
               <Trash2 className="mr-1 h-3.5 w-3.5" />
-              Delete
+              {t("nav.delete")}
             </Button>
           )}
           {!isNew && confirmDelete && (
             <>
-              <span className="text-sm text-[#ff453a]/80">Are you sure?</span>
+              <span className="text-sm text-[#ff453a]/80">{t("profileDetail.confirmDelete")}</span>
               <Button
                 variant="danger"
                 size="sm"
@@ -203,15 +205,15 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   onBack();
                 }}
               >
-                Yes, delete
+                {t("profileDetail.yesDelete")}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-                Cancel
+                {t("nav.cancel")}
               </Button>
             </>
           )}
           <Button size="sm" onClick={save} disabled={saving || !validation.valid}>
-            {saving ? "Saving…" : isNew ? "Create" : "Save"}
+            {saving ? t("nav.saving") : isNew ? t("nav.create") : t("nav.save")}
           </Button>
         </div>
       </div>
@@ -229,33 +231,33 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
           <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
             <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
-              Connection
+              {t("profileDetail.connection")}
             </p>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-white/60">Name</label>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.name")}</label>
                 <Input
                   value={draft.name}
                   onChange={(e) => setField("name", e.target.value)}
-                  placeholder="e.g. Corp Network"
+                  placeholder={t("profileDetail.namePlaceholder")}
                 />
               </div>
 
               <div className="col-span-2">
                 <label className="mb-1.5 block text-sm font-medium text-white/60">
-                  SSH Remote{" "}
-                  <span className="font-normal text-white/30">(user@host:port)</span>
+                  {t("profileDetail.sshRemote")}{" "}
+                  <span className="font-normal text-white/30">{t("profileDetail.sshRemoteHint")}</span>
                 </label>
                 <Input
                   value={draft.remote}
                   onChange={(e) => setField("remote", e.target.value)}
-                  placeholder="alice@example.com:22"
+                  placeholder={t("profileDetail.sshRemotePlaceholder")}
                 />
               </div>
 
               <div className="col-span-2">
                 <label className="mb-1.5 block text-sm font-medium text-white/60">
-                  Identity Key
+                  {t("profileDetail.identityKey")}
                 </label>
                 {/* Tab selector */}
                 <div className="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-0.5">
@@ -270,7 +272,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       setField("identityKey", undefined);
                     }}
                   >
-                    File Path
+                    {t("profileDetail.filePath")}
                   </button>
                   <button
                     type="button"
@@ -283,7 +285,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       setField("identityKey", draft.identityKey ?? "");
                     }}
                   >
-                    PEM Text
+                    {t("profileDetail.pemText")}
                   </button>
                 </div>
                 {draft.identityKey === undefined ? (
@@ -292,7 +294,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       className="flex-1"
                       value={draft.identityFile}
                       onChange={(e) => setField("identityFile", e.target.value)}
-                      placeholder="~/.ssh/id_ed25519"
+                      placeholder={t("profileDetail.identityFilePlaceholder")}
                     />
                     <Button
                       variant="ghost"
@@ -300,7 +302,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       className="shrink-0 px-2"
                       onClick={async () => {
                         const file = await open({
-                          title: "Select SSH Identity File",
+                          title: t("profileDetail.selectSshIdentity"),
                           directory: false,
                           multiple: false,
                         });
@@ -325,19 +327,19 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               <div className="col-span-2">
                 <div className="mb-1.5 flex items-center justify-between">
                   <label className="text-sm font-medium text-white/60">
-                    Jump Hosts{" "}
-                    <span className="font-normal text-white/30">(ProxyJump)</span>
+                    {t("profileDetail.jumpHosts")}{" "}
+                    <span className="font-normal text-white/30">{t("profileDetail.proxyJump")}</span>
                   </label>
                   <button
                     type="button"
                     className="flex items-center gap-1 text-xs text-[#0a84ff]/80 transition-colors hover:text-[#0a84ff]"
                     onClick={addJumpHost}
                   >
-                    <Plus className="h-3 w-3" /> Add
+                    <Plus className="h-3 w-3" /> {t("profileDetail.add")}
                   </button>
                 </div>
                 {jumpHosts.length === 0 ? (
-                  <p className="text-xs text-white/25">No jump hosts configured (direct connection).</p>
+                  <p className="text-xs text-white/25">{t("profileDetail.noJumpHosts")}</p>
                 ) : (
                   <div className="space-y-3">
                     {jumpHosts.map((jh, idx) => (
@@ -347,7 +349,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       >
                         <div className="mb-2 flex items-center justify-between">
                           <span className="text-[11px] font-medium text-white/30">
-                            Hop {idx + 1}
+                            {t("profileDetail.hop", { num: idx + 1 })}
                           </span>
                           <button
                             type="button"
@@ -360,7 +362,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                         <Input
                           value={jh.remote}
                           onChange={(e) => updateJumpHost(idx, { remote: e.target.value })}
-                          placeholder="user@bastion:22"
+                          placeholder={t("profileDetail.jumpHostPlaceholder")}
                           className="mb-2"
                         />
                         {/* Identity tab for this jump host */}
@@ -374,7 +376,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                             }`}
                             onClick={() => updateJumpHost(idx, { identityKey: undefined })}
                           >
-                            File Path
+                            {t("profileDetail.filePath")}
                           </button>
                           <button
                             type="button"
@@ -385,7 +387,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                             }`}
                             onClick={() => updateJumpHost(idx, { identityKey: jh.identityKey ?? "" })}
                           >
-                            PEM Text
+                            {t("profileDetail.pemText")}
                           </button>
                         </div>
                         {jh.identityKey === undefined ? (
@@ -398,7 +400,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                                   identityFile: e.target.value || undefined,
                                 })
                               }
-                              placeholder="~/.ssh/id_ed25519 (optional)"
+                              placeholder={t("profileDetail.jumpHostIdentityPlaceholder")}
                             />
                             <Button
                               variant="ghost"
@@ -406,7 +408,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                               className="shrink-0 px-2"
                               onClick={async () => {
                                 const file = await open({
-                                  title: "Select SSH Identity File",
+                                  title: t("profileDetail.selectSshIdentity"),
                                   directory: false,
                                   multiple: false,
                                 });
@@ -433,8 +435,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
               <div className="col-span-2">
                 <label className="mb-1.5 block text-sm font-medium text-white/60">
-                  Include Subnets{" "}
-                  <span className="font-normal text-white/30">(comma-separated CIDR)</span>
+                  {t("profileDetail.includeSubnets")}{" "}
+                  <span className="font-normal text-white/30">{t("profileDetail.commaSeparatedCidr")}</span>
                 </label>
                 <Input
                   value={subnetsText}
@@ -446,12 +448,12 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       text.split(",").map((v) => v.trim()).filter(Boolean),
                     );
                   }}
-                  placeholder="0.0.0.0/0"
+                  placeholder={t("profileDetail.includeSubnetsPlaceholder")}
                 />
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-white/60">DNS Mode</label>
+                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.dnsMode")}</label>
                 <Select
                   value={draft.dns}
                   onChange={(e) => {
@@ -460,21 +462,21 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                     if (mode !== "specific") setField("dnsTarget", undefined);
                   }}
                 >
-                  <option value="off">off — no DNS tunneling</option>
-                  <option value="all">all — tunnel all DNS</option>
-                  <option value="specific">specific — custom DNS server</option>
+                  <option value="off">{t("profileDetail.dnsOff")}</option>
+                  <option value="all">{t("profileDetail.dnsAll")}</option>
+                  <option value="specific">{t("profileDetail.dnsSpecific")}</option>
                 </Select>
               </div>
 
               {draft.dns === "specific" && (
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-white/60">
-                    DNS Target
+                    {t("profileDetail.dnsTarget")}
                   </label>
                   <Input
                     value={draft.dnsTarget ?? ""}
                     onChange={(e) => setField("dnsTarget", e.target.value || undefined)}
-                    placeholder="8.8.8.8:53"
+                    placeholder={t("profileDetail.dnsTargetPlaceholder")}
                   />
                 </div>
               )}
@@ -488,19 +490,19 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
             onClick={() => setShowAdvanced((s) => !s)}
           >
             <span className="text-[10px]">{showAdvanced ? "▲" : "▼"}</span>
-            {showAdvanced ? "Hide Advanced Options" : "Show Advanced Options"}
+            {showAdvanced ? t("profileDetail.hideAdvanced") : t("profileDetail.showAdvanced")}
           </button>
 
           {showAdvanced && (
             <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
               <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
-                Advanced
+                {t("profileDetail.advanced")}
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="mb-1.5 block text-sm font-medium text-white/60">
-                    Exclude Subnets{" "}
-                    <span className="font-normal text-white/30">(comma-separated)</span>
+                    {t("profileDetail.excludeSubnets")}{" "}
+                    <span className="font-normal text-white/30">{t("profileDetail.commaSeparated")}</span>
                   </label>
                   <Input
                     value={excludeSubnetsText}
@@ -516,7 +518,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">Method</label>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.method")}</label>
                   <Select value={draft.method} onChange={(e) => setField("method", e.target.value)}>
                     {availableMethods.map((m) => (
                       <option key={m} value={m}>
@@ -526,7 +528,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   </Select>
                   {methodFeatures && draft.method !== "auto" && methodFeatures[draft.method] && (
                     <p className="mt-1 text-[11px] text-white/25">
-                      Features: {methodFeatures[draft.method].join(", ") || "none"}
+                      {t("profileDetail.features", { features: methodFeatures[draft.method].join(", ") || "none" })}
                     </p>
                   )}
                 </div>
@@ -540,9 +542,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       className="accent-[#0a84ff]"
                     />
                     <span>
-                      Auto-nets
+                      {t("profileDetail.autoNets")}
                       <span className="ml-1.5 text-xs text-white/30">
-                        (fetch proxy subnets from remote server's routing table)
+                        {t("profileDetail.autoNetsDesc")}
                       </span>
                     </span>
                   </label>
@@ -554,7 +556,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                         onChange={(e) => setField("disableIpv6", e.target.checked)}
                         className="accent-[#0a84ff]"
                       />
-                      Disable IPv6
+                      {t("profileDetail.disableIpv6")}
                     </label>
                   )}
                   {activeFeatures.has("blockUdp") && (
@@ -566,8 +568,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                         className="accent-[#0a84ff]"
                       />
                       <span>
-                        Block non-DNS UDP
-                        <span className="ml-1.5 text-xs text-white/30">(prevents QUIC leaks)</span>
+                        {t("profileDetail.blockUdp")}
+                        <span className="ml-1.5 text-xs text-white/30">{t("profileDetail.blockUdpDesc")}</span>
                       </span>
                     </label>
                   )}
@@ -580,8 +582,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                         className="accent-[#0a84ff]"
                       />
                       <span>
-                        UDP Proxy
-                        <span className="ml-1.5 text-xs text-white/30">(tproxy only)</span>
+                        {t("profileDetail.udpProxy")}
+                        <span className="ml-1.5 text-xs text-white/30">{t("profileDetail.udpProxyDesc")}</span>
                       </span>
                     </label>
                   )}
@@ -596,9 +598,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       className="accent-[#0a84ff]"
                     />
                     <span>
-                      Auto-exclude LAN
+                      {t("profileDetail.autoExcludeLan")}
                       <span className="ml-1.5 text-xs text-white/30">
-                        (exclude local /16 subnets from the tunnel)
+                        {t("profileDetail.autoExcludeLanDesc")}
                       </span>
                     </span>
                   </label>
@@ -607,9 +609,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
                 <div className="col-span-2">
                   <label className="mb-1.5 block text-sm font-medium text-white/60">
-                    SSH Connection Pool
+                    {t("profileDetail.sshConnectionPool")}
                     <span className="ml-1.5 font-normal text-white/30">
-                      (parallel SSH connections for higher concurrency)
+                      {t("profileDetail.sshConnectionPoolDesc")}
                     </span>
                   </label>
                   <Input
@@ -624,18 +626,18 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 {draft.poolSize > 1 && (
                   <div className="col-span-2">
                     <label className="mb-1.5 block text-sm font-medium text-white/60">
-                      TCP Load Balancing
+                      {t("profileDetail.tcpLoadBalancing")}
                       <span className="ml-1.5 font-normal text-white/30">
-                        (how new TCP connections are distributed across pool members)
+                        {t("profileDetail.tcpLoadBalancingDesc")}
                       </span>
                     </label>
                     <select
-                      value={draft.tcpBalanceMode ?? "round-robin"}
+                      value={draft.tcpBalanceMode ?? "least-loaded"}
                       onChange={(e) => setField("tcpBalanceMode", e.target.value as "round-robin" | "least-loaded")}
                       className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white/80 focus:border-[#0a84ff]/50 focus:outline-none"
                     >
-                      <option value="round-robin">Round-Robin (default)</option>
-                      <option value="least-loaded">Least-Loaded (fewest open streams)</option>
+                      <option value="least-loaded">{t("profileDetail.leastLoaded")}</option>
+                      <option value="round-robin">{t("profileDetail.roundRobin")}</option>
                     </select>
                   </div>
                 )}
@@ -649,9 +651,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       className="accent-[#0a84ff]"
                     />
                     <span>
-                      Split Control/Data Connection
+                      {t("profileDetail.splitConn")}
                       <span className="ml-1.5 text-xs text-white/30">
-                        (separate TCP for flow-control frames, reduces HOL blocking)
+                        {t("profileDetail.splitConnDesc")}
                       </span>
                     </span>
                   </label>
@@ -659,17 +661,17 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
                 <div className="col-span-2">
                   <label className="mb-1.5 block text-sm font-medium text-white/60">
-                    Extra SSH Options
+                    {t("profileDetail.extraSshOptions")}
                   </label>
                   <Input
                     value={draft.extraSshOptions ?? ""}
                     onChange={(e) => setField("extraSshOptions", e.target.value || undefined)}
-                    placeholder="-J jump@host"
+                    placeholder={t("profileDetail.extraSshPlaceholder")}
                   />
                 </div>
 
                 <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">Notes</label>
+                  <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.notes")}</label>
                   <Textarea
                     value={draft.notes ?? ""}
                     onChange={(e) => setField("notes", e.target.value || undefined)}

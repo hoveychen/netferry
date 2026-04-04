@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Shield, Zap, Ban, Gauge } from "lucide-react";
 import type { ActiveConnection } from "@/stores/connectionStore";
-import type { ConnectionEvent, ConnectionStatus, DeployProgress, Profile, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
+import { useRuleStore } from "@/stores/ruleStore";
+import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, RouteMode, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -12,12 +15,15 @@ interface Props {
   activeConnections: Map<number, ActiveConnection>;
   recentClosed: ConnectionEvent[];
   tunnelErrors: TunnelError[];
+  destinations: DestinationSnapshot[];
   deployProgress: DeployProgress | null;
   deployReason: string | null;
   onDisconnect: () => Promise<void>;
 }
 
-type Tab = "speed" | "connections" | "logs" | "errors";
+type Tab = "speed" | "connections" | "destinations" | "logs" | "errors";
+
+type DestSortKey = "totalBytes" | "activeConns" | "totalConns" | "rxSpeed" | "lastSeen";
 
 interface SpeedPoint {
   rx: number;
@@ -212,43 +218,252 @@ function tunnelColor(idx: number) {
   return TUNNEL_COLORS[(idx - 1) % TUNNEL_COLORS.length];
 }
 
+/** Format RTT from microseconds to a human-readable string. */
+function formatRtt(us: number): string {
+  if (us === 0) return "—";
+  if (us < 1000) return `${us}µs`;
+  return `${(us / 1000).toFixed(us < 10000 ? 1 : 0)}ms`;
+}
+
+/** RTT color class based on microseconds: green < 50ms, yellow < 200ms, red >= 200ms */
+function rttColor(us: number): string {
+  if (us === 0) return "text-white/25";
+  if (us >= 200_000) return "text-[#ff453a]";
+  if (us >= 50_000) return "text-[#ffd60a]";
+  return "text-white/50";
+}
+
+/**
+ * Diagnose tunnel health from RTT metrics and return a short human-readable
+ * label + colour.
+ */
+function useDiagnoseTunnel() {
+  const { t } = useTranslation();
+  return (tunnel: TunnelSnapshot): { label: string; color: string } => {
+    if (tunnel.lastRttUs === 0) return { label: t("connection.diagnosis.waitingForData"), color: "text-white/25" };
+
+    const lastMs = tunnel.lastRttUs / 1000;
+    const minMs = tunnel.minRttUs / 1000;
+    const jitterMs = tunnel.jitterUs / 1000;
+    const inflation = minMs > 0 ? lastMs / minMs : 1;
+
+    if (jitterMs > 30 && inflation > 2)
+      return { label: t("connection.diagnosis.congestion"), color: "text-[#ff453a]" };
+    if (jitterMs > 30)
+      return { label: t("connection.diagnosis.unstable"), color: "text-[#ff9f0a]" };
+    if (inflation > 3 && jitterMs < 15)
+      return { label: t("connection.diagnosis.bufferbloat", { inflation: inflation.toFixed(0) }), color: "text-[#ff453a]" };
+    if (inflation > 1.8 && jitterMs < 15)
+      return { label: t("connection.diagnosis.possibleBufferbloat", { inflation: inflation.toFixed(1) }), color: "text-[#ffd60a]" };
+    if (minMs > 150)
+      return { label: t("connection.diagnosis.highLatency"), color: "text-[#ffd60a]" };
+
+    return { label: t("connection.diagnosis.healthy"), color: "text-[#30d158]" };
+  };
+}
+
 function TunnelBreakdown({ tunnels }: { tunnels: TunnelSnapshot[] }) {
+  const { t } = useTranslation();
+  const diagnoseTunnel = useDiagnoseTunnel();
+
   if (tunnels.length === 0) return null;
+  const maxScore = Math.max(...tunnels.map((t) => t.congestionScore), 1);
   return (
     <div className="mt-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(tunnels.length, 4)}, minmax(0, 1fr))` }}>
-      {tunnels.map((t) => {
-        const c = tunnelColor(t.index);
+      {tunnels.map((tun) => {
+        const c = tunnelColor(tun.index);
+        const congFrac = maxScore > 0 ? tun.congestionScore / maxScore : 0;
+        const congColor = congFrac > 0.8 ? "#ff453a" : congFrac > 0.5 ? "#ffd60a" : "#30d158";
+        const diag = diagnoseTunnel(tun);
         return (
-          <div key={t.index} className={`rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2.5`}>
+          <div key={tun.index} className={`rounded-xl border px-3 py-2.5 ${
+            tun.state === "dead" ? "border-[#ff453a]/20 bg-[#ff453a]/[0.06] opacity-50" :
+            tun.state === "reconnecting" ? "border-[#ff9f0a]/20 bg-[#ff9f0a]/[0.06]" :
+            "border-white/[0.06] bg-white/[0.04]"
+          }`}>
             <div className="flex items-center gap-1.5 mb-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-              <span className={`text-[11px] font-semibold uppercase tracking-wider ${c.text}`}>
-                Tunnel {t.index}
+              {tun.state === "alive" ? (
+                <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+              ) : tun.state === "reconnecting" ? (
+                <span className="h-1.5 w-1.5 rounded-full bg-[#ff9f0a] animate-pulse" />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-[#ff453a]" />
+              )}
+              <span className={`text-[11px] font-semibold uppercase tracking-wider ${
+                tun.state === "dead" ? "text-[#ff453a]" :
+                tun.state === "reconnecting" ? "text-[#ff9f0a]" : c.text
+              }`}>
+                {t("connection.tunnel", { index: tun.index })}
               </span>
+              {tun.state !== "alive" && (
+                <span className={`text-[10px] ${tun.state === "dead" ? "text-[#ff453a]/60" : "text-[#ff9f0a]/60"}`}>
+                  {tun.state === "reconnecting" ? t("connection.reconnecting") : t("connection.dead")}
+                </span>
+              )}
             </div>
+            {tun.state === "dead" ? (
+              <p className="text-[10px] text-[#ff453a]/60">{t("connection.reconnectionFailed")}</p>
+            ) : (
             <div className="flex flex-col gap-0.5">
               <div className="flex justify-between items-baseline">
                 <span className="text-[10px] text-white/30">↓</span>
-                <span className={`font-mono text-xs font-semibold ${c.text}`}>{formatBytes(t.rxBytesPerSec)}/s</span>
+                <span className={`font-mono text-xs font-semibold ${c.text}`}>{formatBytes(tun.rxBytesPerSec)}/s</span>
               </div>
               <div className="flex justify-between items-baseline">
                 <span className="text-[10px] text-white/30">↑</span>
-                <span className="font-mono text-xs text-white/50">{formatBytes(t.txBytesPerSec)}/s</span>
+                <span className="font-mono text-xs text-white/50">{formatBytes(tun.txBytesPerSec)}/s</span>
               </div>
               <div className="flex justify-between items-baseline mt-0.5">
-                <span className="text-[10px] text-white/30">conns</span>
-                <span className="font-mono text-xs text-white/50">{t.activeConns}</span>
+                <span className="text-[10px] text-white/30">{t("connection.conns")}</span>
+                <span className="font-mono text-xs text-white/50">{tun.activeConns}</span>
               </div>
+              {/* RTT row: last (min) */}
               <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-white/30">rtt</span>
-                <span className={`font-mono text-xs ${t.lastKeepaliveRtt === 0 ? "text-white/25" : t.lastKeepaliveRtt > 200 ? "text-[#ff453a]" : t.lastKeepaliveRtt > 80 ? "text-[#ffd60a]" : "text-white/50"}`}>
-                  {t.lastKeepaliveRtt === 0 ? "—" : `${t.lastKeepaliveRtt}ms`}
+                <span className="text-[10px] text-white/30">{t("connection.rtt")}</span>
+                <span className={`font-mono text-xs ${rttColor(tun.lastRttUs)}`}>
+                  {formatRtt(tun.lastRttUs)}
+                  {tun.minRttUs > 0 && tun.minRttUs !== tun.lastRttUs && (
+                    <span className="text-white/20 ml-0.5">({formatRtt(tun.minRttUs)} min)</span>
+                  )}
                 </span>
               </div>
+              {/* Jitter row */}
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-white/30">{t("connection.jitter")}</span>
+                <span className={`font-mono text-xs ${tun.jitterUs > 30_000 ? "text-[#ff9f0a]" : "text-white/40"}`}>
+                  {tun.lastRttUs === 0 ? "—" : formatRtt(tun.jitterUs)}
+                </span>
+              </div>
+              {/* Congestion bar */}
+              <div className="mt-1.5">
+                <div className="flex justify-between items-baseline mb-0.5">
+                  <span className="text-[10px] text-white/30">{t("connection.load")}</span>
+                  <span className="font-mono text-[10px] text-white/30">{tun.congestionScore.toFixed(1)}</span>
+                </div>
+                <div className="h-1 w-full rounded-full bg-white/[0.08] overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(congFrac * 100, 100)}%`, backgroundColor: congColor }}
+                  />
+                </div>
+              </div>
+              {/* Diagnosis */}
+              <p className={`mt-1 text-[10px] leading-tight ${diag.color}`}>{diag.label}</p>
             </div>
+            )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
+  1: { label: "Low",  color: "text-white/40",   ring: "ring-white/10",     bg: "bg-white/[0.06]",    dotColor: "bg-white/30" },
+  2: { label: "Low+", color: "text-white/50",   ring: "ring-white/15",     bg: "bg-white/[0.08]",    dotColor: "bg-white/40" },
+  3: { label: "Norm", color: "text-[#0a84ff]",  ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10",    dotColor: "bg-[#0a84ff]" },
+  4: { label: "High", color: "text-[#ff9f0a]",  ring: "ring-[#ff9f0a]/30", bg: "bg-[#ff9f0a]/10",    dotColor: "bg-[#ff9f0a]" },
+  5: { label: "Crit", color: "text-[#ff453a]",  ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10",    dotColor: "bg-[#ff453a]" },
+};
+
+const ROUTE_META: Record<RouteMode, { label: string; color: string; ring: string; bg: string; Icon: typeof Shield }> = {
+  tunnel:  { label: "Tunnel",  color: "text-[#0a84ff]", ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10", Icon: Shield },
+  direct:  { label: "Direct",  color: "text-[#30d158]", ring: "ring-[#30d158]/30", bg: "bg-[#30d158]/10", Icon: Zap },
+  blocked: { label: "Blocked", color: "text-[#ff453a]", ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10", Icon: Ban },
+};
+
+function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: RouteMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const meta = ROUTE_META[route];
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-all hover:brightness-125 ${meta.bg} ${meta.color} ${meta.ring}`}
+      >
+        <meta.Icon size={11} />
+        {meta.label}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+          {(["tunnel", "direct", "blocked"] as RouteMode[]).map((mode) => {
+            const m = ROUTE_META[mode];
+            const active = mode === route;
+            return (
+              <button
+                key={mode}
+                onClick={(e) => { e.stopPropagation(); onChange(mode); setOpen(false); }}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
+                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                }`}
+              >
+                <m.Icon size={13} className={active ? m.color : "text-white/40"} />
+                {m.label}
+                {active && <span className="ml-auto text-[10px]">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const meta = PRIORITY_META[priority] ?? PRIORITY_META[3];
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-all hover:brightness-125 ${meta.bg} ${meta.color} ${meta.ring}`}
+      >
+        <Gauge size={11} />
+        {meta.label}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+          {[1, 2, 3, 4, 5].map((p) => {
+            const m = PRIORITY_META[p];
+            const active = p === priority;
+            return (
+              <button
+                key={p}
+                onClick={(e) => { e.stopPropagation(); onChange(p); setOpen(false); }}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
+                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${m.dotColor}`} />
+                {m.label}
+                {active && <span className="ml-auto text-[10px]">✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -270,13 +485,17 @@ export function ConnectionPage({
   activeConnections,
   recentClosed,
   tunnelErrors,
+  destinations,
   deployProgress,
   deployReason,
   onDisconnect,
 }: Props) {
+  const { t } = useTranslation();
+  const { setPriority: onSetDestinationPriority, setRoute: onSetDestinationRoute } = useRuleStore();
   const [activeTab, setActiveTab] = useState<Tab>("speed");
   const [disconnecting, setDisconnecting] = useState(false);
   const [speedHistory, setSpeedHistory] = useState<SpeedPoint[]>([]);
+  const [destSort, setDestSort] = useState<DestSortKey>("totalBytes");
   const logEndRef = useRef<HTMLDivElement>(null);
   const connEndRef = useRef<HTMLDivElement>(null);
 
@@ -295,12 +514,6 @@ export function ConnectionPage({
     }
   }, [logs, activeTab]);
 
-  useEffect(() => {
-    if (tunnelErrors.length > 0) {
-      setActiveTab("errors");
-    }
-  }, [tunnelErrors.length]);
-
   const handleDisconnect = async () => {
     setDisconnecting(true);
     try {
@@ -317,30 +530,30 @@ export function ConnectionPage({
   const statCards = tunnelStats
     ? [
         {
-          label: "Download",
+          label: t("connection.download"),
           value: formatBytes(tunnelStats.rxBytesPerSec) + "/s",
-          sub: "Total: " + formatBytes(tunnelStats.totalRxBytes),
+          sub: t("connection.total", { bytes: formatBytes(tunnelStats.totalRxBytes) }),
           color: "text-[#30d158]",
           icon: "↓",
         },
         {
-          label: "Upload",
+          label: t("connection.upload"),
           value: formatBytes(tunnelStats.txBytesPerSec) + "/s",
-          sub: "Total: " + formatBytes(tunnelStats.totalTxBytes),
+          sub: t("connection.total", { bytes: formatBytes(tunnelStats.totalTxBytes) }),
           color: "text-[#0a84ff]",
           icon: "↑",
         },
         {
-          label: "Connections",
+          label: t("connection.connections"),
           value: String(tunnelStats.activeConns),
-          sub: `${tunnelStats.totalConns} total`,
+          sub: t("connection.totalCount", { count: tunnelStats.totalConns }),
           color: "text-white/80",
           icon: "⇄",
         },
         {
-          label: "DNS",
+          label: t("connection.dns"),
           value: String(tunnelStats.dnsQueries),
-          sub: "queries",
+          sub: t("connection.queries"),
           color: "text-[#bf5af2]",
           icon: null,
         },
@@ -349,10 +562,11 @@ export function ConnectionPage({
 
   const activeConnCount = activeConnections.size;
   const tabs: { id: Tab; label: string; badge?: number }[] = [
-    { id: "speed", label: "Speed" },
-    { id: "connections", label: "Connections", badge: activeConnCount || undefined },
-    { id: "logs", label: "Logs" },
-    { id: "errors", label: "Errors", badge: tunnelErrors.length || undefined },
+    { id: "speed", label: t("connection.speed") },
+    { id: "connections", label: t("connection.connections"), badge: activeConnCount || undefined },
+    { id: "destinations", label: t("connection.destinations"), badge: destinations.length || undefined },
+    { id: "logs", label: t("connection.logs") },
+    { id: "errors", label: t("connection.errors"), badge: tunnelErrors.length || undefined },
   ];
 
   return (
@@ -388,7 +602,7 @@ export function ConnectionPage({
           onClick={handleDisconnect}
           disabled={disconnecting || status.state === "disconnected"}
         >
-          {disconnecting ? "Disconnecting…" : "Disconnect"}
+          {disconnecting ? t("connection.disconnecting") : t("connection.disconnect")}
         </Button>
       </div>
 
@@ -414,8 +628,22 @@ export function ConnectionPage({
       )}
 
       {status.message && !deployProgress && (
-        <div className="border-b border-[#ffd60a]/20 bg-[#ffd60a]/[0.08] px-6 py-2 text-sm text-[#ffd60a]">
+        <div
+          className={`border-b px-6 py-2 text-sm ${
+            status.state === "reconnecting"
+              ? "border-[#ff9f0a]/20 bg-[#ff9f0a]/[0.10] text-[#ff9f0a]"
+              : "border-[#ffd60a]/20 bg-[#ffd60a]/[0.08] text-[#ffd60a]"
+          }`}
+        >
+          {status.state === "reconnecting" && (
+            <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-[#ff9f0a]" />
+          )}
           {status.message}
+          {status.state === "reconnecting" && (
+            <span className="ml-2 text-[#ff9f0a]/50 text-xs">
+              {t("connection.firewallActive")}
+            </span>
+          )}
         </div>
       )}
 
@@ -424,10 +652,10 @@ export function ConnectionPage({
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-white/70">
               {deployReason === "first-deploy"
-                ? "Uploading relay server (first deploy)…"
+                ? t("connection.deployFirstDeploy")
                 : deployReason === "update"
-                  ? "Uploading relay server (new version)…"
-                  : "Uploading relay server…"}
+                  ? t("connection.deployUpdate")
+                  : t("connection.deployGeneric")}
             </span>
             <span className="font-mono text-xs text-white/40">
               {formatBytes(deployProgress.sent)} / {formatBytes(deployProgress.total)}
@@ -440,7 +668,7 @@ export function ConnectionPage({
             />
           </div>
           <p className="mt-1.5 text-[11px] text-white/30">
-            {Math.round(deployProgress.total > 0 ? (deployProgress.sent / deployProgress.total) * 100 : 0)}% complete
+            {t("connection.percentComplete", { percent: Math.round(deployProgress.total > 0 ? (deployProgress.sent / deployProgress.total) * 100 : 0) })}
           </p>
         </div>
       )}
@@ -482,31 +710,31 @@ export function ConnectionPage({
         {activeTab === "speed" && (
           <div className="h-full overflow-y-auto p-4">
             {speedHistory.length === 0 ? (
-              <p className="text-white/25 text-sm">Waiting for speed data…</p>
+              <p className="text-white/25 text-sm">{t("connection.waitingForSpeed")}</p>
             ) : (
               <>
                 <SpeedChart history={speedHistory} />
                 <div className="mt-4 flex items-center gap-6 px-1">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#30d158]" />
-                    <span className="text-xs text-white/40">Download</span>
+                    <span className="text-xs text-white/40">{t("connection.download")}</span>
                     <span className="font-mono text-sm font-semibold text-[#30d158]">
                       {formatBytes(speedHistory[speedHistory.length - 1].rx)}/s
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#0a84ff]" />
-                    <span className="text-xs text-white/40">Upload</span>
+                    <span className="text-xs text-white/40">{t("connection.upload")}</span>
                     <span className="font-mono text-sm font-semibold text-[#0a84ff]">
                       {formatBytes(speedHistory[speedHistory.length - 1].tx)}/s
                     </span>
                   </div>
-                  <span className="ml-auto text-xs text-white/20">Last {speedHistory.length}s</span>
+                  <span className="ml-auto text-xs text-white/20">{t("connection.lastNSeconds", { count: speedHistory.length })}</span>
                 </div>
                 {tunnelStats?.tunnels && tunnelStats.tunnels.length > 1 && (
                   <>
                     <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-white/30">
-                      Per Tunnel
+                      {t("connection.perTunnel")}
                     </p>
                     <TunnelBreakdown tunnels={tunnelStats.tunnels} />
                   </>
@@ -519,13 +747,13 @@ export function ConnectionPage({
         {activeTab === "connections" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs">
             {activeConnCount === 0 && recentClosed.length === 0 ? (
-              <p className="text-white/25">No connections yet.</p>
+              <p className="text-white/25">{t("connection.noConnections")}</p>
             ) : (
               <>
                 {activeConnCount > 0 && (
                   <>
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-white/30">
-                      Active ({activeConnCount})
+                      {t("connection.active", { count: activeConnCount })}
                     </p>
                     {[...activeConnections.values()]
                       .sort((a, b) => b.openedAt - a.openedAt)
@@ -559,7 +787,7 @@ export function ConnectionPage({
                 {recentClosed.length > 0 && (
                   <>
                     <p className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-widest text-white/30">
-                      Recently Closed
+                      {t("connection.recentlyClosed")}
                     </p>
                     {[...recentClosed]
                       .reverse()
@@ -590,10 +818,153 @@ export function ConnectionPage({
           </div>
         )}
 
+        {activeTab === "destinations" && (
+          <div className="h-full overflow-y-auto p-4 font-mono text-xs">
+            {destinations.length === 0 ? (
+              <p className="text-white/25">{t("connection.noDestinations")}</p>
+            ) : (
+              <>
+                {/* Sort controls */}
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-[11px] text-white/30 uppercase tracking-wider">{t("connection.sortBy")}</span>
+                  {([
+                    ["totalBytes", t("connection.sortData")],
+                    ["rxSpeed", t("connection.sortSpeed")],
+                    ["activeConns", t("connection.sortActive")],
+                    ["totalConns", t("connection.sortTotal")],
+                    ["lastSeen", t("connection.sortRecent")],
+                  ] as [DestSortKey, string][]).map(([key, label]) => (
+                    <button
+                      key={key}
+                      className={`rounded-md px-2 py-1 text-[11px] transition-all ${
+                        destSort === key
+                          ? "bg-white/[0.12] text-white/80"
+                          : "text-white/30 hover:bg-white/[0.06] hover:text-white/50"
+                      }`}
+                      onClick={() => setDestSort(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Destination list */}
+                {[...destinations]
+                  .sort((a, b) => {
+                    switch (destSort) {
+                      case "totalBytes": return (b.rxBytes + b.txBytes) - (a.rxBytes + a.txBytes);
+                      case "rxSpeed": return (b.rxBytesPerSec + b.txBytesPerSec) - (a.rxBytesPerSec + a.txBytesPerSec);
+                      case "activeConns": return b.activeConns - a.activeConns;
+                      case "totalConns": return b.totalConns - a.totalConns;
+                      case "lastSeen": return b.lastSeenMs - a.lastSeenMs;
+                      default: return 0;
+                    }
+                  })
+                  .map((dest) => {
+                    const totalBytes = dest.rxBytes + dest.txBytes;
+                    const totalSpeed = dest.rxBytesPerSec + dest.txBytesPerSec;
+                    const isActive = dest.activeConns > 0;
+                    const isBlocked = dest.route === "blocked";
+                    const isDirect = dest.route === "direct";
+                    return (
+                      <div
+                        key={dest.host}
+                        className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
+                          isBlocked
+                            ? "border-[#ff453a]/15 bg-[#ff453a]/[0.04] opacity-60"
+                            : isDirect
+                              ? "border-[#30d158]/15 bg-[#30d158]/[0.04]"
+                              : isActive
+                                ? "border-[#0a84ff]/15 bg-[#0a84ff]/[0.04]"
+                                : "border-white/[0.04] bg-white/[0.02]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isBlocked ? (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff453a]" />
+                            ) : isDirect ? (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#30d158]" />
+                            ) : isActive ? (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#0a84ff]" />
+                            ) : null}
+                            <span className={`truncate text-sm font-medium ${
+                              isBlocked ? "text-white/30 line-through" : isActive ? "text-white/80" : "text-white/40"
+                            }`}>
+                              {dest.host}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 ml-3">
+                            {totalSpeed > 0 && (
+                              <span className="text-[#30d158] text-[11px]">
+                                {formatBytes(totalSpeed)}/s
+                              </span>
+                            )}
+                            <span className="text-white/25 text-[11px]">
+                              {formatBytes(totalBytes)}
+                            </span>
+                            <RouteBadge
+                              route={dest.route}
+                              onChange={(r) => onSetDestinationRoute(dest.host, r)}
+                            />
+                            <PriorityBadge
+                              priority={dest.priority}
+                              onChange={(p) => onSetDestinationPriority(dest.host, p)}
+                            />
+                          </div>
+                        </div>
+                        {dest.processNames && dest.processNames.length > 0 && (
+                          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                            {dest.processNames.map((name) => (
+                              <span
+                                key={name}
+                                className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-white/40"
+                              >
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-4 text-[11px]">
+                          <span className="text-white/25">
+                            <span className={isActive ? "text-[#30d158]" : "text-white/30"}>
+                              {t("connection.activeCount", { count: dest.activeConns })}
+                            </span>
+                            {" / "}
+                            {t("connection.totalCount", { count: dest.totalConns })}
+                          </span>
+                          <span className="text-white/20">
+                            ↓ {formatBytes(dest.rxBytes)}
+                          </span>
+                          <span className="text-white/20">
+                            ↑ {formatBytes(dest.txBytes)}
+                          </span>
+                          {dest.rxBytesPerSec > 0 && (
+                            <span className="text-[#30d158]/60">
+                              ↓ {formatBytes(dest.rxBytesPerSec)}/s
+                            </span>
+                          )}
+                          {dest.txBytesPerSec > 0 && (
+                            <span className="text-[#0a84ff]/60">
+                              ↑ {formatBytes(dest.txBytesPerSec)}/s
+                            </span>
+                          )}
+                          <span className="ml-auto text-white/15">
+                            {formatTime(dest.lastSeenMs)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </>
+            )}
+          </div>
+        )}
+
         {activeTab === "logs" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs text-white/50">
             {logs.length === 0 ? (
-              <p className="text-white/25">Waiting for output…</p>
+              <p className="text-white/25">{t("connection.waitingForOutput")}</p>
             ) : (
               logs.map((line, idx) => (
                 <p key={`${idx}-${line}`} className="whitespace-pre-wrap break-words leading-5">
@@ -608,7 +979,7 @@ export function ConnectionPage({
         {activeTab === "errors" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs">
             {tunnelErrors.length === 0 ? (
-              <p className="text-white/25">No errors.</p>
+              <p className="text-white/25">{t("connection.noErrors")}</p>
             ) : (
               [...tunnelErrors].reverse().map((err, idx) => (
                 <div

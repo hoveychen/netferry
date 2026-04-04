@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, GlobalSettings, MethodFeatures, Profile, SshHostEntry } from "@/types";
+import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, SshHostEntry } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -39,6 +39,22 @@ export function getGlobalSettings() {
 
 export function saveGlobalSettings(settings: GlobalSettings) {
   return invoke<void>("save_global_settings", { settings });
+}
+
+export function getPriorities() {
+  return invoke<DestinationPriorities>("get_priorities");
+}
+
+export function savePriorities(priorities: DestinationPriorities) {
+  return invoke<void>("save_priorities", { priorities });
+}
+
+export function getRoutes() {
+  return invoke<DestinationRoutes>("get_routes");
+}
+
+export function saveRoutes(routes: DestinationRoutes) {
+  return invoke<void>("save_routes", { routes });
 }
 
 export function getStatsUrl() {

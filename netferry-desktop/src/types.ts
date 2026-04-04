@@ -59,13 +59,17 @@ export interface ConnectionStatus {
 }
 
 export interface TunnelSnapshot {
-  index: number;            // 1-based pool member index
+  index: number;           // 1-based pool member index
+  state: "alive" | "reconnecting" | "dead";
   rxBytesPerSec: number;
   txBytesPerSec: number;
   activeConns: number;
   totalConns: number;
-  lastKeepaliveRtt: number; // SSH keepalive RTT in ms (0 = not yet measured)
-  maxKeepaliveRtt: number;  // max RTT seen on this tunnel in ms
+  lastRttUs: number;       // SSH keepalive RTT in µs (0 = not yet measured)
+  minRttUs: number;        // min RTT over recent ~5 min window in µs (network floor)
+  maxRttUs: number;        // max RTT in µs
+  jitterUs: number;        // |last - prev| in µs
+  congestionScore: number; // streams × (1 + rtt_ms/50); lower = less loaded
 }
 
 export interface TunnelStats {
@@ -88,6 +92,29 @@ export interface ConnectionEvent {
   tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
   timestampMs: number;
 }
+
+export interface DestinationSnapshot {
+  host: string;          // hostname or IP
+  activeConns: number;   // currently open connections
+  totalConns: number;    // all-time connections opened
+  rxBytes: number;       // cumulative bytes downloaded
+  txBytes: number;       // cumulative bytes uploaded
+  rxBytesPerSec: number; // download speed
+  txBytesPerSec: number; // upload speed
+  firstSeenMs: number;   // timestamp of first connection
+  lastSeenMs: number;    // timestamp of last activity
+  priority: number;      // 1=low, 3=normal, 5=high
+  route: RouteMode;      // tunnel, direct, or blocked
+  processNames?: string[]; // local processes that connected to this destination
+}
+
+export type RouteMode = "tunnel" | "direct" | "blocked";
+
+/** Map of destination host → priority (1–5). Only non-default entries are stored. */
+export type DestinationPriorities = Record<string, number>;
+
+/** Map of destination host → route mode. Only non-default entries are stored. */
+export type DestinationRoutes = Record<string, RouteMode>;
 
 export interface TunnelError {
   message: string;

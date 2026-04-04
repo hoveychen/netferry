@@ -1,6 +1,7 @@
 package mux
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,8 +21,11 @@ const (
 // TunnelClient is the interface satisfied by both MuxClient and MuxPool.
 // The proxy layer uses this interface to open connections through the tunnel,
 // keeping it decoupled from the underlying transport topology.
+//
+// priority is a hint (1=low, 3=normal, 5=high) that influences tunnel
+// selection in a pool.  Single-tunnel implementations ignore it.
 type TunnelClient interface {
-	OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, error)
+	OpenTCP(family int, dstIP string, dstPort int, priority int) (*ClientConn, error)
 	DNSRequest(data []byte) ([]byte, error)
 	OpenUDP(family int) (*UDPChannel, error)
 }
@@ -89,13 +93,29 @@ func (p *MuxPool) ReplaceClient(idx int, c *MuxClient) {
 
 // OpenTCP picks a client according to the configured TCP strategy and opens a
 // TCP channel. Default is round-robin; use LBLeastLoaded for least-loaded.
-func (p *MuxPool) OpenTCP(family int, dstIP string, dstPort int) (*ClientConn, error) {
-	switch p.tcpStrategy {
-	case LBLeastLoaded:
-		return p.pickLeastLoaded().OpenTCP(family, dstIP, dstPort)
+//
+// The priority hint (1–5) influences tunnel selection:
+//   - High priority (4–5): always picks the least-loaded tunnel for best quality
+//   - Normal priority (3): uses the configured strategy
+//   - Low priority (1–2): uses the most-loaded live tunnel, reserving
+//     better tunnels for higher-priority traffic
+func (p *MuxPool) OpenTCP(family int, dstIP string, dstPort int, priority int) (*ClientConn, error) {
+	var client *MuxClient
+	switch {
+	case priority >= 4:
+		client = p.pickLeastLoaded()
+	case priority <= 2:
+		client = p.pickMostLoaded()
 	default:
-		return p.pick().OpenTCP(family, dstIP, dstPort)
+		// Normal priority — use configured strategy.
+		switch p.tcpStrategy {
+		case LBLeastLoaded:
+			client = p.pickLeastLoaded()
+		default:
+			client = p.pick()
+		}
 	}
+	return client.OpenTCP(family, dstIP, dstPort, priority)
 }
 
 // congestionScore computes a quality score for a client.
@@ -124,9 +144,9 @@ func (p *MuxPool) pickLeastLoaded() *MuxClient {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	best := p.clients[0]
-	bestScore := congestionScore(p.clients[0])
-	for _, c := range p.clients[1:] {
+	var best *MuxClient
+	bestScore := math.MaxFloat64
+	for _, c := range p.clients {
 		if c.IsClosed() {
 			continue
 		}
@@ -134,6 +154,34 @@ func (p *MuxPool) pickLeastLoaded() *MuxClient {
 			best = c
 			bestScore = s
 		}
+	}
+	if best == nil {
+		// All dead — return first so the caller gets an error.
+		return p.clients[0]
+	}
+	return best
+}
+
+// pickMostLoaded returns the live client with the highest congestion score.
+// Low-priority traffic is funneled here to keep the best tunnels available for
+// high-priority destinations.  Falls back to clients[0] if all are dead.
+func (p *MuxPool) pickMostLoaded() *MuxClient {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var best *MuxClient
+	bestScore := -1.0
+	for _, c := range p.clients {
+		if c.IsClosed() {
+			continue
+		}
+		if s := congestionScore(c); s > bestScore {
+			best = c
+			bestScore = s
+		}
+	}
+	if best == nil {
+		return p.clients[0]
 	}
 	return best
 }

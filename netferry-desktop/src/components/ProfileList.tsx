@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Clipboard, Download, FileDown, Pencil, Plus, Settings, Share2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Clipboard, Download, FileDown, Pencil, Plus, Share2 } from "lucide-react";
 import { save as showSaveDialog, open as showOpenDialog } from "@tauri-apps/plugin-dialog";
 import type { Profile } from "@/types";
 import { exportProfile, exportProfileToFile } from "@/api";
@@ -11,7 +12,6 @@ interface Props {
   onNew: () => void;
   onConnect: (profile: Profile) => void;
   onEdit: (id: string) => void;
-  onOpenSettings: () => void;
   onImport: (data: string) => Promise<void>;
   onImportFile: (path: string) => Promise<void>;
 }
@@ -59,7 +59,8 @@ function isExportable(profile: Profile): boolean {
   return true;
 }
 
-export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings, onImport, onImportFile }: Props) {
+export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onImportFile }: Props) {
+  const { t } = useTranslation();
   const [regionMap, setRegionMap] = useState<Record<string, RegionInfo>>({});
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const [exportedId, setExportedId] = useState<string | null>(null);
@@ -84,7 +85,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
       setExportedId(profile.id);
       setTimeout(() => setExportedId(null), 2000);
     } catch (err) {
-      alert(`Export failed: ${err}`);
+      alert(t("profileList.exportFailed", { error: err }));
     }
   };
 
@@ -92,7 +93,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
     setExportMenuId(null);
     try {
       const path = await showSaveDialog({
-        title: "Export Profile",
+        title: t("exportDialog.title"),
         defaultPath: `${profile.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.nfprofile`,
         filters: [{ name: "NetFerry Profile", extensions: ["nfprofile"] }],
       });
@@ -101,7 +102,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
       setExportedId(profile.id);
       setTimeout(() => setExportedId(null), 2000);
     } catch (err) {
-      alert(`Export failed: ${err}`);
+      alert(t("profileList.exportFailed", { error: err }));
     }
   };
 
@@ -109,7 +110,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
     setImportError(null);
     try {
       const path = await showOpenDialog({
-        title: "Import Profile",
+        title: t("importDialog.title"),
         filters: [{ name: "NetFerry Profile", extensions: ["nfprofile"] }],
         multiple: false,
         directory: false,
@@ -150,23 +151,20 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
   }, [profiles]);
 
   return (
-    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+    <div className="flex h-full flex-col bg-[#1c1c1e]">
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
         <div className="flex items-center gap-2.5">
           <img src="/icon.png" alt="NetFerry" className="h-7 w-7 rounded-lg shadow-sm" />
-          <span className="text-[15px] font-semibold tracking-tight text-white/90">NetFerry</span>
+          <span className="text-[15px] font-semibold tracking-tight text-white/90">{t("app.name")}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={onOpenSettings} title="Settings">
-            <Settings className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setImportDialogOpen(true)} title="Import profile">
+          <Button variant="ghost" size="sm" onClick={() => setImportDialogOpen(true)} title={t("profileList.importProfile")}>
             <Download className="h-4 w-4" />
           </Button>
           <Button size="sm" onClick={onNew}>
             <Plus className="mr-1 h-3.5 w-3.5" />
-            New
+            {t("profileList.new")}
           </Button>
         </div>
       </div>
@@ -180,18 +178,18 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
               <img src="/icon.png" alt="NetFerry" className="h-14 w-14 rounded-2xl" />
             </div>
             <h1 className="mb-2 text-2xl font-bold tracking-tight text-white/90">
-              Welcome to NetFerry
+              {t("welcome.title")}
             </h1>
             <p className="mb-8 max-w-sm text-sm leading-relaxed text-white/40">
-              Tunnel your traffic securely through SSH. Create a profile to get started, or import one shared by your team.
+              {t("welcome.description")}
             </p>
 
             {/* Feature highlights */}
             <div className="mb-8 grid w-full max-w-md grid-cols-3 gap-3">
               {[
-                { icon: "🔒", title: "Encrypted", desc: "SSH tunnel" },
-                { icon: "⚡", title: "Fast", desc: "Low overhead" },
-                { icon: "🌍", title: "Global", desc: "Any SSH server" },
+                { icon: "🔒", title: t("welcome.encrypted"), desc: t("welcome.sshTunnel") },
+                { icon: "⚡", title: t("welcome.fast"), desc: t("welcome.lowOverhead") },
+                { icon: "🌍", title: t("welcome.global"), desc: t("welcome.anySshServer") },
               ].map((f) => (
                 <div
                   key={f.title}
@@ -207,11 +205,11 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
             <div className="flex items-center gap-3">
               <Button onClick={onNew}>
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Create Profile
+                {t("welcome.createProfile")}
               </Button>
               <Button variant="ghost" onClick={() => setImportDialogOpen(true)}>
                 <Download className="mr-1.5 h-3.5 w-3.5" />
-                Import
+                {t("nav.import")}
               </Button>
             </div>
           </div>
@@ -234,10 +232,10 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                           e.stopPropagation();
                           setExportMenuId(exportMenuId === profile.id ? null : profile.id);
                         }}
-                        title={exportedId === profile.id ? "Exported!" : "Export profile"}
+                        title={exportedId === profile.id ? t("profileList.exported") : t("profileList.exportProfile")}
                       >
                         {exportedId === profile.id ? (
-                          <span className="text-[11px] text-emerald-400">Done!</span>
+                          <span className="text-[11px] text-emerald-400">{t("profileList.done")}</span>
                         ) : (
                           <Share2 className="h-3.5 w-3.5" />
                         )}
@@ -253,7 +251,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                             onClick={() => handleExportClipboard(profile)}
                           >
                             <Clipboard className="h-3.5 w-3.5" />
-                            Copy to clipboard
+                            {t("profileList.copyToClipboard")}
                           </button>
                           <button
                             type="button"
@@ -261,7 +259,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                             onClick={() => handleExportFile(profile)}
                           >
                             <FileDown className="h-3.5 w-3.5" />
-                            Save as .nfprofile
+                            {t("profileList.saveAsNfprofile")}
                           </button>
                         </div>
                       )}
@@ -274,7 +272,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                       e.stopPropagation();
                       onEdit(profile.id);
                     }}
-                    title={profile.imported ? "Rename profile" : "Edit profile"}
+                    title={profile.imported ? t("profileList.renameProfile") : t("profileList.editProfile")}
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -287,7 +285,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                       {profile.name}
                     </p>
                     <p className="truncate text-xs text-white/38 mt-0.5">
-                      {profile.remote || "No remote set"}
+                      {profile.remote || t("profileList.noRemoteSet")}
                     </p>
                   </div>
                 </div>
@@ -298,16 +296,16 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                   </span>
                   {profile.autoExcludeLan && (
                     <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] text-white/40">
-                      LAN excl.
+                      {t("profileList.lanExcl")}
                     </span>
                   )}
                   {profile.imported && (
                     <span className="rounded-md bg-[#0a84ff]/15 px-2 py-0.5 text-[11px] text-[#0a84ff]/70">
-                      Imported
+                      {t("profileList.imported")}
                     </span>
                   )}
                   <span className="ml-auto text-[11px] text-white/20 transition-colors group-hover:text-[#0a84ff]">
-                    Connect →
+                    {t("profileList.connect")}
                   </span>
                 </div>
               </div>
@@ -320,7 +318,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
       {importDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-white/[0.1] bg-[#2c2c2e] p-6 shadow-2xl">
-            <h2 className="mb-4 text-lg font-semibold text-white/90">Import Profile</h2>
+            <h2 className="mb-4 text-lg font-semibold text-white/90">{t("importDialog.title")}</h2>
 
             {/* Open file */}
             <button
@@ -330,12 +328,12 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
               disabled={importing}
             >
               <Download className="h-4 w-4" />
-              Open .nfprofile file
+              {t("importDialog.openFile")}
             </button>
 
             <div className="mb-3 flex items-center gap-3">
               <div className="h-px flex-1 bg-white/[0.08]" />
-              <span className="text-[11px] text-white/25">or paste text</span>
+              <span className="text-[11px] text-white/25">{t("importDialog.orPasteText")}</span>
               <div className="h-px flex-1 bg-white/[0.08]" />
             </div>
 
@@ -344,7 +342,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
               rows={5}
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="Paste encrypted profile data here..."
+              placeholder={t("importDialog.placeholder")}
             />
             {importError && (
               <p className="mb-3 rounded-lg border border-[#ff453a]/20 bg-[#ff453a]/[0.08] px-3 py-2 text-sm text-[#ff453a]">
@@ -361,10 +359,10 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onOpenSettings
                   setImportError(null);
                 }}
               >
-                Cancel
+                {t("nav.cancel")}
               </Button>
               <Button size="sm" onClick={handleImportFromText} disabled={importing || !importText.trim()}>
-                {importing ? "Importing..." : "Import"}
+                {importing ? t("importDialog.importing") : t("nav.import")}
               </Button>
             </div>
           </div>

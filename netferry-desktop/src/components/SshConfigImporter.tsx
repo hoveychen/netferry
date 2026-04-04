@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { importSshHosts } from "@/api";
 import type { JumpHost, Profile, SshHostEntry } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,7 @@ function resolveJumpHosts(proxyJump: string, allHosts: SshHostEntry[]): JumpHost
 }
 
 export function SshConfigImporter({ open, onClose, onImport }: Props) {
+  const { t } = useTranslation();
   const [hosts, setHosts] = useState<SshHostEntry[]>([]);
   const [selectedHost, setSelectedHost] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -150,13 +152,13 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-2xl border border-white/[0.10] bg-[#2c2c2e] p-6 shadow-2xl shadow-black/60">
         <h3 className="mb-1 text-[17px] font-semibold text-white/90">
-          Import from ~/.ssh/config
+          {t("sshImporter.title")}
         </h3>
         <p className="mb-5 text-sm text-white/45">
-          Select a host to pre-fill a new profile. You can review and edit before saving.
+          {t("sshImporter.subtitle")}
         </p>
 
-        {loading && <p className="text-sm text-white/40">Loading…</p>}
+        {loading && <p className="text-sm text-white/40">{t("sshImporter.loading")}</p>}
         {error && <p className="text-sm text-[#ff453a]">{error}</p>}
 
         {!loading && !error && (
@@ -194,7 +196,7 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                 </div>
                 {selected.proxyJump && (
                   <div className="mt-3 border-t border-white/[0.06] pt-3">
-                    <span className="text-white/40">Jump Hosts</span>
+                    <span className="text-white/40">{t("sshImporter.jumpHosts")}</span>
                     <div className="mt-1 space-y-1">
                       {resolveJumpHosts(selected.proxyJump, hosts).map((jh, i) => (
                         <div key={i} className="flex items-center gap-2 font-mono text-white/75">
@@ -213,8 +215,8 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                   if (parsed && parsed.length > 0) {
                     return (
                       <div className="mt-3 border-t border-white/[0.06] pt-3">
-                        <span className="text-white/40">Jump Hosts</span>
-                        <span className="ml-2 text-[10px] text-white/25">(from ProxyCommand)</span>
+                        <span className="text-white/40">{t("sshImporter.jumpHosts")}</span>
+                        <span className="ml-2 text-[10px] text-white/25">{t("sshImporter.fromProxyCommand")}</span>
                         <div className="mt-1 space-y-1">
                           {parsed.map((jh, i) => (
                             <div key={i} className="flex items-center gap-2 font-mono text-white/75">
@@ -243,10 +245,10 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
 
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            {t("nav.cancel")}
           </Button>
           <Button onClick={handleImport} disabled={!selected || loading}>
-            Import
+            {t("nav.import")}
           </Button>
         </div>
       </div>

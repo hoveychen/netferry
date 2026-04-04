@@ -62,9 +62,6 @@ func (t *tproxyMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort,
 		return setupErr
 	}
 
-	// Flush conntrack entries for intercepted subnets. Without this, packets
-	// from existing connections bypass TPROXY and are not intercepted.
-	flushConntrack(subnets)
 	return nil
 }
 

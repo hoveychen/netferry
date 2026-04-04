@@ -123,13 +123,17 @@ impl Drop for SudoHelper {
 /// this early and ask the OS to re-launch the app with a UAC elevation prompt.
 #[cfg(target_os = "windows")]
 pub fn ensure_elevated(app: &tauri::AppHandle) {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // `net session` succeeds only when the caller has admin rights.
     let is_admin = Command::new("net")
         .args(["session"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -144,6 +148,7 @@ pub fn ensure_elevated(app: &tauri::AppHandle) {
                     "-Command",
                     &format!("Start-Process -FilePath '{}' -Verb RunAs", exe_str),
                 ])
+                .creation_flags(CREATE_NO_WINDOW)
                 .spawn();
         }
         // Exit the current non-elevated instance so the elevated one takes over.
@@ -196,10 +201,17 @@ impl AppState {
 /// Runs `netferry-tunnel --list-features` and returns the parsed JSON.
 pub fn query_method_features() -> Result<HashMap<String, Vec<String>>, String> {
     let binary = resolve_tunnel_exe();
-    let output = Command::new(&binary)
-        .arg("--list-features")
+    let mut cmd = Command::new(&binary);
+    cmd.arg("--list-features")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run tunnel binary: {e}"))?;
     if !output.status.success() {
@@ -390,9 +402,10 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     if profile.pool_size > 1 {
         args.push("--pool".to_string());
         args.push(profile.pool_size.to_string());
-        if profile.tcp_balance_mode == "least-loaded" {
+        // Only pass the flag when explicitly choosing round-robin; least-loaded is the binary default.
+        if profile.tcp_balance_mode == "round-robin" {
             args.push("--tcp-balance".to_string());
-            args.push("least-loaded".to_string());
+            args.push("round-robin".to_string());
         }
     }
     if profile.split_conn {
@@ -516,10 +529,67 @@ fn handle_stats_port_line(app: &AppHandle, line: &str) -> bool {
         if let Ok(mut g) = app.state::<AppState>().stats_port.lock() {
             *g = Some(port);
         }
+
+        // Push persisted destination rules to the sidecar BEFORE the proxy
+        // starts listening. This eliminates the race where connections arrive
+        // with default "tunnel" route mode before the frontend has a chance to
+        // push the persisted rules.
+        push_persisted_rules_to_sidecar(app, port);
+
         let _ = app.emit(STATS_PORT_EVENT, port);
         return true;
     }
     false
+}
+
+/// Immediately push persisted priorities and routes to the Go sidecar's HTTP
+/// API. Uses raw TCP to avoid depending on an async HTTP client.
+fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
+    use crate::priorities;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let post = |path: &str, body: &str| -> Result<(), String> {
+        let addr = format!("127.0.0.1:{}", port);
+        let mut stream = TcpStream::connect(&addr).map_err(|e| e.to_string())?;
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_secs(2)))
+            .ok();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .ok();
+        let req = format!(
+            "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            path, port, body.len(), body
+        );
+        stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+        // Drain the response.
+        let mut buf = [0u8; 512];
+        let _ = stream.read(&mut buf);
+        Ok(())
+    };
+
+    // Push priorities.
+    if let Ok(prios) = priorities::load_priorities(app) {
+        if !prios.is_empty() {
+            if let Ok(body) = serde_json::to_string(&prios) {
+                if let Err(e) = post("/priorities", &body) {
+                    log::warn!("push priorities to sidecar: {}", e);
+                }
+            }
+        }
+    }
+
+    // Push routes.
+    if let Ok(routes) = priorities::load_routes(app) {
+        if !routes.is_empty() {
+            if let Ok(body) = serde_json::to_string(&routes) {
+                if let Err(e) = post("/routes", &body) {
+                    log::warn!("push routes to sidecar: {}", e);
+                }
+            }
+        }
+    }
 }
 
 /// Returns true if the line looks like an error or warning from the tunnel/SSH.
@@ -709,7 +779,8 @@ fn is_network_reachable(remote: &str) -> bool {
 }
 
 /// Spawn a background thread that polls the network and reconnects when available.
-/// The thread emits "reconnecting" status and backs off exponentially.
+/// Uses a fixed retry interval (no exponential backoff) and emits countdown status
+/// so the frontend can display retry progress.
 fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
     // Set up cancellation token.
     let cancel = Arc::new(AtomicBool::new(false));
@@ -731,18 +802,29 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
     }
 
     std::thread::spawn(move || {
-        const BACKOFF: &[u64] = &[3, 5, 10, 15, 30, 30, 30, 30];
+        const RETRY_INTERVAL: u64 = 5; // fixed interval in seconds
         let mut attempt: usize = 0;
 
         loop {
-            let delay = BACKOFF.get(attempt).copied().unwrap_or(30);
             attempt += 1;
 
-            // Sleep in 1-second increments so we can check cancellation quickly.
-            for _ in 0..delay {
+            // Countdown with 1-second status updates so the frontend can show progress.
+            for remaining in (1..=RETRY_INTERVAL).rev() {
                 if cancel.load(Ordering::Relaxed) {
                     log::info!("Reconnect cancelled");
                     return;
+                }
+                let msg = format!(
+                    "Reconnecting in {remaining}s (attempt #{attempt})\u{2026}"
+                );
+                let status = ConnectionStatus {
+                    state: "reconnecting".to_string(),
+                    profile_id: Some(profile_id.clone()),
+                    message: Some(msg),
+                };
+                let _ = app.emit(STATUS_EVENT, status.clone());
+                if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                    *g = status;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
@@ -751,8 +833,8 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
                 return;
             }
 
-            // Update status with attempt number.
-            let msg = format!("Reconnecting (attempt {attempt})\u{2026}");
+            // Update status: attempting now.
+            let msg = format!("Reconnecting now (attempt #{attempt})\u{2026}");
             let _ = app.emit(LOG_EVENT, format!("reconnect: {msg}"));
             let status = ConnectionStatus {
                 state: "reconnecting".to_string(),
@@ -767,6 +849,17 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
             // Check network reachability.
             if !is_network_reachable(&profile.remote) {
                 log::info!("Network not yet reachable for {}, will retry", profile.remote);
+                let status = ConnectionStatus {
+                    state: "reconnecting".to_string(),
+                    profile_id: Some(profile_id.clone()),
+                    message: Some(format!(
+                        "Network unreachable (attempt #{attempt}), retrying\u{2026}"
+                    )),
+                };
+                let _ = app.emit(STATUS_EVENT, status.clone());
+                if let Ok(mut g) = app.state::<AppState>().status.lock() {
+                    *g = status;
+                }
                 continue;
             }
 
@@ -793,7 +886,9 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
                     let status = ConnectionStatus {
                         state: "reconnecting".to_string(),
                         profile_id: Some(profile_id.clone()),
-                        message: Some(format!("Reconnect failed: {e}")),
+                        message: Some(format!(
+                            "Reconnect failed (attempt #{attempt}): {e}"
+                        )),
                     };
                     let _ = app.emit(STATUS_EVENT, status.clone());
                     if let Ok(mut g) = app.state::<AppState>().status.lock() {
@@ -918,6 +1013,13 @@ pub fn connect(
         cmd.process_group(0);
     }
 
+    // On Windows, prevent the child process from creating a visible console window.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     let mut child = cmd
         .spawn()

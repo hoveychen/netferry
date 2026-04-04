@@ -5,6 +5,7 @@ package firewall
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net"
 	"os/exec"
 	"strconv"
@@ -117,6 +118,24 @@ func QueryOrigDst(sock net.Conn) (dstIP string, dstPort int, err error) {
 	ip := net.IP(origDst.Addr[:]).String()
 	port := int(origDst.Port>>8 | origDst.Port<<8) // ntohs
 	return ip, port, nil
+}
+
+// FlushDNSCache clears the Linux DNS cache so that stale/poisoned entries
+// resolved before the tunnel started are discarded. Tries systemd-resolved
+// first (the most common resolver on modern distributions), then falls back
+// to nscd. Errors are silently ignored — the resolver may not be installed.
+func FlushDNSCache() {
+	// systemd-resolved (Ubuntu, Fedora, Arch, etc.)
+	if err := exec.Command("resolvectl", "flush-caches").Run(); err == nil {
+		log.Printf("flushed DNS cache (systemd-resolved)")
+		return
+	}
+	// nscd (older distributions)
+	if err := exec.Command("nscd", "-i", "hosts").Run(); err == nil {
+		log.Printf("flushed DNS cache (nscd)")
+		return
+	}
+	log.Printf("DNS cache flush: no supported resolver found (not an error if caching is disabled)")
 }
 
 // CleanStaleAnchors removes any leftover firewall rules from a previous
@@ -239,6 +258,9 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	fmt.Fprintf(&b, "  chain output {\n    type nat hook output priority -100;\n")
 	// Local traffic protection first.
 	fmt.Fprintf(&b, "    fib daddr type local return\n")
+	// Skip connections from root (uid 0) so the tunnel's own "direct" dials
+	// are not redirected back to the proxy, which would create an infinite loop.
+	fmt.Fprintf(&b, "    meta skuid 0 return\n")
 	// Excludes.
 	for _, excl := range v4Excludes {
 		fmt.Fprintf(&b, "    ip daddr %s return\n", excl)
@@ -284,9 +306,6 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		return fmt.Errorf("nft: %w\n%s", err, out)
 	}
 
-	// Flush conntrack entries for intercepted subnets so existing connections
-	// are disrupted and apps reconnect through the new redirect rules.
-	flushConntrack(subnets)
 	return nil
 }
 
@@ -295,14 +314,17 @@ func (n *nftMethod) Restore() error {
 	return nil
 }
 
-// flushConntrack removes conntrack entries whose destination matches any of the
-// given subnets. This disrupts existing connections so apps reconnect through
-// the newly installed redirect rules. conntrack-tools may not be present on
-// all systems; errors are silently ignored.
-func flushConntrack(subnets []SubnetRule) {
+// FlushExistingConnections removes conntrack entries whose destination matches
+// any of the given subnets. This disrupts existing connections so apps
+// reconnect through the newly installed redirect rules. Call AFTER
+// FlushDNSCache so reconnecting apps resolve through the tunnel's DNS
+// interceptor. conntrack-tools may not be present on all systems; errors are
+// silently ignored.
+func FlushExistingConnections(subnets []SubnetRule) {
 	for _, subnet := range subnets {
 		exec.Command("conntrack", "-D", "-d", subnet.CIDR).Run()
 	}
+	log.Printf("flushed conntrack for %d subnets", len(subnets))
 }
 
 func joinQuoted(ss []string) string {
@@ -359,6 +381,10 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	// Local traffic protection.
 	ipt("-t", "nat", "-A", "NETFERRY", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
 
+	// Skip connections from root so the tunnel's own "direct" dials are not
+	// redirected back to the proxy (prevents infinite loop).
+	ipt("-t", "nat", "-A", "NETFERRY", "-m", "owner", "--uid-owner", "0", "-j", "RETURN")
+
 	// Exclude specified subnets.
 	for _, excl := range v4Excludes {
 		ipt("-t", "nat", "-A", "NETFERRY", "-d", excl, "-j", "RETURN")
@@ -398,6 +424,9 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		// Local traffic protection.
 		ip6t("-t", "nat", "-A", "NETFERRY6", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
 
+		// Skip connections from root (prevents infinite loop for "direct" dials).
+		ip6t("-t", "nat", "-A", "NETFERRY6", "-m", "owner", "--uid-owner", "0", "-j", "RETURN")
+
 		// Exclude specified subnets.
 		for _, excl := range v6Excludes {
 			ip6t("-t", "nat", "-A", "NETFERRY6", "-d", excl, "-j", "RETURN")
@@ -428,9 +457,6 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		}
 	}
 
-	// Flush conntrack entries for intercepted subnets so existing connections
-	// are disrupted and apps reconnect through the new redirect rules.
-	flushConntrack(subnets)
 	return nil
 }
 
