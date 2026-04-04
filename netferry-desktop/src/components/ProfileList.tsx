@@ -28,14 +28,14 @@ const AVATAR_GRADIENTS = [
 function ProfileAvatar({ profile, region }: { profile: Profile; region?: RegionInfo }) {
   if (region?.type === "country") {
     return (
-      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ring-1 ring-white/[0.08]">
+      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-ov-6 text-2xl shadow-[inset_0_1px_0_var(--inset-highlight)] ring-1 ring-bdr">
         {countryCodeToFlag(region.countryCode)}
       </div>
     );
   }
   if (region?.type === "lan" || region?.type === "loopback") {
     return (
-      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ring-1 ring-white/[0.08]">
+      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-ov-6 text-xl shadow-[inset_0_1px_0_var(--inset-highlight)] ring-1 ring-bdr">
         🏠
       </div>
     );
@@ -151,12 +151,12 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
   }, [profiles]);
 
   return (
-    <div className="flex h-full flex-col bg-[#1c1c1e]">
+    <div className="flex h-full flex-col bg-surface">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
         <div className="flex items-center gap-2.5">
           <img src="/icon.png" alt="NetFerry" className="h-7 w-7 rounded-lg shadow-sm" />
-          <span className="text-[15px] font-semibold tracking-tight text-white/90">{t("app.name")}</span>
+          <span className="text-[15px] font-semibold tracking-tight text-t1">{t("app.name")}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => setImportDialogOpen(true)} title={t("profileList.importProfile")}>
@@ -174,13 +174,13 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
         {profiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             {/* Hero */}
-            <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-[1.75rem] bg-gradient-to-br from-[#0a84ff]/20 to-[#5e5ce6]/20 shadow-[0_0_60px_rgba(10,132,255,0.15)] ring-1 ring-white/[0.1]">
+            <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-[1.75rem] bg-gradient-to-br from-accent/20 to-[#5e5ce6]/20 shadow-[0_0_60px_color-mix(in_srgb,var(--accent)_15%,transparent)] ring-1 ring-bdr">
               <img src="/icon.png" alt="NetFerry" className="h-14 w-14 rounded-2xl" />
             </div>
-            <h1 className="mb-2 text-2xl font-bold tracking-tight text-white/90">
+            <h1 className="mb-2 text-2xl font-bold tracking-tight text-t1">
               {t("welcome.title")}
             </h1>
-            <p className="mb-8 max-w-sm text-sm leading-relaxed text-white/40">
+            <p className="mb-8 max-w-sm text-sm leading-relaxed text-t3">
               {t("welcome.description")}
             </p>
 
@@ -193,11 +193,11 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
               ].map((f) => (
                 <div
                   key={f.title}
-                  className="flex flex-col items-center rounded-2xl border border-white/[0.06] bg-white/[0.03] px-3 py-4"
+                  className="flex flex-col items-center rounded-2xl border border-sep bg-ov-3 px-3 py-4"
                 >
                   <span className="mb-1.5 text-xl">{f.icon}</span>
-                  <span className="text-[13px] font-medium text-white/70">{f.title}</span>
-                  <span className="text-[11px] text-white/30">{f.desc}</span>
+                  <span className="text-[13px] font-medium text-t2">{f.title}</span>
+                  <span className="text-[11px] text-t4">{f.desc}</span>
                 </div>
               ))}
             </div>
@@ -218,7 +218,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
             {profiles.map((profile) => (
               <div
                 key={profile.id}
-                className="group relative flex cursor-pointer flex-col rounded-2xl border border-white/[0.07] bg-white/[0.04] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.13] hover:bg-white/[0.07] hover:shadow-2xl hover:shadow-black/40"
+                className="group relative flex cursor-pointer flex-col rounded-2xl border border-sep bg-ov-4 p-5 shadow-[inset_0_1px_0_var(--inset-highlight)] transition-all duration-200 hover:-translate-y-0.5 hover:border-edge hover:bg-ov-6 hover:shadow-2xl hover:shadow-black/40"
                 onClick={() => onConnect(profile)}
               >
                 {/* Action buttons */}
@@ -227,7 +227,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                     <div className="relative">
                       <button
                         type="button"
-                        className="rounded-lg p-1.5 text-white/20 transition-all hover:bg-white/[0.08] hover:text-white/65"
+                        className="rounded-lg p-1.5 text-t5 transition-all hover:bg-ov-8 hover:text-t2"
                         onClick={(e) => {
                           e.stopPropagation();
                           setExportMenuId(exportMenuId === profile.id ? null : profile.id);
@@ -242,12 +242,12 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                       </button>
                       {exportMenuId === profile.id && (
                         <div
-                          className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-white/[0.1] bg-[#2c2c2e] py-1 shadow-2xl"
+                          className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-bdr bg-elevated py-1 shadow-2xl"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
                             type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white/70 hover:bg-white/[0.08]"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-t2 hover:bg-ov-8"
                             onClick={() => handleExportClipboard(profile)}
                           >
                             <Clipboard className="h-3.5 w-3.5" />
@@ -255,7 +255,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                           </button>
                           <button
                             type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white/70 hover:bg-white/[0.08]"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-t2 hover:bg-ov-8"
                             onClick={() => handleExportFile(profile)}
                           >
                             <FileDown className="h-3.5 w-3.5" />
@@ -267,7 +267,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                   )}
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-white/20 transition-all hover:bg-white/[0.08] hover:text-white/65"
+                    className="rounded-lg p-1.5 text-t5 transition-all hover:bg-ov-8 hover:text-t2"
                     onClick={(e) => {
                       e.stopPropagation();
                       onEdit(profile.id);
@@ -281,30 +281,30 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                 <div className="mb-4 flex items-center gap-3">
                   <ProfileAvatar profile={profile} region={regionMap[profile.id]} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-semibold text-white/90">
+                    <p className="truncate text-[15px] font-semibold text-t1">
                       {profile.name}
                     </p>
-                    <p className="truncate text-xs text-white/38 mt-0.5">
+                    <p className="truncate text-xs text-t3 mt-0.5">
                       {profile.remote || t("profileList.noRemoteSet")}
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-white/[0.05] pt-3">
-                  <span className="rounded-md bg-white/[0.06] px-2 py-0.5 font-mono text-[11px] text-white/40">
+                <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-sep pt-3">
+                  <span className="rounded-md bg-ov-6 px-2 py-0.5 font-mono text-[11px] text-t3">
                     DNS: {profile.dns}
                   </span>
                   {profile.autoExcludeLan && (
-                    <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] text-white/40">
+                    <span className="rounded-md bg-ov-6 px-2 py-0.5 text-[11px] text-t3">
                       {t("profileList.lanExcl")}
                     </span>
                   )}
                   {profile.imported && (
-                    <span className="rounded-md bg-[#0a84ff]/15 px-2 py-0.5 text-[11px] text-[#0a84ff]/70">
+                    <span className="rounded-md bg-accent/15 px-2 py-0.5 text-[11px] text-accent/70">
                       {t("profileList.imported")}
                     </span>
                   )}
-                  <span className="ml-auto text-[11px] text-white/20 transition-colors group-hover:text-[#0a84ff]">
+                  <span className="ml-auto text-[11px] text-t5 transition-colors group-hover:text-accent">
                     {t("profileList.connect")}
                   </span>
                 </div>
@@ -317,13 +317,13 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
       {/* Import dialog */}
       {importDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-white/[0.1] bg-[#2c2c2e] p-6 shadow-2xl">
-            <h2 className="mb-4 text-lg font-semibold text-white/90">{t("importDialog.title")}</h2>
+          <div className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl">
+            <h2 className="mb-4 text-lg font-semibold text-t1">{t("importDialog.title")}</h2>
 
             {/* Open file */}
             <button
               type="button"
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/[0.15] bg-white/[0.03] px-4 py-4 text-sm text-white/50 transition-colors hover:border-[#0a84ff]/40 hover:bg-[#0a84ff]/[0.05] hover:text-white/70"
+              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-edge bg-ov-3 px-4 py-4 text-sm text-t3 transition-colors hover:border-accent/40 hover:bg-accent/[0.05] hover:text-t2"
               onClick={handleImportFromFile}
               disabled={importing}
             >
@@ -332,20 +332,20 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
             </button>
 
             <div className="mb-3 flex items-center gap-3">
-              <div className="h-px flex-1 bg-white/[0.08]" />
-              <span className="text-[11px] text-white/25">{t("importDialog.orPasteText")}</span>
-              <div className="h-px flex-1 bg-white/[0.08]" />
+              <div className="h-px flex-1 bg-ov-8" />
+              <span className="text-[11px] text-t4">{t("importDialog.orPasteText")}</span>
+              <div className="h-px flex-1 bg-ov-8" />
             </div>
 
             <textarea
-              className="mb-3 w-full rounded-xl border border-white/[0.1] bg-white/[0.05] px-4 py-3 font-mono text-xs text-white/80 placeholder-white/25 focus:border-[#0a84ff]/50 focus:outline-none"
+              className="mb-3 w-full rounded-xl border border-bdr bg-ov-4 px-4 py-3 font-mono text-xs text-t1 placeholder-t4 focus:border-accent/50 focus:outline-none"
               rows={5}
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               placeholder={t("importDialog.placeholder")}
             />
             {importError && (
-              <p className="mb-3 rounded-lg border border-[#ff453a]/20 bg-[#ff453a]/[0.08] px-3 py-2 text-sm text-[#ff453a]">
+              <p className="mb-3 rounded-lg border border-danger/20 bg-danger/[0.08] px-3 py-2 text-sm text-danger">
                 {importError}
               </p>
             )}

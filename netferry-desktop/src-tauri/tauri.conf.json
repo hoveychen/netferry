@@ -16,7 +16,12 @@
         "width": 1220,
         "height": 760,
         "minWidth": 980,
-        "minHeight": 640
+        "minHeight": 640,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground"],
+          "state": "followsWindowActiveState"
+        }
       }
     ],
     "security": {

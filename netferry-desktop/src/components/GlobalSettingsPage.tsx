@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Monitor, Moon, Sun } from "lucide-react";
 
 import type { GlobalSettings, Profile } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { getThemeMode, setThemeMode, type ThemeMode } from "@/lib/theme";
 
 interface Props {
   settings: GlobalSettings;
@@ -17,6 +19,7 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   const [draft, setDraft] = useState<GlobalSettings>(settings);
   const [saving, setSaving] = useState(false);
   const [language, setLanguage] = useState(i18n.language);
+  const [theme, setTheme] = useState<ThemeMode>(getThemeMode);
 
   const save = async () => {
     setSaving(true);
@@ -34,10 +37,10 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#1c1c1e]">
+    <div className="flex h-full flex-col bg-surface">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
-        <h1 className="text-[15px] font-semibold text-white/90">{t("nav.settings")}</h1>
+      <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
+        <h1 className="text-[15px] font-semibold text-t1">{t("nav.settings")}</h1>
         <div className="ml-auto">
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? t("nav.saving") : t("nav.save")}
@@ -48,15 +51,15 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
       {/* Form */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-2xl space-y-4">
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
               {t("settings.startup")}
             </p>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-white/60">
+              <label className="mb-1.5 block text-sm font-medium text-t2">
                 {t("settings.autoConnect")}
               </label>
-              <p className="mb-2.5 text-xs text-white/35">
+              <p className="mb-2.5 text-xs text-t3">
                 {t("settings.autoConnectDesc")}
               </p>
               <Select
@@ -75,15 +78,53 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.appearance")}
+            </p>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-t2">
+                {t("settings.theme")}
+              </label>
+              <p className="mb-2.5 text-xs text-t3">
+                {t("settings.themeDesc")}
+              </p>
+              <div className="flex gap-2">
+                {([
+                  { id: "system" as ThemeMode, icon: Monitor, label: t("settings.themeSystem") },
+                  { id: "light" as ThemeMode, icon: Sun, label: t("settings.themeLight") },
+                  { id: "dark" as ThemeMode, icon: Moon, label: t("settings.themeDark") },
+                ] as const).map(({ id, icon: Icon, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                      theme === id
+                        ? "bg-accent/10 text-accent ring-1 ring-accent/30"
+                        : "bg-ov-4 text-t3 hover:bg-ov-8 hover:text-t2"
+                    }`}
+                    onClick={() => {
+                      setTheme(id);
+                      setThemeMode(id);
+                    }}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
               {t("settings.language")}
             </p>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-white/60">
+              <label className="mb-1.5 block text-sm font-medium text-t2">
                 {t("settings.language")}
               </label>
-              <p className="mb-2.5 text-xs text-white/35">
+              <p className="mb-2.5 text-xs text-t3">
                 {t("settings.languageDesc")}
               </p>
               <Select

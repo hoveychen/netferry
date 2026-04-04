@@ -165,10 +165,12 @@ func main() {
 	}
 
 	var conn io.ReadWriteCloser
+	var fw *mux.FairWriter
 	if ctrlConn != nil {
 		conn = mux.NewSplitConn(os.Stdin, os.Stdout, ctrlConn, ctrlConn)
 	} else {
-		conn = &rwConn{r: os.Stdin, w: os.Stdout}
+		fw = mux.NewFairWriter(os.Stdout)
+		conn = &rwConn{r: os.Stdin, w: fw}
 	}
 
 	cfg := smux.DefaultConfig()
@@ -212,6 +214,10 @@ func main() {
 			writeMsg(stream, nil) // signal EOF to client
 			stream.Close()
 		}
+	}
+
+	if fw != nil {
+		fw.Close()
 	}
 }
 

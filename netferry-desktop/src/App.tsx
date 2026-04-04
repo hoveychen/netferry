@@ -162,7 +162,7 @@ function App() {
 
   // Show helper setup guide on first launch (macOS)
   if (showHelperSetup === null) {
-    return <div className="h-screen bg-[#1c1c1e]" />;
+    return <div className="h-screen bg-surface" />;
   }
   if (showHelperSetup) {
     return (
@@ -222,7 +222,7 @@ function App() {
   ];
 
   return (
-    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+    <div className="flex h-screen flex-col bg-surface">
       {/* Tab content */}
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab === "profiles" && (
@@ -280,7 +280,7 @@ function App() {
       </div>
 
       {/* Bottom navigation bar */}
-      <nav className="flex items-center justify-around border-t border-white/[0.06] bg-[#1c1c1e]/95 backdrop-blur-xl px-2 py-1.5">
+      <nav className="flex items-center justify-around border-t border-sep bg-sf-bar backdrop-blur-xl px-2 py-1.5">
         {navItems.map(({ id, label, icon: Icon }) => {
           const active = activeTab === id;
           return (
@@ -289,12 +289,12 @@ function App() {
               onClick={() => setActiveTab(id)}
               className={`flex flex-col items-center gap-0.5 rounded-lg px-4 py-1 transition-all ${
                 active
-                  ? "text-[#0a84ff]"
-                  : "text-white/30 hover:text-white/50"
+                  ? "text-accent"
+                  : "text-t4 hover:text-t3"
               }`}
             >
               <Icon size={18} strokeWidth={active ? 2.2 : 1.5} />
-              <span className={`text-[10px] font-medium ${active ? "text-[#0a84ff]" : ""}`}>
+              <span className={`text-[10px] font-medium ${active ? "text-accent" : ""}`}>
                 {label}
               </span>
             </button>

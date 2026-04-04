@@ -150,21 +150,21 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-white/[0.10] bg-[#2c2c2e] p-6 shadow-2xl shadow-black/60">
-        <h3 className="mb-1 text-[17px] font-semibold text-white/90">
+      <div className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60">
+        <h3 className="mb-1 text-[17px] font-semibold text-t1">
           {t("sshImporter.title")}
         </h3>
-        <p className="mb-5 text-sm text-white/45">
+        <p className="mb-5 text-sm text-t3">
           {t("sshImporter.subtitle")}
         </p>
 
-        {loading && <p className="text-sm text-white/40">{t("sshImporter.loading")}</p>}
-        {error && <p className="text-sm text-[#ff453a]">{error}</p>}
+        {loading && <p className="text-sm text-t3">{t("sshImporter.loading")}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
 
         {!loading && !error && (
           <>
             <select
-              className="mb-3.5 h-9 w-full rounded-lg border border-white/[0.10] bg-[#3a3a3c] px-3 py-2 text-sm text-white/90 outline-none transition-all focus:border-[#0a84ff]/60 focus:ring-2 focus:ring-[#0a84ff]/15 cursor-pointer"
+              className="mb-3.5 h-9 w-full rounded-lg border border-bdr bg-elevated px-3 py-2 text-sm text-t1 outline-none transition-all focus:border-accent/60 focus:ring-2 focus:ring-accent/15 cursor-pointer"
               value={selectedHost}
               onChange={(e) => setSelectedHost(e.target.value)}
             >
@@ -176,7 +176,7 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
             </select>
 
             {selected && (
-              <div className="mb-5 rounded-xl border border-white/[0.07] bg-white/[0.04] p-4 text-sm">
+              <div className="mb-5 rounded-xl border border-sep bg-ov-4 p-4 text-sm">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                   {(
                     [
@@ -187,23 +187,23 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                     ] as [string, string | number | undefined][]
                   ).map(([label, value]) => (
                     <>
-                      <span key={`l-${label}`} className="text-white/40">{label}</span>
-                      <span key={`v-${label}`} className="truncate font-mono text-white/75">
+                      <span key={`l-${label}`} className="text-t3">{label}</span>
+                      <span key={`v-${label}`} className="truncate font-mono text-t2">
                         {value ?? "—"}
                       </span>
                     </>
                   ))}
                 </div>
                 {selected.proxyJump && (
-                  <div className="mt-3 border-t border-white/[0.06] pt-3">
-                    <span className="text-white/40">{t("sshImporter.jumpHosts")}</span>
+                  <div className="mt-3 border-t border-sep pt-3">
+                    <span className="text-t3">{t("sshImporter.jumpHosts")}</span>
                     <div className="mt-1 space-y-1">
                       {resolveJumpHosts(selected.proxyJump, hosts).map((jh, i) => (
-                        <div key={i} className="flex items-center gap-2 font-mono text-white/75">
-                          <span className="text-[10px] text-white/25">{i + 1}.</span>
+                        <div key={i} className="flex items-center gap-2 font-mono text-t2">
+                          <span className="text-[10px] text-t4">{i + 1}.</span>
                           <span className="truncate">{jh.remote}</span>
                           {jh.identityFile && (
-                            <span className="truncate text-white/35 text-xs">({jh.identityFile})</span>
+                            <span className="truncate text-t3 text-xs">({jh.identityFile})</span>
                           )}
                         </div>
                       ))}
@@ -214,16 +214,16 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                   const parsed = parseProxyCommandAsJump(selected.proxyCommand, hosts);
                   if (parsed && parsed.length > 0) {
                     return (
-                      <div className="mt-3 border-t border-white/[0.06] pt-3">
-                        <span className="text-white/40">{t("sshImporter.jumpHosts")}</span>
-                        <span className="ml-2 text-[10px] text-white/25">{t("sshImporter.fromProxyCommand")}</span>
+                      <div className="mt-3 border-t border-sep pt-3">
+                        <span className="text-t3">{t("sshImporter.jumpHosts")}</span>
+                        <span className="ml-2 text-[10px] text-t4">{t("sshImporter.fromProxyCommand")}</span>
                         <div className="mt-1 space-y-1">
                           {parsed.map((jh, i) => (
-                            <div key={i} className="flex items-center gap-2 font-mono text-white/75">
-                              <span className="text-[10px] text-white/25">{i + 1}.</span>
+                            <div key={i} className="flex items-center gap-2 font-mono text-t2">
+                              <span className="text-[10px] text-t4">{i + 1}.</span>
                               <span className="truncate">{jh.remote}</span>
                               {jh.identityFile && (
-                                <span className="truncate text-white/35 text-xs">({jh.identityFile})</span>
+                                <span className="truncate text-t3 text-xs">({jh.identityFile})</span>
                               )}
                             </div>
                           ))}
@@ -232,9 +232,9 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                     );
                   }
                   return (
-                    <div className="mt-3 border-t border-white/[0.06] pt-3">
-                      <span className="text-white/40">ProxyCommand</span>
-                      <p className="mt-1 truncate font-mono text-white/75">{selected.proxyCommand}</p>
+                    <div className="mt-3 border-t border-sep pt-3">
+                      <span className="text-t3">ProxyCommand</span>
+                      <p className="mt-1 truncate font-mono text-t2">{selected.proxyCommand}</p>
                     </div>
                   );
                 })()}

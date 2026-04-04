@@ -5,17 +5,17 @@ import type { RouteMode } from "@/types";
 import { useRuleStore } from "@/stores/ruleStore";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
-  1: { label: "Low",  color: "text-white/40",   ring: "ring-white/10",     bg: "bg-white/[0.06]",    dotColor: "bg-white/30" },
-  2: { label: "Low+", color: "text-white/50",   ring: "ring-white/15",     bg: "bg-white/[0.08]",    dotColor: "bg-white/40" },
-  3: { label: "Norm", color: "text-[#0a84ff]",  ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10",    dotColor: "bg-[#0a84ff]" },
-  4: { label: "High", color: "text-[#ff9f0a]",  ring: "ring-[#ff9f0a]/30", bg: "bg-[#ff9f0a]/10",    dotColor: "bg-[#ff9f0a]" },
-  5: { label: "Crit", color: "text-[#ff453a]",  ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10",    dotColor: "bg-[#ff453a]" },
+  1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
+  2: { label: "Low+", color: "text-t3",   ring: "ring-bdr",     bg: "bg-ov-8",    dotColor: "bg-t3" },
+  3: { label: "Norm", color: "text-accent",  ring: "ring-accent/30", bg: "bg-accent/10",    dotColor: "bg-accent" },
+  4: { label: "High", color: "text-warning",  ring: "ring-warning/30", bg: "bg-warning/10",    dotColor: "bg-warning" },
+  5: { label: "Crit", color: "text-danger",  ring: "ring-danger/30", bg: "bg-danger/10",    dotColor: "bg-danger" },
 };
 
 const ROUTE_META: Record<RouteMode, { label: string; color: string; ring: string; bg: string; Icon: typeof Shield }> = {
-  tunnel:  { label: "Tunnel",  color: "text-[#0a84ff]", ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10", Icon: Shield },
-  direct:  { label: "Direct",  color: "text-[#30d158]", ring: "ring-[#30d158]/30", bg: "bg-[#30d158]/10", Icon: Zap },
-  blocked: { label: "Blocked", color: "text-[#ff453a]", ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10", Icon: Ban },
+  tunnel:  { label: "Tunnel",  color: "text-accent", ring: "ring-accent/30", bg: "bg-accent/10", Icon: Shield },
+  direct:  { label: "Direct",  color: "text-success", ring: "ring-success/30", bg: "bg-success/10", Icon: Zap },
+  blocked: { label: "Blocked", color: "text-danger", ring: "ring-danger/30", bg: "bg-danger/10", Icon: Ban },
 };
 
 function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: RouteMode) => void }) {
@@ -42,7 +42,7 @@ function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: Route
         {meta.label}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
           {(["tunnel", "direct", "blocked"] as RouteMode[]).map((mode) => {
             const m = ROUTE_META[mode];
             const active = mode === route;
@@ -51,10 +51,10 @@ function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: Route
                 key={mode}
                 onClick={(e) => { e.stopPropagation(); onChange(mode); setOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
                 }`}
               >
-                <m.Icon size={13} className={active ? m.color : "text-white/40"} />
+                <m.Icon size={13} className={active ? m.color : "text-t3"} />
                 {m.label}
                 {active && <span className="ml-auto text-[10px]">✓</span>}
               </button>
@@ -90,7 +90,7 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
         {meta.label}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
           {[1, 2, 3, 4, 5].map((p) => {
             const m = PRIORITY_META[p];
             const active = p === priority;
@@ -99,7 +99,7 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
                 key={p}
                 onClick={(e) => { e.stopPropagation(); onChange(p); setOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
                 }`}
               >
                 <span className={`h-2 w-2 rounded-full ${m.dotColor}`} />
@@ -128,17 +128,17 @@ export function DestinationsPage() {
   const sorted = [...allHosts].sort((a, b) => a.localeCompare(b));
 
   return (
-    <div className="flex h-full flex-col bg-[#1c1c1e]">
+    <div className="flex h-full flex-col bg-surface">
       {/* Header */}
-      <div className="border-b border-white/[0.06] px-6 py-4">
-        <h1 className="text-lg font-semibold text-white/90">{t("destinationsPage.title")}</h1>
-        <p className="mt-1 text-xs text-white/30">{t("destinationsPage.subtitle")}</p>
+      <div className="border-b border-sep px-6 py-4">
+        <h1 className="text-lg font-semibold text-t1">{t("destinationsPage.title")}</h1>
+        <p className="mt-1 text-xs text-t4">{t("destinationsPage.subtitle")}</p>
       </div>
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#141416] p-4 font-mono text-xs">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-sf-content p-4 font-mono text-xs">
         {sorted.length === 0 ? (
-          <p className="text-white/25">{t("destinationsPage.noRules")}</p>
+          <p className="text-t4">{t("destinationsPage.noRules")}</p>
         ) : (
           sorted.map((host) => {
             const priority = priorities[host] ?? 3;
@@ -151,21 +151,21 @@ export function DestinationsPage() {
                 key={host}
                 className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
                   isBlocked
-                    ? "border-[#ff453a]/15 bg-[#ff453a]/[0.04] opacity-60"
+                    ? "border-danger/15 bg-danger/[0.04] opacity-60"
                     : isDirect
-                      ? "border-[#30d158]/15 bg-[#30d158]/[0.04]"
-                      : "border-white/[0.04] bg-white/[0.02]"
+                      ? "border-success/15 bg-success/[0.04]"
+                      : "border-sep bg-ov-2"
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
                     {isBlocked ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff453a]" />
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
                     ) : isDirect ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#30d158]" />
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                     ) : null}
                     <span className={`truncate text-sm font-medium ${
-                      isBlocked ? "text-white/30 line-through" : "text-white/40"
+                      isBlocked ? "text-t4 line-through" : "text-t3"
                     }`}>
                       {host}
                     </span>

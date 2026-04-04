@@ -101,18 +101,18 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   // Imported profiles: only allow renaming and deleting.
   if (profile.imported) {
     return (
-      <div className="flex h-screen flex-col bg-[#1c1c1e]">
-        <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
+      <div className="flex h-screen flex-col bg-surface">
+        <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
           <button
             type="button"
-            className="flex items-center gap-1.5 text-sm text-white/45 transition-colors hover:text-white/80"
+            className="flex items-center gap-1.5 text-sm text-t3 transition-colors hover:text-t1"
             onClick={onBack}
           >
             <ArrowLeft className="h-4 w-4" />
             {t("nav.back")}
           </button>
-          <span className="text-white/20">/</span>
-          <h1 className="text-[15px] font-semibold text-white/90">
+          <span className="text-t5">/</span>
+          <h1 className="text-[15px] font-semibold text-t1">
             {draft.name || t("profileDetail.importedProfile")}
           </h1>
           <div className="ml-auto flex items-center gap-2">
@@ -124,7 +124,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
             )}
             {confirmDelete && (
               <>
-                <span className="text-sm text-[#ff453a]/80">{t("profileDetail.confirmDelete")}</span>
+                <span className="text-sm text-danger/80">{t("profileDetail.confirmDelete")}</span>
                 <Button
                   variant="danger"
                   size="sm"
@@ -152,12 +152,12 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-2xl space-y-4">
-            <div className="rounded-xl border border-[#0a84ff]/20 bg-[#0a84ff]/[0.06] px-4 py-3 text-sm text-[#0a84ff]/80">
+            <div className="rounded-xl border border-accent/20 bg-accent/[0.06] px-4 py-3 text-sm text-accent/80">
               {t("profileDetail.importedNotice")}
             </div>
-            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.name")}</label>
+                <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.name")}</label>
                 <Input
                   value={draft.name}
                   onChange={(e) => setField("name", e.target.value)}
@@ -172,19 +172,19 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   }
 
   return (
-    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+    <div className="flex h-screen flex-col bg-surface">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
         <button
           type="button"
-          className="flex items-center gap-1.5 text-sm text-white/45 transition-colors hover:text-white/80"
+          className="flex items-center gap-1.5 text-sm text-t3 transition-colors hover:text-t1"
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
           {t("nav.back")}
         </button>
-        <span className="text-white/20">/</span>
-        <h1 className="text-[15px] font-semibold text-white/90">
+        <span className="text-t5">/</span>
+        <h1 className="text-[15px] font-semibold text-t1">
           {isNew ? t("profileDetail.newProfile") : draft.name || t("profileDetail.editProfile")}
         </h1>
         <div className="ml-auto flex items-center gap-2">
@@ -196,7 +196,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
           )}
           {!isNew && confirmDelete && (
             <>
-              <span className="text-sm text-[#ff453a]/80">{t("profileDetail.confirmDelete")}</span>
+              <span className="text-sm text-danger/80">{t("profileDetail.confirmDelete")}</span>
               <Button
                 variant="danger"
                 size="sm"
@@ -222,20 +222,20 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-2xl space-y-4">
           {validation.errors.length > 0 && (
-            <div className="rounded-xl border border-[#ff453a]/20 bg-[#ff453a]/[0.08] px-4 py-3 text-sm text-[#ff453a]">
+            <div className="rounded-xl border border-danger/20 bg-danger/[0.08] px-4 py-3 text-sm text-danger">
               {validation.errors.map((e) => (
                 <p key={e}>{e}</p>
               ))}
             </div>
           )}
 
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
               {t("profileDetail.connection")}
             </p>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.name")}</label>
+                <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.name")}</label>
                 <Input
                   value={draft.name}
                   onChange={(e) => setField("name", e.target.value)}
@@ -244,9 +244,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-white/60">
+                <label className="mb-1.5 block text-sm font-medium text-t2">
                   {t("profileDetail.sshRemote")}{" "}
-                  <span className="font-normal text-white/30">{t("profileDetail.sshRemoteHint")}</span>
+                  <span className="font-normal text-t4">{t("profileDetail.sshRemoteHint")}</span>
                 </label>
                 <Input
                   value={draft.remote}
@@ -256,17 +256,17 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-white/60">
+                <label className="mb-1.5 block text-sm font-medium text-t2">
                   {t("profileDetail.identityKey")}
                 </label>
                 {/* Tab selector */}
-                <div className="mb-2 flex gap-1 rounded-lg bg-white/[0.04] p-0.5">
+                <div className="mb-2 flex gap-1 rounded-lg bg-ov-4 p-0.5">
                   <button
                     type="button"
                     className={`flex-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                       !draft.identityKey
-                        ? "bg-white/[0.1] text-white/80"
-                        : "text-white/40 hover:text-white/60"
+                        ? "bg-ov-10 text-t1"
+                        : "text-t3 hover:text-t2"
                     }`}
                     onClick={() => {
                       setField("identityKey", undefined);
@@ -278,8 +278,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                     type="button"
                     className={`flex-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                       draft.identityKey !== undefined
-                        ? "bg-white/[0.1] text-white/80"
-                        : "text-white/40 hover:text-white/60"
+                        ? "bg-ov-10 text-t1"
+                        : "text-t3 hover:text-t2"
                     }`}
                     onClick={() => {
                       setField("identityKey", draft.identityKey ?? "");
@@ -326,34 +326,34 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               {/* Jump Hosts */}
               <div className="col-span-2">
                 <div className="mb-1.5 flex items-center justify-between">
-                  <label className="text-sm font-medium text-white/60">
+                  <label className="text-sm font-medium text-t2">
                     {t("profileDetail.jumpHosts")}{" "}
-                    <span className="font-normal text-white/30">{t("profileDetail.proxyJump")}</span>
+                    <span className="font-normal text-t4">{t("profileDetail.proxyJump")}</span>
                   </label>
                   <button
                     type="button"
-                    className="flex items-center gap-1 text-xs text-[#0a84ff]/80 transition-colors hover:text-[#0a84ff]"
+                    className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
                     onClick={addJumpHost}
                   >
                     <Plus className="h-3 w-3" /> {t("profileDetail.add")}
                   </button>
                 </div>
                 {jumpHosts.length === 0 ? (
-                  <p className="text-xs text-white/25">{t("profileDetail.noJumpHosts")}</p>
+                  <p className="text-xs text-t4">{t("profileDetail.noJumpHosts")}</p>
                 ) : (
                   <div className="space-y-3">
                     {jumpHosts.map((jh, idx) => (
                       <div
                         key={idx}
-                        className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
+                        className="rounded-xl border border-sep bg-ov-2 p-3"
                       >
                         <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-white/30">
+                          <span className="text-[11px] font-medium text-t4">
                             {t("profileDetail.hop", { num: idx + 1 })}
                           </span>
                           <button
                             type="button"
-                            className="text-white/25 transition-colors hover:text-[#ff453a]"
+                            className="text-t4 transition-colors hover:text-danger"
                             onClick={() => removeJumpHost(idx)}
                           >
                             <X className="h-3.5 w-3.5" />
@@ -366,13 +366,13 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                           className="mb-2"
                         />
                         {/* Identity tab for this jump host */}
-                        <div className="flex gap-1 rounded-lg bg-white/[0.04] p-0.5 mb-2">
+                        <div className="flex gap-1 rounded-lg bg-ov-4 p-0.5 mb-2">
                           <button
                             type="button"
                             className={`flex-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
                               jh.identityKey === undefined
-                                ? "bg-white/[0.1] text-white/80"
-                                : "text-white/40 hover:text-white/60"
+                                ? "bg-ov-10 text-t1"
+                                : "text-t3 hover:text-t2"
                             }`}
                             onClick={() => updateJumpHost(idx, { identityKey: undefined })}
                           >
@@ -382,8 +382,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                             type="button"
                             className={`flex-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
                               jh.identityKey !== undefined
-                                ? "bg-white/[0.1] text-white/80"
-                                : "text-white/40 hover:text-white/60"
+                                ? "bg-ov-10 text-t1"
+                                : "text-t3 hover:text-t2"
                             }`}
                             onClick={() => updateJumpHost(idx, { identityKey: jh.identityKey ?? "" })}
                           >
@@ -434,9 +434,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div className="col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-white/60">
+                <label className="mb-1.5 block text-sm font-medium text-t2">
                   {t("profileDetail.includeSubnets")}{" "}
-                  <span className="font-normal text-white/30">{t("profileDetail.commaSeparatedCidr")}</span>
+                  <span className="font-normal text-t4">{t("profileDetail.commaSeparatedCidr")}</span>
                 </label>
                 <Input
                   value={subnetsText}
@@ -453,7 +453,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.dnsMode")}</label>
+                <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.dnsMode")}</label>
                 <Select
                   value={draft.dns}
                   onChange={(e) => {
@@ -470,7 +470,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
               {draft.dns === "specific" && (
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  <label className="mb-1.5 block text-sm font-medium text-t2">
                     {t("profileDetail.dnsTarget")}
                   </label>
                   <Input
@@ -485,7 +485,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
           {/* Advanced toggle */}
           <button
-            className="flex items-center gap-2 text-sm font-medium text-white/35 transition-colors hover:text-white/60"
+            className="flex items-center gap-2 text-sm font-medium text-t3 transition-colors hover:text-t2"
             type="button"
             onClick={() => setShowAdvanced((s) => !s)}
           >
@@ -494,15 +494,15 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
           </button>
 
           {showAdvanced && (
-            <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+            <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+              <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
                 {t("profileDetail.advanced")}
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  <label className="mb-1.5 block text-sm font-medium text-t2">
                     {t("profileDetail.excludeSubnets")}{" "}
-                    <span className="font-normal text-white/30">{t("profileDetail.commaSeparated")}</span>
+                    <span className="font-normal text-t4">{t("profileDetail.commaSeparated")}</span>
                   </label>
                   <Input
                     value={excludeSubnetsText}
@@ -518,7 +518,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.method")}</label>
+                  <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.method")}</label>
                   <Select value={draft.method} onChange={(e) => setField("method", e.target.value)}>
                     {availableMethods.map((m) => (
                       <option key={m} value={m}>
@@ -527,79 +527,79 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                     ))}
                   </Select>
                   {methodFeatures && draft.method !== "auto" && methodFeatures[draft.method] && (
-                    <p className="mt-1 text-[11px] text-white/25">
+                    <p className="mt-1 text-[11px] text-t4">
                       {t("profileDetail.features", { features: methodFeatures[draft.method].join(", ") || "none" })}
                     </p>
                   )}
                 </div>
 
                 <div className="flex flex-col justify-end gap-3">
-                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                     <input
                       type="checkbox"
                       checked={draft.autoNets}
                       onChange={(e) => setField("autoNets", e.target.checked)}
-                      className="accent-[#0a84ff]"
+                      className="accent-accent"
                     />
                     <span>
                       {t("profileDetail.autoNets")}
-                      <span className="ml-1.5 text-xs text-white/30">
+                      <span className="ml-1.5 text-xs text-t4">
                         {t("profileDetail.autoNetsDesc")}
                       </span>
                     </span>
                   </label>
                   {activeFeatures.has("ipv6") && (
-                    <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                    <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                       <input
                         type="checkbox"
                         checked={draft.disableIpv6}
                         onChange={(e) => setField("disableIpv6", e.target.checked)}
-                        className="accent-[#0a84ff]"
+                        className="accent-accent"
                       />
                       {t("profileDetail.disableIpv6")}
                     </label>
                   )}
                   {activeFeatures.has("blockUdp") && (
-                    <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                    <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                       <input
                         type="checkbox"
                         checked={draft.blockUdp}
                         onChange={(e) => setField("blockUdp", e.target.checked)}
-                        className="accent-[#0a84ff]"
+                        className="accent-accent"
                       />
                       <span>
                         {t("profileDetail.blockUdp")}
-                        <span className="ml-1.5 text-xs text-white/30">{t("profileDetail.blockUdpDesc")}</span>
+                        <span className="ml-1.5 text-xs text-t4">{t("profileDetail.blockUdpDesc")}</span>
                       </span>
                     </label>
                   )}
                   {activeFeatures.has("udp") && (
-                    <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                    <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                       <input
                         type="checkbox"
                         checked={draft.enableUdp}
                         onChange={(e) => setField("enableUdp", e.target.checked)}
-                        className="accent-[#0a84ff]"
+                        className="accent-accent"
                       />
                       <span>
                         {t("profileDetail.udpProxy")}
-                        <span className="ml-1.5 text-xs text-white/30">{t("profileDetail.udpProxyDesc")}</span>
+                        <span className="ml-1.5 text-xs text-t4">{t("profileDetail.udpProxyDesc")}</span>
                       </span>
                     </label>
                   )}
                 </div>
 
                 <div className="col-span-2">
-                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                     <input
                       type="checkbox"
                       checked={draft.autoExcludeLan}
                       onChange={(e) => setField("autoExcludeLan", e.target.checked)}
-                      className="accent-[#0a84ff]"
+                      className="accent-accent"
                     />
                     <span>
                       {t("profileDetail.autoExcludeLan")}
-                      <span className="ml-1.5 text-xs text-white/30">
+                      <span className="ml-1.5 text-xs text-t4">
                         {t("profileDetail.autoExcludeLanDesc")}
                       </span>
                     </span>
@@ -608,9 +608,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
 
                 <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  <label className="mb-1.5 block text-sm font-medium text-t2">
                     {t("profileDetail.sshConnectionPool")}
-                    <span className="ml-1.5 font-normal text-white/30">
+                    <span className="ml-1.5 font-normal text-t4">
                       {t("profileDetail.sshConnectionPoolDesc")}
                     </span>
                   </label>
@@ -625,16 +625,16 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
 
                 {draft.poolSize > 1 && (
                   <div className="col-span-2">
-                    <label className="mb-1.5 block text-sm font-medium text-white/60">
+                    <label className="mb-1.5 block text-sm font-medium text-t2">
                       {t("profileDetail.tcpLoadBalancing")}
-                      <span className="ml-1.5 font-normal text-white/30">
+                      <span className="ml-1.5 font-normal text-t4">
                         {t("profileDetail.tcpLoadBalancingDesc")}
                       </span>
                     </label>
                     <select
                       value={draft.tcpBalanceMode ?? "least-loaded"}
                       onChange={(e) => setField("tcpBalanceMode", e.target.value as "round-robin" | "least-loaded")}
-                      className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white/80 focus:border-[#0a84ff]/50 focus:outline-none"
+                      className="w-full rounded-lg border border-bdr bg-ov-4 px-3 py-2 text-sm text-t1 focus:border-accent/50 focus:outline-none"
                     >
                       <option value="least-loaded">{t("profileDetail.leastLoaded")}</option>
                       <option value="round-robin">{t("profileDetail.roundRobin")}</option>
@@ -643,16 +643,16 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 )}
 
                 <div className="col-span-2">
-                  <label className="inline-flex items-center gap-2.5 text-sm text-white/55">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-t2">
                     <input
                       type="checkbox"
                       checked={draft.splitConn}
                       onChange={(e) => setField("splitConn", e.target.checked)}
-                      className="accent-[#0a84ff]"
+                      className="accent-accent"
                     />
                     <span>
                       {t("profileDetail.splitConn")}
-                      <span className="ml-1.5 text-xs text-white/30">
+                      <span className="ml-1.5 text-xs text-t4">
                         {t("profileDetail.splitConnDesc")}
                       </span>
                     </span>
@@ -660,7 +660,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">
+                  <label className="mb-1.5 block text-sm font-medium text-t2">
                     {t("profileDetail.extraSshOptions")}
                   </label>
                   <Input
@@ -671,7 +671,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 </div>
 
                 <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-white/60">{t("profileDetail.notes")}</label>
+                  <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.notes")}</label>
                   <Textarea
                     value={draft.notes ?? ""}
                     onChange={(e) => setField("notes", e.target.value || undefined)}

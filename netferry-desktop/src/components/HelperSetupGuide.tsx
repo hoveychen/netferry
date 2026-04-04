@@ -63,9 +63,9 @@ export function HelperSetupGuide({ onDone }: Props) {
 
   if (step === "checking") {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-[#1c1c1e] px-8">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-[#0a84ff]" />
-        <p className="mt-4 text-sm text-white/40">{t("helper.checkingSetup")}</p>
+      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-t5 border-t-accent" />
+        <p className="mt-4 text-sm text-t3">{t("helper.checkingSetup")}</p>
       </div>
     );
   }
@@ -74,29 +74,29 @@ export function HelperSetupGuide({ onDone }: Props) {
 
   if (step === "success") {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-[#1c1c1e] px-8">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#30d158]/20">
-          <svg className="h-8 w-8 text-[#30d158]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success/20">
+          <svg className="h-8 w-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <p className="text-lg font-semibold text-white/90">{t("helper.allSet")}</p>
-        <p className="mt-1 text-sm text-white/40">{t("helper.backgroundRunning")}</p>
+        <p className="text-lg font-semibold text-t1">{t("helper.allSet")}</p>
+        <p className="mt-1 text-sm text-t3">{t("helper.backgroundRunning")}</p>
       </div>
     );
   }
 
   // needs_approval or registering
   return (
-    <div className="flex h-screen flex-col items-center justify-center bg-[#1c1c1e] px-8">
+    <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-[1.5rem] bg-gradient-to-br from-[#0a84ff]/20 to-[#5e5ce6]/20 ring-1 ring-white/[0.1]">
+          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-[1.5rem] bg-gradient-to-br from-accent/20 to-[#5e5ce6]/20 ring-1 ring-bdr">
             <img src="/icon.png" alt="NetFerry" className="h-12 w-12 rounded-2xl" />
           </div>
-          <h1 className="text-xl font-bold text-white/90">{t("helper.oneMoreStep")}</h1>
-          <p className="mt-2 max-w-sm text-sm leading-relaxed text-white/40">
+          <h1 className="text-xl font-bold text-t1">{t("helper.oneMoreStep")}</h1>
+          <p className="mt-2 max-w-sm text-sm leading-relaxed text-t3">
             {t("helper.permissionDesc")}
           </p>
         </div>
@@ -121,7 +121,7 @@ export function HelperSetupGuide({ onDone }: Props) {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-[#ff453a]/20 bg-[#ff453a]/[0.08] px-4 py-3 text-sm text-[#ff453a]">
+          <div className="mb-4 rounded-xl border border-danger/20 bg-danger/[0.08] px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
@@ -134,7 +134,7 @@ export function HelperSetupGuide({ onDone }: Props) {
           >
             {step === "registering" ? (
               <>
-                <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-t4 border-t-t1" />
                 {t("helper.registering")}
               </>
             ) : (
@@ -150,7 +150,7 @@ export function HelperSetupGuide({ onDone }: Props) {
 
           <button
             type="button"
-            className="mt-2 text-center text-xs text-white/25 transition-colors hover:text-white/40"
+            className="mt-2 text-center text-xs text-t4 transition-colors hover:text-t3"
             onClick={onDone}
           >
             {t("helper.skipForNow")}
@@ -163,13 +163,13 @@ export function HelperSetupGuide({ onDone }: Props) {
 
 function StepCard({ number, title, description }: { number: number; title: string; description: string }) {
   return (
-    <div className="flex gap-3.5 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3">
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[#0a84ff]/15 text-xs font-bold text-[#0a84ff]">
+    <div className="flex gap-3.5 rounded-xl border border-sep bg-ov-3 px-4 py-3">
+      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/15 text-xs font-bold text-accent">
         {number}
       </div>
       <div>
-        <p className="text-[13px] font-medium text-white/80">{title}</p>
-        <p className="mt-0.5 text-[12px] leading-relaxed text-white/35">{description}</p>
+        <p className="text-[13px] font-medium text-t1">{title}</p>
+        <p className="mt-0.5 text-[12px] leading-relaxed text-t3">{description}</p>
       </div>
     </div>
   );

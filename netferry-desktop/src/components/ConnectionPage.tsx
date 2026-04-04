@@ -106,12 +106,12 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
         <svg width={W} height={H}>
           <defs>
             <linearGradient id="rxGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#30d158" stopOpacity="0.25" />
-              <stop offset="100%" stopColor="#30d158" stopOpacity="0" />
+              <stop offset="0%" stopColor="var(--success)" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="var(--success)" stopOpacity="0" />
             </linearGradient>
             <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.20" />
-              <stop offset="100%" stopColor="#0a84ff" stopOpacity="0" />
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.20" />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
             </linearGradient>
             <clipPath id="chart-clip">
               <rect x={PAD.left} y={PAD.top} width={innerW} height={innerH} />
@@ -122,7 +122,7 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
             <line
               key={v}
               x1={PAD.left} y1={y} x2={PAD.left + innerW} y2={y}
-              stroke="rgba(255,255,255,0.06)" strokeWidth="1"
+              stroke="var(--chart-grid)" strokeWidth="1"
             />
           ))}
 
@@ -131,7 +131,7 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
               key={v}
               x={PAD.left - 6} y={y + 4}
               textAnchor="end" fontSize="10"
-              fill="rgba(255,255,255,0.28)" fontFamily="monospace"
+              fill="var(--chart-label)" fontFamily="monospace"
             >
               {formatBytes(v)}
             </text>
@@ -142,7 +142,7 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
               key={i}
               x={xScale(i)} y={PAD.top + innerH + 14}
               textAnchor="middle" fontSize="10"
-              fill="rgba(255,255,255,0.22)" fontFamily="monospace"
+              fill="var(--chart-label-dim)" fontFamily="monospace"
             >
               {new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </text>
@@ -152,22 +152,22 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
             {rxVals.length >= 2 && <path d={toFill(rxVals)} fill="url(#rxGrad)" />}
             {txVals.length >= 2 && <path d={toFill(txVals)} fill="url(#txGrad)" />}
             {rxVals.length >= 2 && (
-              <path d={toPath(rxVals)} fill="none" stroke="#30d158" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+              <path d={toPath(rxVals)} fill="none" stroke="var(--success)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
             )}
             {txVals.length >= 2 && (
-              <path d={toPath(txVals)} fill="none" stroke="#0a84ff" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+              <path d={toPath(txVals)} fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
             )}
             {rxVals.length >= 1 && (
-              <circle cx={xScale(rxVals.length - 1)} cy={yScale(rxVals[rxVals.length - 1])} r="3" fill="#30d158" />
+              <circle cx={xScale(rxVals.length - 1)} cy={yScale(rxVals[rxVals.length - 1])} r="3" fill="var(--success)" />
             )}
             {txVals.length >= 1 && (
-              <circle cx={xScale(txVals.length - 1)} cy={yScale(txVals[txVals.length - 1])} r="3" fill="#0a84ff" />
+              <circle cx={xScale(txVals.length - 1)} cy={yScale(txVals[txVals.length - 1])} r="3" fill="var(--accent)" />
             )}
           </g>
 
           <rect
             x={PAD.left} y={PAD.top} width={innerW} height={innerH}
-            fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1"
+            fill="none" stroke="var(--chart-grid)" strokeWidth="1"
           />
         </svg>
       )}
@@ -206,12 +206,12 @@ const AVATAR_GRADIENTS = [
 
 // Colors for tunnel index badges (0-based slot → color pair)
 const TUNNEL_COLORS = [
-  { bg: "bg-[#0a84ff]/20", text: "text-[#0a84ff]", dot: "bg-[#0a84ff]" },
-  { bg: "bg-[#30d158]/20", text: "text-[#30d158]", dot: "bg-[#30d158]" },
-  { bg: "bg-[#bf5af2]/20", text: "text-[#bf5af2]", dot: "bg-[#bf5af2]" },
-  { bg: "bg-[#ff9f0a]/20", text: "text-[#ff9f0a]", dot: "bg-[#ff9f0a]" },
-  { bg: "bg-[#ff453a]/20", text: "text-[#ff453a]", dot: "bg-[#ff453a]" },
-  { bg: "bg-[#ffd60a]/20", text: "text-[#ffd60a]", dot: "bg-[#ffd60a]" },
+  { bg: "bg-accent/20", text: "text-accent", dot: "bg-accent" },
+  { bg: "bg-success/20", text: "text-success", dot: "bg-success" },
+  { bg: "bg-c-purple/20", text: "text-c-purple", dot: "bg-c-purple" },
+  { bg: "bg-warning/20", text: "text-warning", dot: "bg-warning" },
+  { bg: "bg-danger/20", text: "text-danger", dot: "bg-danger" },
+  { bg: "bg-c-yellow/20", text: "text-c-yellow", dot: "bg-c-yellow" },
 ];
 
 function tunnelColor(idx: number) {
@@ -227,10 +227,10 @@ function formatRtt(us: number): string {
 
 /** RTT color class based on microseconds: green < 50ms, yellow < 200ms, red >= 200ms */
 function rttColor(us: number): string {
-  if (us === 0) return "text-white/25";
-  if (us >= 200_000) return "text-[#ff453a]";
-  if (us >= 50_000) return "text-[#ffd60a]";
-  return "text-white/50";
+  if (us === 0) return "text-t4";
+  if (us >= 200_000) return "text-danger";
+  if (us >= 50_000) return "text-c-yellow";
+  return "text-t3";
 }
 
 /**
@@ -240,7 +240,7 @@ function rttColor(us: number): string {
 function useDiagnoseTunnel() {
   const { t } = useTranslation();
   return (tunnel: TunnelSnapshot): { label: string; color: string } => {
-    if (tunnel.lastRttUs === 0) return { label: t("connection.diagnosis.waitingForData"), color: "text-white/25" };
+    if (tunnel.lastRttUs === 0) return { label: t("connection.diagnosis.waitingForData"), color: "text-t4" };
 
     const lastMs = tunnel.lastRttUs / 1000;
     const minMs = tunnel.minRttUs / 1000;
@@ -248,17 +248,17 @@ function useDiagnoseTunnel() {
     const inflation = minMs > 0 ? lastMs / minMs : 1;
 
     if (jitterMs > 30 && inflation > 2)
-      return { label: t("connection.diagnosis.congestion"), color: "text-[#ff453a]" };
+      return { label: t("connection.diagnosis.congestion"), color: "text-danger" };
     if (jitterMs > 30)
-      return { label: t("connection.diagnosis.unstable"), color: "text-[#ff9f0a]" };
+      return { label: t("connection.diagnosis.unstable"), color: "text-warning" };
     if (inflation > 3 && jitterMs < 15)
-      return { label: t("connection.diagnosis.bufferbloat", { inflation: inflation.toFixed(0) }), color: "text-[#ff453a]" };
+      return { label: t("connection.diagnosis.bufferbloat", { inflation: inflation.toFixed(0) }), color: "text-danger" };
     if (inflation > 1.8 && jitterMs < 15)
-      return { label: t("connection.diagnosis.possibleBufferbloat", { inflation: inflation.toFixed(1) }), color: "text-[#ffd60a]" };
+      return { label: t("connection.diagnosis.possibleBufferbloat", { inflation: inflation.toFixed(1) }), color: "text-c-yellow" };
     if (minMs > 150)
-      return { label: t("connection.diagnosis.highLatency"), color: "text-[#ffd60a]" };
+      return { label: t("connection.diagnosis.highLatency"), color: "text-c-yellow" };
 
-    return { label: t("connection.diagnosis.healthy"), color: "text-[#30d158]" };
+    return { label: t("connection.diagnosis.healthy"), color: "text-success" };
   };
 }
 
@@ -273,74 +273,74 @@ function TunnelBreakdown({ tunnels }: { tunnels: TunnelSnapshot[] }) {
       {tunnels.map((tun) => {
         const c = tunnelColor(tun.index);
         const congFrac = maxScore > 0 ? tun.congestionScore / maxScore : 0;
-        const congColor = congFrac > 0.8 ? "#ff453a" : congFrac > 0.5 ? "#ffd60a" : "#30d158";
+        const congColor = congFrac > 0.8 ? "var(--danger)" : congFrac > 0.5 ? "var(--c-yellow)" : "var(--success)";
         const diag = diagnoseTunnel(tun);
         return (
           <div key={tun.index} className={`rounded-xl border px-3 py-2.5 ${
-            tun.state === "dead" ? "border-[#ff453a]/20 bg-[#ff453a]/[0.06] opacity-50" :
-            tun.state === "reconnecting" ? "border-[#ff9f0a]/20 bg-[#ff9f0a]/[0.06]" :
-            "border-white/[0.06] bg-white/[0.04]"
+            tun.state === "dead" ? "border-danger/20 bg-danger/[0.06] opacity-50" :
+            tun.state === "reconnecting" ? "border-warning/20 bg-warning/[0.06]" :
+            "border-sep bg-ov-4"
           }`}>
             <div className="flex items-center gap-1.5 mb-1.5">
               {tun.state === "alive" ? (
                 <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
               ) : tun.state === "reconnecting" ? (
-                <span className="h-1.5 w-1.5 rounded-full bg-[#ff9f0a] animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
               ) : (
-                <span className="h-1.5 w-1.5 rounded-full bg-[#ff453a]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-danger" />
               )}
               <span className={`text-[11px] font-semibold uppercase tracking-wider ${
-                tun.state === "dead" ? "text-[#ff453a]" :
-                tun.state === "reconnecting" ? "text-[#ff9f0a]" : c.text
+                tun.state === "dead" ? "text-danger" :
+                tun.state === "reconnecting" ? "text-warning" : c.text
               }`}>
                 {t("connection.tunnel", { index: tun.index })}
               </span>
               {tun.state !== "alive" && (
-                <span className={`text-[10px] ${tun.state === "dead" ? "text-[#ff453a]/60" : "text-[#ff9f0a]/60"}`}>
+                <span className={`text-[10px] ${tun.state === "dead" ? "text-danger/60" : "text-warning/60"}`}>
                   {tun.state === "reconnecting" ? t("connection.reconnecting") : t("connection.dead")}
                 </span>
               )}
             </div>
             {tun.state === "dead" ? (
-              <p className="text-[10px] text-[#ff453a]/60">{t("connection.reconnectionFailed")}</p>
+              <p className="text-[10px] text-danger/60">{t("connection.reconnectionFailed")}</p>
             ) : (
             <div className="flex flex-col gap-0.5">
               <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-white/30">↓</span>
+                <span className="text-[10px] text-t4">↓</span>
                 <span className={`font-mono text-xs font-semibold ${c.text}`}>{formatBytes(tun.rxBytesPerSec)}/s</span>
               </div>
               <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-white/30">↑</span>
-                <span className="font-mono text-xs text-white/50">{formatBytes(tun.txBytesPerSec)}/s</span>
+                <span className="text-[10px] text-t4">↑</span>
+                <span className="font-mono text-xs text-t3">{formatBytes(tun.txBytesPerSec)}/s</span>
               </div>
               <div className="flex justify-between items-baseline mt-0.5">
-                <span className="text-[10px] text-white/30">{t("connection.conns")}</span>
-                <span className="font-mono text-xs text-white/50">{tun.activeConns}</span>
+                <span className="text-[10px] text-t4">{t("connection.conns")}</span>
+                <span className="font-mono text-xs text-t3">{tun.activeConns}</span>
               </div>
               {/* RTT row: last (min) */}
               <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-white/30">{t("connection.rtt")}</span>
+                <span className="text-[10px] text-t4">{t("connection.rtt")}</span>
                 <span className={`font-mono text-xs ${rttColor(tun.lastRttUs)}`}>
                   {formatRtt(tun.lastRttUs)}
                   {tun.minRttUs > 0 && tun.minRttUs !== tun.lastRttUs && (
-                    <span className="text-white/20 ml-0.5">({formatRtt(tun.minRttUs)} min)</span>
+                    <span className="text-t5 ml-0.5">({formatRtt(tun.minRttUs)} min)</span>
                   )}
                 </span>
               </div>
               {/* Jitter row */}
               <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-white/30">{t("connection.jitter")}</span>
-                <span className={`font-mono text-xs ${tun.jitterUs > 30_000 ? "text-[#ff9f0a]" : "text-white/40"}`}>
+                <span className="text-[10px] text-t4">{t("connection.jitter")}</span>
+                <span className={`font-mono text-xs ${tun.jitterUs > 30_000 ? "text-warning" : "text-t3"}`}>
                   {tun.lastRttUs === 0 ? "—" : formatRtt(tun.jitterUs)}
                 </span>
               </div>
               {/* Congestion bar */}
               <div className="mt-1.5">
                 <div className="flex justify-between items-baseline mb-0.5">
-                  <span className="text-[10px] text-white/30">{t("connection.load")}</span>
-                  <span className="font-mono text-[10px] text-white/30">{tun.congestionScore.toFixed(1)}</span>
+                  <span className="text-[10px] text-t4">{t("connection.load")}</span>
+                  <span className="font-mono text-[10px] text-t4">{tun.congestionScore.toFixed(1)}</span>
                 </div>
-                <div className="h-1 w-full rounded-full bg-white/[0.08] overflow-hidden">
+                <div className="h-1 w-full rounded-full bg-ov-8 overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{ width: `${Math.min(congFrac * 100, 100)}%`, backgroundColor: congColor }}
@@ -359,17 +359,17 @@ function TunnelBreakdown({ tunnels }: { tunnels: TunnelSnapshot[] }) {
 }
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
-  1: { label: "Low",  color: "text-white/40",   ring: "ring-white/10",     bg: "bg-white/[0.06]",    dotColor: "bg-white/30" },
-  2: { label: "Low+", color: "text-white/50",   ring: "ring-white/15",     bg: "bg-white/[0.08]",    dotColor: "bg-white/40" },
-  3: { label: "Norm", color: "text-[#0a84ff]",  ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10",    dotColor: "bg-[#0a84ff]" },
-  4: { label: "High", color: "text-[#ff9f0a]",  ring: "ring-[#ff9f0a]/30", bg: "bg-[#ff9f0a]/10",    dotColor: "bg-[#ff9f0a]" },
-  5: { label: "Crit", color: "text-[#ff453a]",  ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10",    dotColor: "bg-[#ff453a]" },
+  1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
+  2: { label: "Low+", color: "text-t3",   ring: "ring-bdr",     bg: "bg-ov-8",    dotColor: "bg-t3" },
+  3: { label: "Norm", color: "text-accent",  ring: "ring-accent/30", bg: "bg-accent/10",    dotColor: "bg-accent" },
+  4: { label: "High", color: "text-warning",  ring: "ring-warning/30", bg: "bg-warning/10",    dotColor: "bg-warning" },
+  5: { label: "Crit", color: "text-danger",  ring: "ring-danger/30", bg: "bg-danger/10",    dotColor: "bg-danger" },
 };
 
 const ROUTE_META: Record<RouteMode, { label: string; color: string; ring: string; bg: string; Icon: typeof Shield }> = {
-  tunnel:  { label: "Tunnel",  color: "text-[#0a84ff]", ring: "ring-[#0a84ff]/30", bg: "bg-[#0a84ff]/10", Icon: Shield },
-  direct:  { label: "Direct",  color: "text-[#30d158]", ring: "ring-[#30d158]/30", bg: "bg-[#30d158]/10", Icon: Zap },
-  blocked: { label: "Blocked", color: "text-[#ff453a]", ring: "ring-[#ff453a]/30", bg: "bg-[#ff453a]/10", Icon: Ban },
+  tunnel:  { label: "Tunnel",  color: "text-accent", ring: "ring-accent/30", bg: "bg-accent/10", Icon: Shield },
+  direct:  { label: "Direct",  color: "text-success", ring: "ring-success/30", bg: "bg-success/10", Icon: Zap },
+  blocked: { label: "Blocked", color: "text-danger", ring: "ring-danger/30", bg: "bg-danger/10", Icon: Ban },
 };
 
 function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: RouteMode) => void }) {
@@ -396,7 +396,7 @@ function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: Route
         {meta.label}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
           {(["tunnel", "direct", "blocked"] as RouteMode[]).map((mode) => {
             const m = ROUTE_META[mode];
             const active = mode === route;
@@ -405,10 +405,10 @@ function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: Route
                 key={mode}
                 onClick={(e) => { e.stopPropagation(); onChange(mode); setOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
                 }`}
               >
-                <m.Icon size={13} className={active ? m.color : "text-white/40"} />
+                <m.Icon size={13} className={active ? m.color : "text-t3"} />
                 {m.label}
                 {active && <span className="ml-auto text-[10px]">✓</span>}
               </button>
@@ -444,7 +444,7 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
         {meta.label}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-white/[0.08] bg-[#2c2c2e] p-1 shadow-xl">
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
           {[1, 2, 3, 4, 5].map((p) => {
             const m = PRIORITY_META[p];
             const active = p === priority;
@@ -453,7 +453,7 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
                 key={p}
                 onClick={(e) => { e.stopPropagation(); onChange(p); setOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-white/60 hover:bg-white/[0.06]"
+                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
                 }`}
               >
                 <span className={`h-2 w-2 rounded-full ${m.dotColor}`} />
@@ -533,28 +533,28 @@ export function ConnectionPage({
           label: t("connection.download"),
           value: formatBytes(tunnelStats.rxBytesPerSec) + "/s",
           sub: t("connection.total", { bytes: formatBytes(tunnelStats.totalRxBytes) }),
-          color: "text-[#30d158]",
+          color: "text-success",
           icon: "↓",
         },
         {
           label: t("connection.upload"),
           value: formatBytes(tunnelStats.txBytesPerSec) + "/s",
           sub: t("connection.total", { bytes: formatBytes(tunnelStats.totalTxBytes) }),
-          color: "text-[#0a84ff]",
+          color: "text-accent",
           icon: "↑",
         },
         {
           label: t("connection.connections"),
           value: String(tunnelStats.activeConns),
           sub: t("connection.totalCount", { count: tunnelStats.totalConns }),
-          color: "text-white/80",
+          color: "text-t1",
           icon: "⇄",
         },
         {
           label: t("connection.dns"),
           value: String(tunnelStats.dnsQueries),
           sub: t("connection.queries"),
-          color: "text-[#bf5af2]",
+          color: "text-c-purple",
           icon: null,
         },
       ]
@@ -570,9 +570,9 @@ export function ConnectionPage({
   ];
 
   return (
-    <div className="flex h-screen flex-col bg-[#1c1c1e]">
+    <div className="flex h-screen flex-col bg-surface">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-white/[0.06] bg-[#1c1c1e]/90 px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div
@@ -582,16 +582,16 @@ export function ConnectionPage({
             </div>
             {status.state === "connected" && (
               <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#30d158] opacity-50" />
-                <span className="glow-pulse relative inline-flex h-2 w-2 rounded-full bg-[#30d158]" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50" />
+                <span className="glow-pulse relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
             )}
           </div>
           <div>
-            <p className="text-[15px] font-semibold text-white/90">
+            <p className="text-[15px] font-semibold text-t1">
               {activeProfile?.name ?? "Unknown"}
             </p>
-            <p className="text-xs text-white/38">{activeProfile?.remote ?? ""}</p>
+            <p className="text-xs text-t3">{activeProfile?.remote ?? ""}</p>
           </div>
           <Badge variant={statusVariant(status.state)} className="ml-1">
             {status.state}
@@ -608,20 +608,20 @@ export function ConnectionPage({
 
       {/* Stats cards */}
       {statCards && (
-        <div className="grid grid-cols-4 gap-2.5 border-b border-white/[0.06] bg-[#1c1c1e] px-6 py-4">
+        <div className="grid grid-cols-4 gap-2.5 border-b border-sep bg-surface px-6 py-4">
           {statCards.map((stat) => (
             <div
               key={stat.label}
-              className="rounded-xl border border-white/[0.06] bg-white/[0.04] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+              className="rounded-xl border border-sep bg-ov-4 px-4 py-3 shadow-[inset_0_1px_0_var(--inset-highlight)]"
             >
-              <p className="text-[11px] font-medium uppercase tracking-wider text-white/30">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-t4">
                 {stat.icon && <span className="mr-1">{stat.icon}</span>}
                 {stat.label}
               </p>
               <p className={`mt-1.5 font-mono text-2xl font-semibold tabular-nums ${stat.color}`}>
                 {stat.value}
               </p>
-              <p className="mt-0.5 text-[11px] text-white/25">{stat.sub}</p>
+              <p className="mt-0.5 text-[11px] text-t4">{stat.sub}</p>
             </div>
           ))}
         </div>
@@ -631,16 +631,16 @@ export function ConnectionPage({
         <div
           className={`border-b px-6 py-2 text-sm ${
             status.state === "reconnecting"
-              ? "border-[#ff9f0a]/20 bg-[#ff9f0a]/[0.10] text-[#ff9f0a]"
-              : "border-[#ffd60a]/20 bg-[#ffd60a]/[0.08] text-[#ffd60a]"
+              ? "border-warning/20 bg-warning/[0.10] text-warning"
+              : "border-c-yellow/20 bg-c-yellow/[0.08] text-c-yellow"
           }`}
         >
           {status.state === "reconnecting" && (
-            <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-[#ff9f0a]" />
+            <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-warning" />
           )}
           {status.message}
           {status.state === "reconnecting" && (
-            <span className="ml-2 text-[#ff9f0a]/50 text-xs">
+            <span className="ml-2 text-warning/50 text-xs">
               {t("connection.firewallActive")}
             </span>
           )}
@@ -648,33 +648,33 @@ export function ConnectionPage({
       )}
 
       {status.state === "connecting" && deployProgress && (
-        <div className="border-b border-white/[0.06] bg-[#1c1c1e] px-6 py-3">
+        <div className="border-b border-sep bg-surface px-6 py-3">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-white/70">
+            <span className="text-sm text-t2">
               {deployReason === "first-deploy"
                 ? t("connection.deployFirstDeploy")
                 : deployReason === "update"
                   ? t("connection.deployUpdate")
                   : t("connection.deployGeneric")}
             </span>
-            <span className="font-mono text-xs text-white/40">
+            <span className="font-mono text-xs text-t3">
               {formatBytes(deployProgress.sent)} / {formatBytes(deployProgress.total)}
             </span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.08]">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-ov-8">
             <div
-              className="h-full rounded-full bg-[#0a84ff] transition-all duration-150"
+              className="h-full rounded-full bg-accent transition-all duration-150"
               style={{ width: `${deployProgress.total > 0 ? (deployProgress.sent / deployProgress.total) * 100 : 0}%` }}
             />
           </div>
-          <p className="mt-1.5 text-[11px] text-white/30">
+          <p className="mt-1.5 text-[11px] text-t4">
             {t("connection.percentComplete", { percent: Math.round(deployProgress.total > 0 ? (deployProgress.sent / deployProgress.total) * 100 : 0) })}
           </p>
         </div>
       )}
 
       {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-white/[0.06] bg-[#1c1c1e] px-4 py-2.5">
+      <div className="flex items-center gap-1 border-b border-sep bg-surface px-4 py-2.5">
         {tabs.map(({ id, label, badge }) => {
           const isActive = activeTab === id;
           return (
@@ -682,8 +682,8 @@ export function ConnectionPage({
               key={id}
               className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all duration-150 ${
                 isActive
-                  ? "bg-white/[0.10] text-white/90 shadow-sm"
-                  : "text-white/40 hover:bg-white/[0.05] hover:text-white/65"
+                  ? "bg-ov-10 text-t1 shadow-sm"
+                  : "text-t3 hover:bg-ov-4 hover:text-t2"
               }`}
               onClick={() => setActiveTab(id)}
             >
@@ -692,8 +692,8 @@ export function ConnectionPage({
                 <span
                   className={`ml-1.5 rounded-full px-1.5 text-[11px] ${
                     id === "errors"
-                      ? "bg-[#ff453a]/20 text-[#ff453a]"
-                      : "bg-white/[0.10] text-white/50"
+                      ? "bg-danger/20 text-danger"
+                      : "bg-ov-10 text-t3"
                   }`}
                 >
                   {badge}
@@ -705,35 +705,35 @@ export function ConnectionPage({
       </div>
 
       {/* Content area */}
-      <div className="min-h-0 flex-1 overflow-hidden bg-[#141416]">
+      <div className="min-h-0 flex-1 overflow-hidden bg-sf-content">
 
         {activeTab === "speed" && (
           <div className="h-full overflow-y-auto p-4">
             {speedHistory.length === 0 ? (
-              <p className="text-white/25 text-sm">{t("connection.waitingForSpeed")}</p>
+              <p className="text-t4 text-sm">{t("connection.waitingForSpeed")}</p>
             ) : (
               <>
                 <SpeedChart history={speedHistory} />
                 <div className="mt-4 flex items-center gap-6 px-1">
                   <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#30d158]" />
-                    <span className="text-xs text-white/40">{t("connection.download")}</span>
-                    <span className="font-mono text-sm font-semibold text-[#30d158]">
+                    <span className="h-2.5 w-2.5 rounded-full bg-success" />
+                    <span className="text-xs text-t3">{t("connection.download")}</span>
+                    <span className="font-mono text-sm font-semibold text-success">
                       {formatBytes(speedHistory[speedHistory.length - 1].rx)}/s
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#0a84ff]" />
-                    <span className="text-xs text-white/40">{t("connection.upload")}</span>
-                    <span className="font-mono text-sm font-semibold text-[#0a84ff]">
+                    <span className="h-2.5 w-2.5 rounded-full bg-accent" />
+                    <span className="text-xs text-t3">{t("connection.upload")}</span>
+                    <span className="font-mono text-sm font-semibold text-accent">
                       {formatBytes(speedHistory[speedHistory.length - 1].tx)}/s
                     </span>
                   </div>
-                  <span className="ml-auto text-xs text-white/20">{t("connection.lastNSeconds", { count: speedHistory.length })}</span>
+                  <span className="ml-auto text-xs text-t5">{t("connection.lastNSeconds", { count: speedHistory.length })}</span>
                 </div>
                 {tunnelStats?.tunnels && tunnelStats.tunnels.length > 1 && (
                   <>
-                    <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                    <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-t4">
                       {t("connection.perTunnel")}
                     </p>
                     <TunnelBreakdown tunnels={tunnelStats.tunnels} />
@@ -747,12 +747,12 @@ export function ConnectionPage({
         {activeTab === "connections" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs">
             {activeConnCount === 0 && recentClosed.length === 0 ? (
-              <p className="text-white/25">{t("connection.noConnections")}</p>
+              <p className="text-t4">{t("connection.noConnections")}</p>
             ) : (
               <>
                 {activeConnCount > 0 && (
                   <>
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-t4">
                       {t("connection.active", { count: activeConnCount })}
                     </p>
                     {[...activeConnections.values()]
@@ -763,22 +763,22 @@ export function ConnectionPage({
                         return (
                           <div
                             key={conn.id}
-                            className="mb-1 flex items-baseline gap-2 rounded-lg border border-[#30d158]/15 bg-[#30d158]/[0.06] px-3 py-2"
+                            className="mb-1 flex items-baseline gap-2 rounded-lg border border-success/15 bg-success/[0.06] px-3 py-2"
                           >
-                            <span className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-[#30d158]" />
-                            <span className="shrink-0 text-white/20">{formatTime(conn.openedAt)}</span>
+                            <span className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-success" />
+                            <span className="shrink-0 text-t5">{formatTime(conn.openedAt)}</span>
                             {tc && (
                               <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${tc.bg} ${tc.text}`}>
                                 T{conn.tunnelIndex}
                               </span>
                             )}
                             {scheme && (
-                              <span className="rounded bg-white/[0.08] px-1 py-0.5 text-[10px] text-white/40">
+                              <span className="rounded bg-ov-8 px-1 py-0.5 text-[10px] text-t3">
                                 {scheme}
                               </span>
                             )}
-                            <span className="truncate text-[#0a84ff]/80">{host}</span>
-                            <span className="text-white/20">:{port}</span>
+                            <span className="truncate text-accent/80">{host}</span>
+                            <span className="text-t5">:{port}</span>
                           </div>
                         );
                       })}
@@ -786,7 +786,7 @@ export function ConnectionPage({
                 )}
                 {recentClosed.length > 0 && (
                   <>
-                    <p className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                    <p className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-widest text-t4">
                       {t("connection.recentlyClosed")}
                     </p>
                     {[...recentClosed]
@@ -797,16 +797,16 @@ export function ConnectionPage({
                         return (
                           <div
                             key={ev.id}
-                            className="mb-1 flex items-baseline gap-2 rounded-lg border border-white/[0.04] bg-white/[0.03] px-3 py-2 opacity-50"
+                            className="mb-1 flex items-baseline gap-2 rounded-lg border border-sep bg-ov-3 px-3 py-2 opacity-50"
                           >
-                            <span className="shrink-0 text-white/20">{formatTime(ev.timestampMs)}</span>
+                            <span className="shrink-0 text-t5">{formatTime(ev.timestampMs)}</span>
                             {scheme && (
-                              <span className="rounded bg-white/[0.08] px-1 py-0.5 text-[10px] text-white/30">
+                              <span className="rounded bg-ov-8 px-1 py-0.5 text-[10px] text-t4">
                                 {scheme}
                               </span>
                             )}
-                            <span className="truncate text-white/40">{host}</span>
-                            <span className="text-white/15">:{port}</span>
+                            <span className="truncate text-t3">{host}</span>
+                            <span className="text-t5">:{port}</span>
                           </div>
                         );
                       })}
@@ -821,12 +821,12 @@ export function ConnectionPage({
         {activeTab === "destinations" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs">
             {destinations.length === 0 ? (
-              <p className="text-white/25">{t("connection.noDestinations")}</p>
+              <p className="text-t4">{t("connection.noDestinations")}</p>
             ) : (
               <>
                 {/* Sort controls */}
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="text-[11px] text-white/30 uppercase tracking-wider">{t("connection.sortBy")}</span>
+                  <span className="text-[11px] text-t4 uppercase tracking-wider">{t("connection.sortBy")}</span>
                   {([
                     ["totalBytes", t("connection.sortData")],
                     ["rxSpeed", t("connection.sortSpeed")],
@@ -838,8 +838,8 @@ export function ConnectionPage({
                       key={key}
                       className={`rounded-md px-2 py-1 text-[11px] transition-all ${
                         destSort === key
-                          ? "bg-white/[0.12] text-white/80"
-                          : "text-white/30 hover:bg-white/[0.06] hover:text-white/50"
+                          ? "bg-ov-12 text-t1"
+                          : "text-t4 hover:bg-ov-6 hover:text-t3"
                       }`}
                       onClick={() => setDestSort(key)}
                     >
@@ -871,36 +871,36 @@ export function ConnectionPage({
                         key={dest.host}
                         className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
                           isBlocked
-                            ? "border-[#ff453a]/15 bg-[#ff453a]/[0.04] opacity-60"
+                            ? "border-danger/15 bg-danger/[0.04] opacity-60"
                             : isDirect
-                              ? "border-[#30d158]/15 bg-[#30d158]/[0.04]"
+                              ? "border-success/15 bg-success/[0.04]"
                               : isActive
-                                ? "border-[#0a84ff]/15 bg-[#0a84ff]/[0.04]"
-                                : "border-white/[0.04] bg-white/[0.02]"
+                                ? "border-accent/15 bg-accent/[0.04]"
+                                : "border-sep bg-ov-2"
                         }`}
                       >
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2 min-w-0">
                             {isBlocked ? (
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff453a]" />
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
                             ) : isDirect ? (
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#30d158]" />
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                             ) : isActive ? (
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#0a84ff]" />
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
                             ) : null}
                             <span className={`truncate text-sm font-medium ${
-                              isBlocked ? "text-white/30 line-through" : isActive ? "text-white/80" : "text-white/40"
+                              isBlocked ? "text-t4 line-through" : isActive ? "text-t1" : "text-t3"
                             }`}>
                               {dest.host}
                             </span>
                           </div>
                           <div className="flex items-center gap-3 shrink-0 ml-3">
                             {totalSpeed > 0 && (
-                              <span className="text-[#30d158] text-[11px]">
+                              <span className="text-success text-[11px]">
                                 {formatBytes(totalSpeed)}/s
                               </span>
                             )}
-                            <span className="text-white/25 text-[11px]">
+                            <span className="text-t4 text-[11px]">
                               {formatBytes(totalBytes)}
                             </span>
                             <RouteBadge
@@ -918,7 +918,7 @@ export function ConnectionPage({
                             {dest.processNames.map((name) => (
                               <span
                                 key={name}
-                                className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-white/40"
+                                className="rounded-md bg-ov-6 px-1.5 py-0.5 text-[10px] text-t3"
                               >
                                 {name}
                               </span>
@@ -926,30 +926,30 @@ export function ConnectionPage({
                           </div>
                         )}
                         <div className="flex items-center gap-4 text-[11px]">
-                          <span className="text-white/25">
-                            <span className={isActive ? "text-[#30d158]" : "text-white/30"}>
+                          <span className="text-t4">
+                            <span className={isActive ? "text-success" : "text-t4"}>
                               {t("connection.activeCount", { count: dest.activeConns })}
                             </span>
                             {" / "}
                             {t("connection.totalCount", { count: dest.totalConns })}
                           </span>
-                          <span className="text-white/20">
+                          <span className="text-t5">
                             ↓ {formatBytes(dest.rxBytes)}
                           </span>
-                          <span className="text-white/20">
+                          <span className="text-t5">
                             ↑ {formatBytes(dest.txBytes)}
                           </span>
                           {dest.rxBytesPerSec > 0 && (
-                            <span className="text-[#30d158]/60">
+                            <span className="text-success/60">
                               ↓ {formatBytes(dest.rxBytesPerSec)}/s
                             </span>
                           )}
                           {dest.txBytesPerSec > 0 && (
-                            <span className="text-[#0a84ff]/60">
+                            <span className="text-accent/60">
                               ↑ {formatBytes(dest.txBytesPerSec)}/s
                             </span>
                           )}
-                          <span className="ml-auto text-white/15">
+                          <span className="ml-auto text-t5">
                             {formatTime(dest.lastSeenMs)}
                           </span>
                         </div>
@@ -962,9 +962,9 @@ export function ConnectionPage({
         )}
 
         {activeTab === "logs" && (
-          <div className="h-full overflow-y-auto p-4 font-mono text-xs text-white/50">
+          <div className="h-full overflow-y-auto p-4 font-mono text-xs text-t3">
             {logs.length === 0 ? (
-              <p className="text-white/25">{t("connection.waitingForOutput")}</p>
+              <p className="text-t4">{t("connection.waitingForOutput")}</p>
             ) : (
               logs.map((line, idx) => (
                 <p key={`${idx}-${line}`} className="whitespace-pre-wrap break-words leading-5">
@@ -979,15 +979,15 @@ export function ConnectionPage({
         {activeTab === "errors" && (
           <div className="h-full overflow-y-auto p-4 font-mono text-xs">
             {tunnelErrors.length === 0 ? (
-              <p className="text-white/25">{t("connection.noErrors")}</p>
+              <p className="text-t4">{t("connection.noErrors")}</p>
             ) : (
               [...tunnelErrors].reverse().map((err, idx) => (
                 <div
                   key={idx}
-                  className="mb-1.5 rounded-xl border border-[#ff453a]/15 bg-[#ff453a]/[0.07] p-2.5"
+                  className="mb-1.5 rounded-xl border border-danger/15 bg-danger/[0.07] p-2.5"
                 >
-                  <span className="text-white/25">{formatTime(err.timestampMs)}</span>{" "}
-                  <span className="text-[#ff453a]/80">{err.message}</span>
+                  <span className="text-t4">{formatTime(err.timestampMs)}</span>{" "}
+                  <span className="text-danger/80">{err.message}</span>
                 </div>
               ))
             )}

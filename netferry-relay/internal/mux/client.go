@@ -24,7 +24,8 @@ type MuxClient struct {
 	counters   *stats.Counters
 	routesCh   chan []string
 	done       atomic.Bool
-	splitConn  *SplitConn // non-nil in split mode
+	splitConn  *SplitConn    // non-nil in split mode
+	fairWriter *FairWriter   // non-nil in non-split mode
 	tunnelIdx  int                  // 1-based pool member index; 0 = single-tunnel mode
 	tunnelCtrs *stats.TunnelCounters // nil when not in pool mode
 }
@@ -53,14 +54,16 @@ func smuxClientConfig() *smux.Config {
 
 // NewMuxClient creates a client. Call Run() in a goroutine.
 func NewMuxClient(r io.Reader, w io.Writer) *MuxClient {
-	sess, err := smux.Client(&rwConn{r: r, w: w}, smuxClientConfig())
+	fw := NewFairWriter(w)
+	sess, err := smux.Client(&rwConn{r: r, w: fw}, smuxClientConfig())
 	if err != nil {
 		// smux.Client only errors if config is invalid; this won't happen.
 		panic(fmt.Sprintf("mux: smux.Client: %v", err))
 	}
 	return &MuxClient{
-		session:  sess,
-		routesCh: make(chan []string, 1),
+		session:    sess,
+		fairWriter: fw,
+		routesCh:   make(chan []string, 1),
 	}
 }
 
@@ -119,6 +122,11 @@ func (c *MuxClient) RoutesCh() <-chan []string { return c.routesCh }
 // until the session dies.
 func (c *MuxClient) Run() error {
 	defer c.done.Store(true)
+	defer func() {
+		if c.fairWriter != nil {
+			c.fairWriter.Close()
+		}
+	}()
 	for {
 		stream, err := c.session.AcceptStream()
 		if err != nil {

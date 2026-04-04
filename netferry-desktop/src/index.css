@@ -1,11 +1,136 @@
 @import "tailwindcss";
 
+/* ─── macOS-native theme tokens: light / dark ─── */
 :root {
+  color-scheme: light;
   font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Surfaces (frosted glass layers) */
+  --sf: transparent;
+  --sf-bar: rgba(246, 246, 246, 0.72);
+  --sf-content: rgba(0, 0, 0, 0.028);
+  --sf-elevated: rgba(255, 255, 255, 0.82);
+  --sf-input: rgba(0, 0, 0, 0.045);
+  --sf-input-focus: rgba(0, 0, 0, 0.06);
+
+  /* Overlays (tinted layers on surfaces) */
+  --ov2: rgba(0, 0, 0, 0.018);
+  --ov3: rgba(0, 0, 0, 0.028);
+  --ov4: rgba(0, 0, 0, 0.038);
+  --ov6: rgba(0, 0, 0, 0.05);
+  --ov8: rgba(0, 0, 0, 0.065);
+  --ov10: rgba(0, 0, 0, 0.08);
+  --ov12: rgba(0, 0, 0, 0.10);
+
+  /* Text */
+  --t1: rgba(0, 0, 0, 0.85);
+  --t2: rgba(0, 0, 0, 0.50);
+  --t3: rgba(0, 0, 0, 0.36);
+  --t4: rgba(0, 0, 0, 0.24);
+  --t5: rgba(0, 0, 0, 0.14);
+
+  /* Borders */
+  --sep-c: rgba(0, 0, 0, 0.09);
+  --bdr-c: rgba(0, 0, 0, 0.14);
+  --edge-c: rgba(0, 0, 0, 0.20);
+
+  /* Semantic accent colors (macOS system palette) */
+  --accent: #007aff;
+  --danger: #ff3b30;
+  --success: #34c759;
+  --warning: #ff9500;
+  --c-yellow: #ffcc00;
+  --c-purple: #af52de;
+
+  /* Misc */
+  --inset-highlight: rgba(255, 255, 255, 0.45);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-hover: rgba(0, 0, 0, 0.22);
+  --chart-grid: rgba(0, 0, 0, 0.08);
+  --chart-label: rgba(0, 0, 0, 0.32);
+  --chart-label-dim: rgba(0, 0, 0, 0.24);
 }
 
+/* Dark mode: applied via [data-theme="dark"] on <html> */
+[data-theme="dark"] {
+    color-scheme: dark;
+    --sf-bar: rgba(28, 28, 30, 0.72);
+    --sf-content: rgba(0, 0, 0, 0.18);
+    --sf-elevated: rgba(44, 44, 46, 0.90);
+    --sf-input: rgba(255, 255, 255, 0.06);
+    --sf-input-focus: rgba(255, 255, 255, 0.08);
+
+    --ov2: rgba(255, 255, 255, 0.02);
+    --ov3: rgba(255, 255, 255, 0.03);
+    --ov4: rgba(255, 255, 255, 0.04);
+    --ov6: rgba(255, 255, 255, 0.06);
+    --ov8: rgba(255, 255, 255, 0.08);
+    --ov10: rgba(255, 255, 255, 0.10);
+    --ov12: rgba(255, 255, 255, 0.12);
+
+    --t1: rgba(255, 255, 255, 0.90);
+    --t2: rgba(255, 255, 255, 0.55);
+    --t3: rgba(255, 255, 255, 0.38);
+    --t4: rgba(255, 255, 255, 0.24);
+    --t5: rgba(255, 255, 255, 0.14);
+
+    --sep-c: rgba(255, 255, 255, 0.06);
+    --bdr-c: rgba(255, 255, 255, 0.10);
+    --edge-c: rgba(255, 255, 255, 0.18);
+
+    --accent: #0a84ff;
+    --danger: #ff453a;
+    --success: #30d158;
+    --warning: #ff9f0a;
+    --c-yellow: #ffd60a;
+    --c-purple: #bf5af2;
+
+    --inset-highlight: rgba(255, 255, 255, 0.05);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+    --scrollbar-hover: rgba(255, 255, 255, 0.24);
+    --chart-grid: rgba(255, 255, 255, 0.06);
+    --chart-label: rgba(255, 255, 255, 0.28);
+    --chart-label-dim: rgba(255, 255, 255, 0.22);
+}
+
+/* ─── Register theme colors with Tailwind v4 ─── */
+@theme {
+  --color-surface: var(--sf);
+  --color-sf-bar: var(--sf-bar);
+  --color-sf-content: var(--sf-content);
+  --color-elevated: var(--sf-elevated);
+  --color-sf-input: var(--sf-input);
+  --color-sf-input-focus: var(--sf-input-focus);
+
+  --color-ov-2: var(--ov2);
+  --color-ov-3: var(--ov3);
+  --color-ov-4: var(--ov4);
+  --color-ov-6: var(--ov6);
+  --color-ov-8: var(--ov8);
+  --color-ov-10: var(--ov10);
+  --color-ov-12: var(--ov12);
+
+  --color-t1: var(--t1);
+  --color-t2: var(--t2);
+  --color-t3: var(--t3);
+  --color-t4: var(--t4);
+  --color-t5: var(--t5);
+
+  --color-sep: var(--sep-c);
+  --color-bdr: var(--bdr-c);
+  --color-edge: var(--edge-c);
+
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-c-yellow: var(--c-yellow);
+  --color-c-purple: var(--c-purple);
+}
+
+/* ─── Global styles ─── */
 * {
   box-sizing: border-box;
 }
@@ -13,8 +138,8 @@
 body {
   margin: 0;
   min-width: 980px;
-  background-color: #1c1c1e;
-  color: rgba(255, 255, 255, 0.90);
+  background-color: transparent;
+  color: var(--t1);
 }
 
 /* Subtle scrollbar */
@@ -26,11 +151,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: var(--scrollbar-hover);
 }
 
 /* Green pulse animation for active connection */
