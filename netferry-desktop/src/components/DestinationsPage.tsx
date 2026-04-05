@@ -128,15 +128,15 @@ export function DestinationsPage() {
   const sorted = [...allHosts].sort((a, b) => a.localeCompare(b));
 
   return (
-    <div className="flex h-full flex-col bg-surface">
+    <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-sep px-6 py-4">
-        <h1 className="text-lg font-semibold text-t1">{t("destinationsPage.title")}</h1>
+      <div className="px-6 py-3">
+        <h1 className="text-[15px] font-semibold text-t1">{t("destinationsPage.title")}</h1>
         <p className="mt-1 text-xs text-t4">{t("destinationsPage.subtitle")}</p>
       </div>
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-sf-content p-4 font-mono text-xs">
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 font-mono text-xs">
         {sorted.length === 0 ? (
           <p className="text-t4">{t("destinationsPage.noRules")}</p>
         ) : (

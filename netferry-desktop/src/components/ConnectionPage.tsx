@@ -570,9 +570,9 @@ export function ConnectionPage({
   ];
 
   return (
-    <div className="flex h-screen flex-col bg-surface">
+    <div className="flex h-screen flex-col bg-surface pt-[38px]">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center justify-between border-b border-sep px-6 py-3">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div

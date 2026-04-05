@@ -158,6 +158,18 @@ body {
   background: var(--scrollbar-hover);
 }
 
+/* macOS overlay title bar — drag region */
+.drag-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  z-index: 9999;
+  -webkit-app-region: drag;
+  pointer-events: none;
+}
+
 /* Green pulse animation for active connection */
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; box-shadow: 0 0 5px 1px rgba(48, 209, 88, 0.55); }

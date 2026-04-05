@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+
 export type ThemeMode = "system" | "light" | "dark";
 
 const STORAGE_KEY = "netferry_theme";
@@ -9,6 +11,8 @@ function getSystemTheme(): "light" | "dark" {
 function applyTheme(mode: ThemeMode) {
   const resolved = mode === "system" ? getSystemTheme() : mode;
   document.documentElement.setAttribute("data-theme", resolved);
+  // Sync the native macOS window appearance so vibrancy matches
+  invoke("set_window_theme", { theme: mode }).catch(() => {});
 }
 
 /** Read the stored preference (defaults to "system"). */

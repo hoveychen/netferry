@@ -223,6 +223,20 @@ pub fn register_helper() -> Result<bool, String> {
     }
 }
 
+/// Set the native window theme so the vibrancy effect matches the app's chosen theme.
+/// `theme` should be "light", "dark", or "system".
+#[tauri::command]
+pub fn set_window_theme(app: AppHandle, theme: String) {
+    let tauri_theme = match theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None, // system
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_theme(tauri_theme);
+    }
+}
+
 #[tauri::command]
 pub async fn lookup_geoip(host: String) -> Result<String, String> {
     let url = format!("https://ipwho.is/{}", host);

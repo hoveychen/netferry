@@ -151,13 +151,10 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
   }, [profiles]);
 
   return (
-    <div className="flex h-full flex-col bg-surface">
+    <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
-        <div className="flex items-center gap-2.5">
-          <img src="/icon.png" alt="NetFerry" className="h-7 w-7 rounded-lg shadow-sm" />
-          <span className="text-[15px] font-semibold tracking-tight text-t1">{t("app.name")}</span>
-        </div>
+      <div className="flex items-center justify-between px-6 py-3">
+        <h1 className="text-[15px] font-semibold text-t1">{t("nav.profiles")}</h1>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => setImportDialogOpen(true)} title={t("profileList.importProfile")}>
             <Download className="h-4 w-4" />

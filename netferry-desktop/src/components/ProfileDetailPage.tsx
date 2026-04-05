@@ -101,8 +101,8 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   // Imported profiles: only allow renaming and deleting.
   if (profile.imported) {
     return (
-      <div className="flex h-screen flex-col bg-surface">
-        <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
+      <div className="flex h-screen flex-col bg-surface pt-[38px]">
+        <div className="flex items-center gap-3 border-b border-sep px-6 py-3">
           <button
             type="button"
             className="flex items-center gap-1.5 text-sm text-t3 transition-colors hover:text-t1"
@@ -172,9 +172,9 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   }
 
   return (
-    <div className="flex h-screen flex-col bg-surface">
+    <div className="flex h-screen flex-col bg-surface pt-[38px]">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center gap-3 border-b border-sep px-6 py-3">
         <button
           type="button"
           className="flex items-center gap-1.5 text-sm text-t3 transition-colors hover:text-t1"

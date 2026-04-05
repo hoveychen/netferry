@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "NetFerry",
@@ -18,10 +19,7 @@
         "minWidth": 980,
         "minHeight": 640,
         "transparent": true,
-        "windowEffects": {
-          "effects": ["underWindowBackground"],
-          "state": "followsWindowActiveState"
-        }
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {

@@ -63,7 +63,7 @@ export function HelperSetupGuide({ onDone }: Props) {
 
   if (step === "checking") {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
+      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8 pt-[38px]">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-t5 border-t-accent" />
         <p className="mt-4 text-sm text-t3">{t("helper.checkingSetup")}</p>
       </div>
@@ -74,7 +74,7 @@ export function HelperSetupGuide({ onDone }: Props) {
 
   if (step === "success") {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
+      <div className="flex h-screen flex-col items-center justify-center bg-surface px-8 pt-[38px]">
         <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success/20">
           <svg className="h-8 w-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -88,7 +88,7 @@ export function HelperSetupGuide({ onDone }: Props) {
 
   // needs_approval or registering
   return (
-    <div className="flex h-screen flex-col items-center justify-center bg-surface px-8">
+    <div className="flex h-screen flex-col items-center justify-center bg-surface px-8 pt-[38px]">
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="mb-6 flex flex-col items-center text-center">

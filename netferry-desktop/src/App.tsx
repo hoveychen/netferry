@@ -160,44 +160,55 @@ function App() {
 
   const isConnected = status.state === "connected" || status.state === "connecting" || status.state === "reconnecting";
 
+  // Drag bar for macOS overlay title bar — always present
+  const dragBar = <div className="drag-bar" data-tauri-drag-region />;
+
   // Show helper setup guide on first launch (macOS)
   if (showHelperSetup === null) {
-    return <div className="h-screen bg-surface" />;
+    return <>{dragBar}<div className="h-screen bg-surface" /></>;
   }
   if (showHelperSetup) {
     return (
-      <HelperSetupGuide
-        onDone={() => {
-          localStorage.setItem("netferry_helper_setup_done", "1");
-          setShowHelperSetup(false);
-        }}
-      />
+      <>
+        {dragBar}
+        <HelperSetupGuide
+          onDone={() => {
+            localStorage.setItem("netferry_helper_setup_done", "1");
+            setShowHelperSetup(false);
+          }}
+        />
+      </>
     );
   }
 
   // Profile detail page (pushed on top).
   if (subPage?.kind === "detail") {
     return (
-      <ProfileDetailPage
-        profile={subPage.profile}
-        isNew={subPage.isNew}
-        onBack={() => setSubPage(null)}
-        onSave={async (saved) => {
-          await updateProfile(saved);
-          await loadProfiles();
-          setSubPage(null);
-        }}
-        onDelete={async (id) => {
-          await removeProfile(id);
-          setSubPage(null);
-        }}
-      />
+      <>
+        {dragBar}
+        <ProfileDetailPage
+          profile={subPage.profile}
+          isNew={subPage.isNew}
+          onBack={() => setSubPage(null)}
+          onSave={async (saved) => {
+            await updateProfile(saved);
+            await loadProfiles();
+            setSubPage(null);
+          }}
+          onDelete={async (id) => {
+            await removeProfile(id);
+            setSubPage(null);
+          }}
+        />
+      </>
     );
   }
 
   // Connected page (shown as overlay when tunnel is active).
   if (isConnected) {
     return (
+      <>
+      {dragBar}
       <ConnectionPage
         status={status}
         activeProfile={activeProfile}
@@ -211,10 +222,11 @@ function App() {
         deployReason={deployReason}
         onDisconnect={handleDisconnect}
       />
+      </>
     );
   }
 
-  // Main layout: nav bar + tab content.
+  // Main layout: macOS sidebar + content.
   const navItems: { id: NavTab; label: string; icon: typeof Globe }[] = [
     { id: "profiles", label: t("nav.profiles"), icon: Network },
     { id: "destinations", label: t("nav.destinations"), icon: Globe },
@@ -222,9 +234,45 @@ function App() {
   ];
 
   return (
-    <div className="flex h-screen flex-col bg-surface">
-      {/* Tab content */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+    <div className="flex h-screen bg-surface">
+      {dragBar}
+      {/* ── Sidebar ── */}
+      <aside className="flex w-[200px] shrink-0 flex-col border-r border-sep bg-surface">
+        {/* Drag region / title bar spacer */}
+        <div className="h-13 shrink-0" data-tauri-drag-region />
+
+        {/* App branding */}
+        <div className="flex items-center gap-2.5 px-5 pb-4">
+          <img src="/icon.png" alt="NetFerry" className="h-7 w-7 rounded-lg shadow-sm" />
+          <span className="text-[15px] font-semibold tracking-tight text-t1">{t("app.name")}</span>
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex flex-col gap-0.5 px-3">
+          {navItems.map(({ id, label, icon: Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all ${
+                  active
+                    ? "bg-ov-10 text-accent"
+                    : "text-t2 hover:bg-ov-6 hover:text-t1"
+                }`}
+              >
+                <Icon size={16} strokeWidth={active ? 2.2 : 1.6} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="flex-1" />
+      </aside>
+
+      {/* ── Content area ── */}
+      <main className="min-w-0 flex-1 overflow-hidden bg-sf-content">
         {activeTab === "profiles" && (
           <>
             <ProfileList
@@ -277,30 +325,7 @@ function App() {
             onSave={updateSettings}
           />
         )}
-      </div>
-
-      {/* Bottom navigation bar */}
-      <nav className="flex items-center justify-around border-t border-sep bg-sf-bar backdrop-blur-xl px-2 py-1.5">
-        {navItems.map(({ id, label, icon: Icon }) => {
-          const active = activeTab === id;
-          return (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={`flex flex-col items-center gap-0.5 rounded-lg px-4 py-1 transition-all ${
-                active
-                  ? "text-accent"
-                  : "text-t4 hover:text-t3"
-              }`}
-            >
-              <Icon size={18} strokeWidth={active ? 2.2 : 1.5} />
-              <span className={`text-[10px] font-medium ${active ? "text-accent" : ""}`}>
-                {label}
-              </span>
-            </button>
-          );
-        })}
-      </nav>
+      </main>
     </div>
   );
 }

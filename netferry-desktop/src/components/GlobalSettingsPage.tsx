@@ -37,9 +37,9 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   };
 
   return (
-    <div className="flex h-full flex-col bg-surface">
+    <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 border-b border-sep bg-sf-bar px-6 py-3 backdrop-blur-xl">
+      <div className="flex items-center gap-3 px-6 py-3">
         <h1 className="text-[15px] font-semibold text-t1">{t("nav.settings")}</h1>
         <div className="ml-auto">
           <Button size="sm" onClick={save} disabled={saving}>
