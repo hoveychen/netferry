@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, SshHostEntry } from "@/types";
+import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, SshHostEntry, UpdateInfo } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -65,8 +65,8 @@ export function listMethodFeatures() {
   return invoke<MethodFeatures>("list_method_features");
 }
 
-export function updateTraySpeed(rxBytesPerSec: number, txBytesPerSec: number) {
-  return invoke<void>("update_tray_speed", { rxBytesPerSec, txBytesPerSec });
+export function updateTrayInfo(displayMode: string, rxBytesPerSec: number, txBytesPerSec: number, activeConns: number) {
+  return invoke<void>("update_tray_info", { displayMode, rxBytesPerSec, txBytesPerSec, activeConns });
 }
 
 export function exportProfile(profile: Profile) {
@@ -93,4 +93,12 @@ export function getHelperStatus() {
 
 export function registerHelper() {
   return invoke<boolean>("register_helper");
+}
+
+export function getAppVersion() {
+  return invoke<string>("get_app_version");
+}
+
+export function checkForUpdate() {
+  return invoke<UpdateInfo>("check_for_update");
 }

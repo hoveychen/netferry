@@ -1,5 +1,5 @@
 use crate::models::{ConnectionStatus, GlobalSettings, Profile, SshHostEntry};
-use crate::{crypto, priorities, profiles, settings, sidecar, ssh_config, tray};
+use crate::{crypto, menu, priorities, profiles, settings, sidecar, ssh_config, tray};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -18,6 +18,7 @@ pub fn list_profiles(app: AppHandle) -> Result<Vec<Profile>, String> {
 pub fn save_profile(app: AppHandle, profile: Profile) -> Result<Vec<Profile>, String> {
     let result = profiles::upsert_profile(&app, profile)?;
     tray::rebuild_tray_menu(&app);
+    menu::rebuild_app_menu(&app);
     Ok(result)
 }
 
@@ -25,6 +26,7 @@ pub fn save_profile(app: AppHandle, profile: Profile) -> Result<Vec<Profile>, St
 pub fn delete_profile(app: AppHandle, profile_id: String) -> Result<Vec<Profile>, String> {
     let result = profiles::remove_profile(&app, &profile_id)?;
     tray::rebuild_tray_menu(&app);
+    menu::rebuild_app_menu(&app);
     Ok(result)
 }
 
@@ -109,7 +111,13 @@ pub fn list_method_features() -> Result<HashMap<String, Vec<String>>, String> {
 }
 
 #[tauri::command]
-pub fn update_tray_speed(app: AppHandle, rx_bytes_per_sec: f64, tx_bytes_per_sec: f64) {
+pub fn update_tray_info(
+    app: AppHandle,
+    display_mode: String,
+    rx_bytes_per_sec: f64,
+    tx_bytes_per_sec: f64,
+    active_conns: u32,
+) {
     fn fmt(bytes: f64) -> String {
         if bytes < 1024.0 {
             format!("{:.0} B/s", bytes)
@@ -121,8 +129,12 @@ pub fn update_tray_speed(app: AppHandle, rx_bytes_per_sec: f64, tx_bytes_per_sec
             format!("{:.2} GB/s", bytes / (1024.0 * 1024.0 * 1024.0))
         }
     }
-    let title = format!("↓{} ↑{}", fmt(rx_bytes_per_sec), fmt(tx_bytes_per_sec));
-    tray::update_tray_title(&app, Some(&title));
+    let title = match display_mode.as_str() {
+        "speed" => Some(format!("↓{} ↑{}", fmt(rx_bytes_per_sec), fmt(tx_bytes_per_sec))),
+        "connections" => Some(format!("⇌ {}", active_conns)),
+        _ => None, // "none"
+    };
+    tray::update_tray_title(&app, title.as_deref());
 }
 
 #[tauri::command]
@@ -132,9 +144,9 @@ pub fn export_profile(profile: Profile) -> Result<String, String> {
         return Err("Profile must have an inline identity key to export".into());
     }
     for (i, jh) in profile.jump_hosts.iter().enumerate() {
-        if jh.identity_key.as_ref().map_or(false, |_| false) {
-            // identity_key is Some — fine
-        } else if jh.identity_file.as_ref().map_or(false, |f| !f.trim().is_empty()) {
+        if jh.identity_key.is_none()
+            && jh.identity_file.as_ref().map_or(false, |f| !f.trim().is_empty())
+        {
             return Err(format!(
                 "Jump host {} uses a file-based identity; switch to inline PEM to export",
                 i + 1
@@ -235,6 +247,82 @@ pub fn set_window_theme(app: AppHandle, theme: String) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_theme(tauri_theme);
     }
+}
+
+#[tauri::command]
+pub fn get_app_version(app: AppHandle) -> String {
+    app.config().version.clone().unwrap_or_else(|| "0.0.0".into())
+}
+
+#[derive(serde::Serialize)]
+pub struct UpdateInfo {
+    pub has_update: bool,
+    pub latest_version: String,
+    pub current_version: String,
+    pub release_url: String,
+    pub release_notes: String,
+}
+
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
+    let current = app
+        .config()
+        .version
+        .clone()
+        .unwrap_or_else(|| "0.0.0".into());
+
+    let client = reqwest::Client::builder()
+        .user_agent("NetFerry-Desktop")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get("https://api.github.com/repos/hoveychen/netferry/releases/latest")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch release info: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned status {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let tag = body["tag_name"]
+        .as_str()
+        .unwrap_or("v0.0.0")
+        .trim_start_matches('v');
+    let release_url = body["html_url"].as_str().unwrap_or("").to_string();
+    let release_notes = body["body"].as_str().unwrap_or("").to_string();
+
+    let has_update = version_gt(tag, &current);
+
+    Ok(UpdateInfo {
+        has_update,
+        latest_version: tag.to_string(),
+        current_version: current,
+        release_url,
+        release_notes,
+    })
+}
+
+/// Simple semver comparison: returns true if `a` > `b`.
+fn version_gt(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.')
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let va = parse(a);
+    let vb = parse(b);
+    for i in 0..va.len().max(vb.len()) {
+        let pa = va.get(i).copied().unwrap_or(0);
+        let pb = vb.get(i).copied().unwrap_or(0);
+        if pa != pb {
+            return pa > pb;
+        }
+    }
+    false
 }
 
 #[tauri::command]

@@ -1,0 +1,549 @@
+package com.netferry.app.ui
+
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.netferry.app.R
+import com.netferry.app.model.TunnelStats
+import com.netferry.app.service.NetFerryVpnService
+import com.netferry.app.ui.theme.StatusGreen
+import com.netferry.app.ui.theme.StatusOrange
+import com.netferry.app.ui.theme.StatusRed
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConnectionScreen(
+    profileName: String,
+    vpnState: NetFerryVpnService.VpnState,
+    stats: TunnelStats,
+    speedHistory: List<NetFerryVpnService.SpeedSample>,
+    logMessages: List<String>,
+    onDisconnect: () -> Unit,
+    onBack: () -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        stringResource(R.string.connection_title),
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Status header
+            StatusHeader(vpnState = vpnState, profileName = profileName)
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Stats grid: 2x2
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                StatCard(
+                    icon = Icons.Default.ArrowDownward,
+                    label = stringResource(R.string.connection_download),
+                    value = stats.downloadSpeed,
+                    subtitle = stringResource(R.string.connection_total_bytes, stats.totalDownloaded),
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    icon = Icons.Default.ArrowUpward,
+                    label = stringResource(R.string.connection_upload),
+                    value = stats.uploadSpeed,
+                    subtitle = stringResource(R.string.connection_total_bytes, stats.totalUploaded),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                StatCard(
+                    icon = Icons.Default.Hub,
+                    label = stringResource(R.string.connection_active_conns),
+                    value = stats.activeConnections.toString(),
+                    subtitle = stringResource(R.string.connection_total_bytes, stats.totalConnections.toString()),
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    icon = Icons.Default.Dns,
+                    label = stringResource(R.string.connection_dns_queries),
+                    value = "-",
+                    subtitle = "",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Tabbed content: Speed | Stats | Logs
+            val tabTitles = listOf(
+                stringResource(R.string.connection_speed),
+                stringResource(R.string.connection_stats),
+                stringResource(R.string.connection_logs)
+            )
+            var selectedTab by remember { mutableIntStateOf(0) }
+
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary,
+                indicator = { tabPositions ->
+                    if (selectedTab < tabPositions.size) {
+                        TabRowDefaults.SecondaryIndicator(
+                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
+                divider = {}
+            ) {
+                tabTitles.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        text = {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (selectedTab == index) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                when (selectedTab) {
+                    0 -> {
+                        // Speed chart
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = 12.dp)
+                        ) {
+                            if (speedHistory.size >= 2) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.outline,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .background(MaterialTheme.colorScheme.surface)
+                                ) {
+                                    SpeedChart(
+                                        history = speedHistory,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(12.dp)
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        stringResource(R.string.connection_no_logs),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        // Stats detail
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            StatsRow(stringResource(R.string.connection_download), stats.downloadSpeed)
+                            StatsRow(stringResource(R.string.connection_upload), stats.uploadSpeed)
+                            StatsRow(stringResource(R.string.connection_active_conns), stats.activeConnections.toString())
+                            StatsRow(stringResource(R.string.connection_total_conns), stats.totalConnections.toString())
+                        }
+                    }
+                    2 -> {
+                        // Logs
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = 12.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outline,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .background(MaterialTheme.colorScheme.surface)
+                        ) {
+                            if (logMessages.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        stringResource(R.string.connection_no_logs),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                val listState = rememberLazyListState()
+                                LaunchedEffect(logMessages.size) {
+                                    if (logMessages.isNotEmpty()) {
+                                        listState.animateScrollToItem(logMessages.size - 1)
+                                    }
+                                }
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(10.dp)
+                                ) {
+                                    items(logMessages) { msg ->
+                                        Text(
+                                            text = msg,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                                lineHeight = 16.sp
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Disconnect button
+            OutlinedButton(
+                onClick = onDisconnect,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.error
+                )
+            ) {
+                Icon(
+                    Icons.Default.PowerSettingsNew,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.action_disconnect),
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun StatusHeader(
+    vpnState: NetFerryVpnService.VpnState,
+    profileName: String
+) {
+    val statusColor = when (vpnState) {
+        NetFerryVpnService.VpnState.CONNECTED -> StatusGreen
+        NetFerryVpnService.VpnState.CONNECTING -> StatusOrange
+        NetFerryVpnService.VpnState.ERROR -> StatusRed
+        NetFerryVpnService.VpnState.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val statusText = when (vpnState) {
+        NetFerryVpnService.VpnState.CONNECTED -> stringResource(R.string.connection_connected)
+        NetFerryVpnService.VpnState.CONNECTING -> stringResource(R.string.connection_connecting)
+        NetFerryVpnService.VpnState.ERROR -> stringResource(R.string.connection_error)
+        NetFerryVpnService.VpnState.DISCONNECTED -> stringResource(R.string.connection_disconnected)
+    }
+
+    // Pulse animation for connecting
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (vpnState == NetFerryVpnService.VpnState.CONNECTING) 1.2f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_scale"
+    )
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(20.dp)
+    ) {
+        // Status dot with pulse
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .scale(pulseScale)
+                .clip(CircleShape)
+                .background(statusColor)
+        )
+
+        Spacer(modifier = Modifier.width(14.dp))
+
+        Column {
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = profileName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatCard(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    subtitle: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(12.dp)
+            )
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(14.dp)
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun SpeedChart(
+    history: List<NetFerryVpnService.SpeedSample>,
+    modifier: Modifier = Modifier
+) {
+    val rxColor = StatusGreen
+    val txColor = MaterialTheme.colorScheme.primary
+
+    Canvas(modifier = modifier) {
+        if (history.size < 2) return@Canvas
+
+        val maxSpeed = history.maxOf { maxOf(it.rxBytesPerSec, it.txBytesPerSec) }
+            .coerceAtLeast(1024)
+        val width = size.width
+        val height = size.height
+        val stepX = width / (history.size - 1).coerceAtLeast(1)
+
+        // Download line
+        val rxPath = Path()
+        history.forEachIndexed { index, sample ->
+            val x = index * stepX
+            val y = height - (sample.rxBytesPerSec.toFloat() / maxSpeed * height)
+            if (index == 0) rxPath.moveTo(x, y) else rxPath.lineTo(x, y)
+        }
+        drawPath(rxPath, rxColor, style = Stroke(width = 2.dp.toPx()))
+
+        // Upload line
+        val txPath = Path()
+        history.forEachIndexed { index, sample ->
+            val x = index * stepX
+            val y = height - (sample.txBytesPerSec.toFloat() / maxSpeed * height)
+            if (index == 0) txPath.moveTo(x, y) else txPath.lineTo(x, y)
+        }
+        drawPath(txPath, txColor, style = Stroke(width = 2.dp.toPx()))
+
+        // Legend dots
+        drawCircle(rxColor, 4.dp.toPx(), androidx.compose.ui.geometry.Offset(width - 80.dp.toPx(), 10.dp.toPx()))
+        drawCircle(txColor, 4.dp.toPx(), androidx.compose.ui.geometry.Offset(width - 40.dp.toPx(), 10.dp.toPx()))
+    }
+}

@@ -51,6 +51,10 @@ enum Request {
     },
     Ping,
     Version,
+    /// Remove any stale netferry-* pf anchors.  The helper runs as root so it
+    /// can call pfctl without sudo.  This is used as a safety net when the
+    /// tunnel was killed before it could clean up its own firewall rules.
+    Cleanup,
 }
 
 #[derive(serde::Serialize)]
@@ -112,6 +116,19 @@ fn handle_connection(stream: UnixStream) {
         Request::Version => {
             log::info!("Version query → v{PROTOCOL_VERSION}");
             send(&mut write_stream, &Response::Version { version: PROTOCOL_VERSION });
+        }
+
+        Request::Cleanup => {
+            log::info!("Cleanup request: removing stale pf anchors");
+            let removed = clean_stale_pf_anchors();
+            send(
+                &mut write_stream,
+                &Response::Log {
+                    stream: "stderr".into(),
+                    line: format!("Cleaned {removed} stale pf anchor(s)"),
+                },
+            );
+            return;
         }
 
         Request::Connect { tunnel_bin, args, env } => {
@@ -216,6 +233,9 @@ fn handle_connection(stream: UnixStream) {
                     // Wait briefly, then SIGKILL as fallback.
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     unsafe { libc::kill(-(watchdog_pid as i32), libc::SIGKILL) };
+                    // Safety net: if the tunnel didn't clean up pf rules before
+                    // being killed, do it ourselves (we're root).
+                    clean_stale_pf_anchors();
                     return;
                 }
             });
@@ -229,6 +249,8 @@ fn handle_connection(stream: UnixStream) {
                     unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+                    // Safety net: clean pf rules if tunnel didn't get to it.
+                    clean_stale_pf_anchors();
                     let _ = child.wait();
                     return;
                 }
@@ -247,6 +269,53 @@ fn handle_connection(stream: UnixStream) {
             let _ = write_stream.shutdown(std::net::Shutdown::Both);
         }
     }
+}
+
+// ── PF cleanup ───────────────────────────────────────────────────────────────
+
+/// Remove any leftover netferry-* pf anchors.  Returns the number of anchors
+/// cleaned.  This mirrors the logic in sidecar::clean_stale_pf_anchors() but
+/// runs inside the privileged helper (root) so no sudo is needed.
+#[cfg(unix)]
+fn clean_stale_pf_anchors() -> usize {
+    use std::process::Command;
+
+    let output = match Command::new("pfctl").args(["-s", "all"]).output() {
+        Ok(o) => o,
+        Err(e) => {
+            log::error!("pfctl -s all failed: {e}");
+            return 0;
+        }
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let needle = "\"netferry-";
+    let mut count = 0usize;
+    for line in text.lines() {
+        if let Some(start) = line.find(needle) {
+            let name_start = start + 1; // skip opening quote
+            if let Some(end) = line[name_start..].find('"') {
+                let anchor = &line[name_start..name_start + end];
+                log::info!("Cleaning stale pf anchor: {anchor}");
+                let _ = Command::new("pfctl")
+                    .args(["-a", anchor, "-F", "all"])
+                    .output();
+                count += 1;
+            }
+        }
+    }
+
+    // Release any leaked pf enable token from a SIGKILL'd tunnel.
+    let token_path = std::env::temp_dir().join("netferry-pf-token");
+    if let Ok(tok) = std::fs::read_to_string(&token_path) {
+        let token = tok.trim();
+        if !token.is_empty() {
+            log::info!("Releasing stale pf token: {token}");
+            let _ = Command::new("pfctl").args(["-X", token]).output();
+        }
+        let _ = std::fs::remove_file(&token_path);
+    }
+
+    count
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────

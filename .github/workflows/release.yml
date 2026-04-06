@@ -309,8 +309,83 @@ jobs:
           name: netferry-${{ matrix.rust_target }}
           path: ${{ matrix.bundle_glob }}
 
+  build-android:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: netferry-relay/go.mod
+          cache-dependency-path: netferry-relay/go.sum
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;27.1.12297006"
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build server binaries
+        working-directory: netferry-relay
+        run: make build-servers
+
+      - name: Copy server binaries for mobile
+        run: |
+          mkdir -p netferry-relay/mobile/binaries
+          cp netferry-relay/cmd/tunnel/binaries/server-linux-amd64 netferry-relay/mobile/binaries/
+          cp netferry-relay/cmd/tunnel/binaries/server-linux-arm64 netferry-relay/mobile/binaries/
+
+      - name: Build Go mobile AAR
+        working-directory: netferry-relay
+        env:
+          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.1.12297006
+        run: |
+          LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.Version=${{ steps.version.outputs.version }} -s -w"
+          if [ -n "$NETFERRY_EXPORT_KEY" ]; then
+            LDFLAGS="$LDFLAGS -X github.com/hoveychen/netferry/relay/mobile.ExportKey=$NETFERRY_EXPORT_KEY"
+          fi
+          gomobile bind \
+            -target=android/arm64 \
+            -androidapi 26 \
+            -ldflags="$LDFLAGS" \
+            -o ../netferry-mobile/android/app/libs/netferry-engine.aar \
+            ./mobile/
+
+      - name: Build Android APK
+        working-directory: netferry-mobile/android
+        run: |
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: netferry-android
+          path: netferry-mobile/android/app/build/outputs/apk/release/*.apk
+
   publish:
-    needs: [build, build-tunnel-cli]
+    needs: [build, build-tunnel-cli, build-android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -335,6 +410,9 @@ jobs:
           cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-artifacts/netferry-tunnel-linux-arm64.bin
           mv release-artifacts/netferry-tunnel-linux-amd64.bin release-artifacts/netferry-tunnel-linux-amd64
           mv release-artifacts/netferry-tunnel-linux-arm64.bin release-artifacts/netferry-tunnel-linux-arm64
+
+          # Android APK
+          cp "$(find release-artifacts/netferry-android -name '*.apk' -type f | head -1)" release-artifacts/NetFerry_android_arm64.apk 2>/dev/null || true
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2

@@ -1,13 +1,14 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-type BadgeVariant = "gray" | "yellow" | "green" | "red";
+type BadgeVariant = "gray" | "yellow" | "green" | "red" | "warning";
 
 const styles: Record<BadgeVariant, string> = {
   gray: "bg-ov-8 text-t3 ring-1 ring-bdr",
   yellow: "bg-c-yellow/[0.12] text-c-yellow ring-1 ring-c-yellow/25",
   green: "bg-success/[0.12] text-success ring-1 ring-success/25",
   red: "bg-danger/[0.12] text-danger ring-1 ring-danger/25",
+  warning: "bg-warning/[0.12] text-warning ring-1 ring-warning/25",
 };
 
 export function Badge({

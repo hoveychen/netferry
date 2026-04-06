@@ -785,23 +785,7 @@ fn cache_remote_addr(app: &AppHandle, remote: &str) {
     }
 }
 
-/// Check if the remote host is reachable by attempting a TCP connection to its SSH port.
-///
-/// When `cached_addr` is provided (from a previous successful connection), it is
-/// used directly — this avoids depending on DNS which may be broken while old
-/// firewall rules redirect DNS traffic to the dead proxy port.
-fn is_network_reachable(remote: &str, cached_addr: Option<std::net::SocketAddr>) -> bool {
-    let addr = cached_addr.or_else(|| {
-        let (host, port) = parse_remote_host_port(remote);
-        format!("{host}:{port}").to_socket_addrs().ok()?.next()
-    });
-    let Some(addr) = addr else {
-        return false;
-    };
-    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)).is_ok()
-}
-
-/// Spawn a background thread that polls the network and reconnects when available.
+/// Spawn a background thread that retries connecting until it succeeds.
 /// Uses a fixed retry interval (no exponential backoff) and emits countdown status
 /// so the frontend can display retry progress.
 fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
@@ -812,15 +796,6 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
     }
 
     let profile_id = profile.id.clone();
-
-    // Read the cached resolved address (if any) so the reachability check
-    // can bypass DNS — DNS may be broken while old firewall rules are active.
-    let cached_addr = app
-        .state::<AppState>()
-        .resolved_remote_addr
-        .lock()
-        .ok()
-        .and_then(|g| *g);
 
     // Emit reconnecting status.
     let status = ConnectionStatus {
@@ -878,25 +853,6 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
                 *g = status;
             }
 
-            // Check network reachability.
-            if !is_network_reachable(&profile.remote, cached_addr) {
-                log::info!("Network not yet reachable for {}, will retry", profile.remote);
-                let status = ConnectionStatus {
-                    state: "reconnecting".to_string(),
-                    profile_id: Some(profile_id.clone()),
-                    message: Some(format!(
-                        "Network unreachable (attempt #{attempt}), retrying\u{2026}"
-                    )),
-                };
-                let _ = app.emit(STATUS_EVENT, status.clone());
-                if let Ok(mut g) = app.state::<AppState>().status.lock() {
-                    *g = status;
-                }
-                continue;
-            }
-
-            log::info!("Network reachable, attempting reconnect for profile '{}'", profile.id);
-
             // Clear the cancel token before reconnecting.
             if let Ok(mut g) = app.state::<AppState>().reconnect_cancel.lock() {
                 *g = None;
@@ -911,6 +867,7 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
                 }
                 Err(e) => {
                     log::error!("Reconnect failed: {e}");
+                    let _ = app.emit(LOG_EVENT, format!("reconnect: connect() failed: {e}"));
                     // Re-set cancel token and continue retrying.
                     if let Ok(mut g) = app.state::<AppState>().reconnect_cancel.lock() {
                         *g = Some(cancel.clone());
@@ -1302,6 +1259,16 @@ pub fn current_status(state: State<'_, AppState>) -> Result<ConnectionStatus, St
 // ── Utility helpers ──────────────────────────────────────────────────────────
 
 /// Wait for a child process to exit, returning true if it exited within the timeout.
+/// Public alias for use from the app exit handler in lib.rs.
+#[cfg(unix)]
+pub fn wait_child_with_timeout(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> bool {
+    wait_with_timeout(child, timeout)
+}
+
+/// Wait for a child process to exit, returning true if it exited within the timeout.
 #[cfg(unix)]
 fn wait_with_timeout(child: &mut std::process::Child, timeout: std::time::Duration) -> bool {
     let start = std::time::Instant::now();
@@ -1317,6 +1284,12 @@ fn wait_with_timeout(child: &mut std::process::Child, timeout: std::time::Durati
             Err(_) => return true, // process already gone
         }
     }
+}
+
+/// Public alias for use from the app exit handler in lib.rs.
+#[cfg(target_os = "macos")]
+pub fn clean_stale_pf_anchors_public() {
+    clean_stale_pf_anchors();
 }
 
 /// Remove any leftover netferry-* pf anchors.  Called after tunnel disconnect
@@ -1345,5 +1318,17 @@ fn clean_stale_pf_anchors() {
                     .output();
             }
         }
+    }
+
+    // Release any leaked pf enable token from a SIGKILL'd tunnel.
+    // The Go tunnel persists the token to this file during Setup().
+    let token_path = std::env::temp_dir().join("netferry-pf-token");
+    if let Ok(tok) = std::fs::read_to_string(&token_path) {
+        let token = tok.trim();
+        if !token.is_empty() {
+            log::info!("Releasing stale pf token: {token}");
+            let _ = Command::new("pfctl").args(["-X", token]).output();
+        }
+        let _ = std::fs::remove_file(&token_path);
     }
 }

@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { FileText, Import } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,9 +15,9 @@ export function NewProfileDialog({ open, onClose, onBlank, onImportSsh }: Props)
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-1 text-[17px] font-semibold text-t1">{t("newProfile.title")}</h3>
         <p className="mb-5 text-sm text-t3">{t("newProfile.subtitle")}</p>
 
@@ -62,6 +63,7 @@ export function NewProfileDialog({ open, onClose, onBlank, onImportSsh }: Props)
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

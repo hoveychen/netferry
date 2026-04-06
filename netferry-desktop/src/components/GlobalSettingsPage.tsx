@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { ArrowDownUp, Monitor, Moon, Sun, Unplug, EyeOff } from "lucide-react";
 
-import type { GlobalSettings, Profile } from "@/types";
+import type { GlobalSettings, Profile, TrayDisplayMode } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { getThemeMode, setThemeMode, type ThemeMode } from "@/lib/theme";
@@ -39,7 +39,7 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-6 py-3">
+      <div className="flex h-[52px] items-center gap-3 px-6">
         <h1 className="text-[15px] font-semibold text-t1">{t("nav.settings")}</h1>
         <div className="ml-auto">
           <Button size="sm" onClick={save} disabled={saving}>
@@ -107,6 +107,41 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
                       setTheme(id);
                       setThemeMode(id);
                     }}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.trayDisplay")}
+            </p>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-t2">
+                {t("settings.trayDisplay")}
+              </label>
+              <p className="mb-2.5 text-xs text-t3">
+                {t("settings.trayDisplayDesc")}
+              </p>
+              <div className="flex gap-2">
+                {([
+                  { id: "speed" as TrayDisplayMode, icon: ArrowDownUp, label: t("settings.traySpeed") },
+                  { id: "connections" as TrayDisplayMode, icon: Unplug, label: t("settings.trayConnections") },
+                  { id: "none" as TrayDisplayMode, icon: EyeOff, label: t("settings.trayNone") },
+                ] as const).map(({ id, icon: Icon, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                      draft.trayDisplayMode === id
+                        ? "bg-accent/10 text-accent ring-1 ring-accent/30"
+                        : "bg-ov-4 text-t3 hover:bg-ov-8 hover:text-t2"
+                    }`}
+                    onClick={() => setDraft({ ...draft, trayDisplayMode: id })}
                   >
                     <Icon className="h-4 w-4" />
                     {label}

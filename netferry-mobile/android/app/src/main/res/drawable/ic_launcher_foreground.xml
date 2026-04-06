@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Stylized ferry / boat silhouette -->
+    <!-- Hull: wide curved boat shape -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,62 C28,62 36,56 54,56 C72,56 80,62 80,62 L78,68 C78,68 68,63 54,63 C40,63 30,68 30,68 Z" />
+    <!-- Cabin: centered rectangle with rounded top -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,56 L44,44 C44,42 46,40 48,40 L60,40 C62,40 64,42 64,44 L64,56 Z" />
+    <!-- Mast / antenna: thin vertical line -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,40 L55,40 L55,30 L53,30 Z" />
+    <!-- Flag: small triangle on mast -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55,30 L55,36 L62,33 Z" />
+    <!-- Wave 1 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M26,72 Q40,66 54,72 Q68,78 82,72 L82,75 Q68,81 54,75 Q40,69 26,75 Z"
+        android:fillAlpha="0.6" />
+    <!-- Wave 2 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,78 Q38,72 54,78 Q70,84 84,78 L84,80 Q70,86 54,80 Q38,74 24,80 Z"
+        android:fillAlpha="0.3" />
+</vector>

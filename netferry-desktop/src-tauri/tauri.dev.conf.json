@@ -1,0 +1,17 @@
+{
+  "productName": "NetFerry Dev",
+  "identifier": "com.hoveychen.netferry.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "",
+        "width": 1220,
+        "height": 760,
+        "minWidth": 980,
+        "minHeight": 640,
+        "transparent": true,
+        "titleBarStyle": "Overlay"
+      }
+    ]
+  }
+}

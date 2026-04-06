@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NetFerry</string>
+
+    <string name="action_back">返回</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_connect">连接</string>
+    <string name="action_disconnect">断开连接</string>
+    <string name="action_disconnecting">断开中…</string>
+    <string name="action_new_profile">新建配置</string>
+    <string name="action_scan_qr">扫描二维码</string>
+    <string name="action_settings">设置</string>
+
+    <string name="profiles_title">配置</string>
+    <string name="profiles_empty_title">暂无配置</string>
+    <string name="profiles_empty_desc">添加配置开始使用，或扫描团队共享的二维码。</string>
+    <string name="profiles_add">添加配置</string>
+    <string name="profiles_connected">已连接</string>
+    <string name="profiles_no_remote">未设置远程地址</string>
+
+    <string name="profile_new">新建配置</string>
+    <string name="profile_edit">编辑配置</string>
+    <string name="profile_section_connection">连接</string>
+    <string name="profile_name">名称</string>
+    <string name="profile_name_placeholder">例如：公司网络</string>
+    <string name="profile_remote">SSH 远程地址</string>
+    <string name="profile_remote_hint">用户名@主机:端口</string>
+    <string name="profile_identity_key">身份密钥 (PEM)</string>
+    <string name="profile_jump_hosts">跳板主机</string>
+    <string name="profile_jump_hosts_hint">每行一个 (用户名@主机:端口)</string>
+    <string name="profile_jump_host_remote">远程地址</string>
+    <string name="profile_jump_host_remote_hint">用户名@主机:端口</string>
+    <string name="profile_jump_host_key">身份密钥 (PEM)</string>
+    <string name="profile_jump_host_add">添加跳板主机</string>
+    <string name="profile_jump_host_remove">移除</string>
+
+    <string name="profile_section_routing">路由</string>
+    <string name="profile_subnets">包含子网</string>
+    <string name="profile_subnets_hint">每行一个 CIDR</string>
+    <string name="profile_exclude_subnets">排除子网</string>
+    <string name="profile_auto_nets">自动检测路由</string>
+    <string name="profile_auto_nets_desc">从远程路由表获取路由</string>
+    <string name="profile_auto_exclude_lan">自动排除局域网</string>
+    <string name="profile_auto_exclude_lan_desc">从隧道中排除本地子网</string>
+
+    <string name="profile_section_dns">DNS</string>
+    <string name="profile_dns_mode">DNS 模式</string>
+    <string name="profile_dns_off">关闭</string>
+    <string name="profile_dns_all">全部</string>
+    <string name="profile_dns_specific">自定义</string>
+    <string name="profile_dns_target">DNS 目标</string>
+    <string name="profile_dns_target_hint">例如：8.8.8.8:53（留空自动选择）</string>
+
+    <string name="profile_section_advanced">高级</string>
+    <string name="profile_pool_size">连接池</string>
+    <string name="profile_split_conn">分离连接</string>
+    <string name="profile_split_conn_desc">独立 TCP 用于控制帧</string>
+    <string name="profile_tcp_balance">TCP 负载均衡</string>
+    <string name="profile_tcp_least_loaded">最小负载</string>
+    <string name="profile_tcp_round_robin">轮询</string>
+    <string name="profile_enable_udp">UDP 代理</string>
+    <string name="profile_block_udp">阻止 UDP (QUIC)</string>
+    <string name="profile_block_udp_desc">防止 QUIC 泄漏</string>
+    <string name="profile_disable_ipv6">禁用 IPv6</string>
+    <string name="profile_mtu">MTU</string>
+    <string name="profile_latency_buffer">延迟缓冲区</string>
+    <string name="profile_extra_ssh">额外 SSH 选项</string>
+    <string name="profile_extra_ssh_hint">例如：-J jump@host</string>
+    <string name="profile_notes">备注</string>
+
+    <string name="profile_delete_title">删除配置</string>
+    <string name="profile_delete_message">确定要删除「%s」吗？</string>
+
+    <string name="error_name_required">名称为必填项</string>
+    <string name="error_remote_required">远程地址为必填项</string>
+    <string name="error_key_required">身份密钥为必填项</string>
+
+    <string name="connection_title">连接</string>
+    <string name="connection_connecting">连接中…</string>
+    <string name="connection_connected">已连接</string>
+    <string name="connection_disconnected">已断开</string>
+    <string name="connection_error">连接错误</string>
+    <string name="connection_download">下载</string>
+    <string name="connection_upload">上传</string>
+    <string name="connection_active_conns">活跃</string>
+    <string name="connection_total_conns">总计</string>
+    <string name="connection_dns_queries">DNS</string>
+    <string name="connection_speed">速度</string>
+    <string name="connection_stats">统计</string>
+    <string name="connection_logs">日志</string>
+    <string name="connection_no_logs">等待输出…</string>
+    <string name="connection_total_bytes">总计：%s</string>
+
+    <string name="settings_title">设置</string>
+    <string name="settings_section_general">通用</string>
+    <string name="settings_auto_connect">启动时自动连接</string>
+    <string name="settings_auto_connect_desc">应用启动时自动连接到选定的配置。</string>
+    <string name="settings_none">无</string>
+    <string name="settings_section_appearance">外观</string>
+    <string name="settings_theme">主题</string>
+    <string name="settings_theme_system">跟随系统</string>
+    <string name="settings_theme_light">浅色</string>
+    <string name="settings_theme_dark">深色</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_section_about">关于</string>
+    <string name="settings_version">版本</string>
+
+    <string name="qr_title">扫描二维码</string>
+    <string name="qr_progress">已扫描 %1$d / %2$d</string>
+    <string name="qr_complete">导入完成！</string>
+    <string name="qr_camera_permission">扫描二维码需要相机权限。</string>
+    <string name="qr_grant_permission">授予权限</string>
+    <string name="qr_invalid_code">不是 NetFerry 二维码</string>
+    <string name="qr_import_failed">导入失败：%s</string>
+
+    <string name="banner_tap_details">点击查看详情</string>
+    <string name="banner_connecting_to">正在连接 %s</string>
+    <string name="banner_connected_to">已连接到 %s</string>
+
+    <string name="qr_point_camera">将相机对准 NetFerry 二维码</string>
+    <string name="qr_importing">正在导入配置…</string>
+    <string name="qr_camera_required_title">需要相机权限</string>
+    <string name="qr_camera_required_desc">扫描二维码需要访问相机，请在设备设置中授予相机权限。</string>
+    <string name="qr_requesting_permission">正在请求相机权限…</string>
+    <string name="qr_set_mismatch">二维码集合不匹配，请重新扫描。</string>
+
+    <string name="settings_app_desc">安全的 SSH 隧道 VPN</string>
+    <string name="settings_language_system">跟随系统</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_chinese">\u4E2D\u6587</string>
+
+    <!-- Import File -->
+    <string name="import_file">导入文件</string>
+    <string name="import_success">配置已导入！</string>
+    <string name="import_failed">导入失败：%s</string>
+
+    <string name="vpn_notification_channel">VPN 状态</string>
+    <string name="vpn_notification_title">NetFerry VPN</string>
+</resources>

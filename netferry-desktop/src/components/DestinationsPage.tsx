@@ -130,9 +130,9 @@ export function DestinationsPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="px-6 py-3">
+      <div className="flex h-[52px] items-center px-6">
         <h1 className="text-[15px] font-semibold text-t1">{t("destinationsPage.title")}</h1>
-        <p className="mt-1 text-xs text-t4">{t("destinationsPage.subtitle")}</p>
+        <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>
       </div>
 
       {/* Content */}

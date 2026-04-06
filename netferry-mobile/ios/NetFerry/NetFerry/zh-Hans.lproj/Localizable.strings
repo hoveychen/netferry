@@ -1,0 +1,118 @@
+/* Navigation */
+"back" = "返回";
+"save" = "保存";
+"cancel" = "取消";
+"delete" = "删除";
+"done" = "完成";
+
+/* Profile List */
+"profiles.title" = "配置";
+"profiles.empty.title" = "暂无配置";
+"profiles.empty.desc" = "添加配置开始使用，或扫描团队共享的二维码。";
+"profiles.add" = "添加配置";
+"profiles.connected" = "已连接";
+"profiles.scanQr" = "扫描二维码";
+"profiles.importFile" = "导入文件";
+
+/* Profile Detail */
+"profile.new" = "新建配置";
+"profile.edit" = "编辑配置";
+"profile.section.connection" = "连接";
+"profile.name" = "名称";
+"profile.name.placeholder" = "例如：公司网络";
+"profile.remote" = "SSH 远程地址";
+"profile.remote.hint" = "用户名@主机:端口";
+"profile.identityKey" = "身份密钥 (PEM)";
+"profile.jumpHosts" = "跳板主机";
+"profile.jumpHosts.add" = "添加跳板主机";
+"profile.jumpHosts.remote" = "远程地址 (用户名@主机:端口)";
+"profile.jumpHosts.identityKey" = "身份密钥 (可选)";
+
+"profile.section.routing" = "路由";
+"profile.subnets" = "包含子网";
+"profile.subnets.hint" = "每行一个 CIDR";
+"profile.excludeSubnets" = "排除子网";
+"profile.autoNets" = "自动检测路由";
+"profile.autoNets.desc" = "从远程路由表获取路由";
+"profile.autoExcludeLan" = "自动排除局域网";
+"profile.autoExcludeLan.desc" = "从隧道中排除本地子网";
+
+"profile.section.dns" = "DNS";
+"profile.dns.mode" = "DNS 模式";
+"profile.dns.off" = "关闭";
+"profile.dns.all" = "全部";
+"profile.dns.specific" = "自定义";
+"profile.dns.target" = "DNS 目标";
+"profile.dns.target.hint" = "例如：8.8.8.8:53（留空自动选择）";
+
+"profile.section.advanced" = "高级";
+"profile.poolSize" = "连接池";
+"profile.splitConn" = "分离连接";
+"profile.splitConn.desc" = "独立 TCP 用于控制帧";
+"profile.tcpBalance" = "TCP 负载均衡";
+"profile.tcpBalance.leastLoaded" = "最小负载";
+"profile.tcpBalance.roundRobin" = "轮询";
+"profile.enableUdp" = "UDP 代理";
+"profile.blockUdp" = "阻止 UDP (QUIC)";
+"profile.blockUdp.desc" = "防止 QUIC 泄漏";
+"profile.disableIpv6" = "禁用 IPv6";
+"profile.mtu" = "MTU";
+"profile.extraSsh" = "额外 SSH 选项";
+"profile.extraSsh.hint" = "例如：-J jump@host";
+"profile.notes" = "备注";
+
+"profile.delete.title" = "删除配置";
+"profile.delete.message" = "确定要删除「%@」吗？";
+"profile.delete.confirm" = "确认删除";
+
+"error.nameRequired" = "名称为必填项";
+"error.remoteRequired" = "远程地址为必填项";
+"error.keyRequired" = "身份密钥为必填项";
+
+/* Connection */
+"connection.title" = "连接";
+"connection.connecting" = "连接中…";
+"connection.connected" = "已连接";
+"connection.disconnected" = "已断开";
+"connection.error" = "连接错误";
+"connection.disconnect" = "断开连接";
+"connection.download" = "下载";
+"connection.upload" = "上传";
+"connection.activeConns" = "活跃";
+"connection.totalConns" = "总计";
+"connection.dnsQueries" = "DNS";
+"connection.speed" = "速度";
+"connection.stats" = "统计";
+"connection.logs" = "日志";
+"connection.noLogs" = "等待输出…";
+"connection.totalBytes" = "总计：%@";
+
+/* Settings */
+"settings.title" = "设置";
+"settings.section.general" = "通用";
+"settings.autoConnect" = "自动连接";
+"settings.autoConnect.desc" = "启动时自动连接";
+"settings.section.appearance" = "外观";
+"settings.theme" = "主题";
+"settings.theme.system" = "跟随系统";
+"settings.theme.light" = "浅色";
+"settings.theme.dark" = "深色";
+"settings.language" = "语言";
+"settings.language.system" = "跟随系统";
+"settings.language.english" = "English";
+"settings.language.chinese" = "中文";
+"settings.section.about" = "关于";
+"settings.version" = "版本";
+
+/* QR Scanner */
+"qr.title" = "扫描二维码";
+"qr.progress" = "已扫描 %d / %d";
+"qr.complete" = "导入完成！";
+"qr.cameraPermission" = "扫描二维码需要相机权限。";
+"qr.invalidCode" = "不是 NetFerry 二维码";
+"qr.importFailed" = "导入失败：%@";
+
+/* Import */
+"import.file" = "导入文件";
+"import.success" = "配置已导入！";
+"import.failed" = "导入失败：%@";

@@ -10,7 +10,7 @@ interface SettingsStore {
 }
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
-  settings: { autoConnectProfileId: null },
+  settings: { autoConnectProfileId: null, trayDisplayMode: "speed" },
   loading: false,
   loadSettings: async () => {
     set({ loading: true });

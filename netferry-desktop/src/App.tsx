@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Globe, Network, Settings } from "lucide-react";
+import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { DestinationsPage } from "@/components/DestinationsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { NewProfileDialog } from "@/components/NewProfileDialog";
 import { ProfileDetailPage } from "@/components/ProfileDetailPage";
 import { ProfileList } from "@/components/ProfileList";
@@ -16,13 +17,14 @@ import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { getHelperStatus, importProfile, importProfileFromFile } from "@/api";
 import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
+import dragStyles from "@/drag.module.css";
 
 // Sub-page state for profile detail (pushed on top of nav).
 type SubPage =
   | null
   | { kind: "detail"; profile: Profile; isNew: boolean };
 
-type NavTab = "profiles" | "destinations" | "settings";
+type NavTab = "profiles" | "destinations" | "settings" | "connection";
 
 function App() {
   const { t } = useTranslation();
@@ -31,6 +33,8 @@ function App() {
   const [newProfileDialogOpen, setNewProfileDialogOpen] = useState(false);
   const [sshImporterOpen, setSshImporterOpen] = useState(false);
   const [showHelperSetup, setShowHelperSetup] = useState<boolean | null>(null);
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  const prevConnected = useRef(false);
 
   const {
     profiles,
@@ -135,6 +139,28 @@ function App() {
         console.error("Failed to import profile from file:", err);
       }
     });
+    // ── Menu bar events ──
+    const offMenuNavigate = listen<string>("menu-navigate", (event) => {
+      setActiveTab(event.payload as NavTab);
+      setSubPage(null);
+    });
+    const offMenuCheckUpdates = listen("menu-check-updates", () => {
+      // Clear dismissed version so the banner re-appears, then force a check.
+      localStorage.removeItem("netferry_update_dismissed");
+      // Dispatch a custom DOM event the UpdateBanner can listen for.
+      window.dispatchEvent(new Event("force-update-check"));
+    });
+    const offMenuImportFile = listen("menu-import-file", () => {
+      setActiveTab("profiles");
+      setSubPage(null);
+      // Small delay to ensure ProfileList is mounted before triggering import.
+      setTimeout(() => window.dispatchEvent(new Event("menu-open-import")), 50);
+    });
+    const offMenuImportSsh = listen("menu-import-ssh", () => {
+      setActiveTab("profiles");
+      setSubPage(null);
+      setSshImporterOpen(true);
+    });
     return () => {
       offStatus.then((fn) => fn());
       offLog.then((fn) => fn());
@@ -143,6 +169,10 @@ function App() {
       offDeployProgress.then((fn) => fn());
       offDeployReason.then((fn) => fn());
       offImportFile.then((fn) => fn());
+      offMenuNavigate.then((fn) => fn());
+      offMenuCheckUpdates.then((fn) => fn());
+      offMenuImportFile.then((fn) => fn());
+      offMenuImportSsh.then((fn) => fn());
       stopSSE();
     };
   }, [setStatus, pushLog, pushTunnelError, setDeployProgress, setDeployReason, startSSE, stopSSE, loadProfiles]);
@@ -160,8 +190,23 @@ function App() {
 
   const isConnected = status.state === "connected" || status.state === "connecting" || status.state === "reconnecting";
 
+  // Auto-collapse sidebar and switch to connection tab when connecting;
+  // auto-expand and switch back when disconnected.
+  useEffect(() => {
+    if (isConnected && !prevConnected.current) {
+      setSidebarExpanded(false);
+      setActiveTab("connection");
+    } else if (!isConnected && prevConnected.current) {
+      setSidebarExpanded(true);
+      if (activeTab === "connection") setActiveTab("profiles");
+    }
+    prevConnected.current = isConnected;
+  }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Drag bar for macOS overlay title bar — always present
-  const dragBar = <div className="drag-bar" data-tauri-drag-region />;
+  // Empty div that receives mousedown → Tauri's drag.js detects data-tauri-drag-region → starts window drag.
+  // CSS Module preserves -webkit-app-region (Tailwind strips it).
+  const dragBar = <div className={`fixed top-0 left-0 right-0 h-[38px] z-[100] ${dragStyles.dragRegion}`} data-tauri-drag-region />;
 
   // Show helper setup guide on first launch (macOS)
   if (showHelperSetup === null) {
@@ -204,79 +249,89 @@ function App() {
     );
   }
 
-  // Connected page (shown as overlay when tunnel is active).
-  if (isConnected) {
-    return (
-      <>
-      {dragBar}
-      <ConnectionPage
-        status={status}
-        activeProfile={activeProfile}
-        logs={logs}
-        tunnelStats={tunnelStats}
-        activeConnections={activeConnections}
-        recentClosed={recentClosed}
-        tunnelErrors={tunnelErrors}
-        destinations={destinations}
-        deployProgress={deployProgress}
-        deployReason={deployReason}
-        onDisconnect={handleDisconnect}
-      />
-      </>
-    );
-  }
-
   // Main layout: macOS sidebar + content.
   const navItems: { id: NavTab; label: string; icon: typeof Globe }[] = [
+    ...(isConnected ? [{ id: "connection" as NavTab, label: t("nav.connection"), icon: Activity }] : []),
     { id: "profiles", label: t("nav.profiles"), icon: Network },
     { id: "destinations", label: t("nav.destinations"), icon: Globe },
     { id: "settings", label: t("nav.settings"), icon: Settings },
   ];
 
-  return (
-    <div className="flex h-screen bg-surface">
-      {dragBar}
-      {/* ── Sidebar ── */}
-      <aside className="flex w-[200px] shrink-0 flex-col border-r border-sep bg-surface">
-        {/* Drag region / title bar spacer */}
-        <div className="h-13 shrink-0" data-tauri-drag-region />
+  const collapsed = !sidebarExpanded;
 
-        {/* App branding */}
-        <div className="flex items-center gap-2.5 px-5 pb-4">
-          <img src="/icon.png" alt="NetFerry" className="h-7 w-7 rounded-lg shadow-sm" />
-          <span className="text-[15px] font-semibold tracking-tight text-t1">{t("app.name")}</span>
-        </div>
+  return (
+    <div className="flex h-screen flex-col bg-surface">
+      {dragBar}
+      <UpdateBanner />
+      {/* ── Sidebar + Content ── */}
+      <div className="flex min-h-0 flex-1">
+      <aside className={`flex shrink-0 flex-col border-r border-sep bg-surface transition-all duration-200 ${collapsed ? "w-[72px]" : "w-[200px]"}`}>
+        {/* Title bar spacer (traffic lights live here) */}
+        <div className="h-[52px] shrink-0" data-tauri-drag-region />
 
         {/* Nav items */}
-        <nav className="flex flex-col gap-0.5 px-3">
+        <nav className={`flex flex-col gap-0.5 ${collapsed ? "px-1.5" : "px-3"}`}>
           {navItems.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;
             return (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all ${
+                title={collapsed ? label : undefined}
+                className={`flex items-center rounded-lg text-[13px] font-medium transition-all ${
+                  collapsed ? "justify-center px-0 py-1.5" : "gap-2.5 px-3 py-1.5"
+                } ${
                   active
                     ? "bg-ov-10 text-accent"
                     : "text-t2 hover:bg-ov-6 hover:text-t1"
                 }`}
               >
                 <Icon size={16} strokeWidth={active ? 2.2 : 1.6} />
-                {label}
+                {!collapsed && label}
               </button>
             );
           })}
         </nav>
 
         <div className="flex-1" />
+
+        {/* Sidebar toggle */}
+        <div className={`pb-3 ${collapsed ? "px-1.5" : "px-3"}`}>
+          <button
+            onClick={() => setSidebarExpanded(!sidebarExpanded)}
+            className={`flex w-full items-center rounded-lg py-1.5 text-t3 transition-all hover:bg-ov-6 hover:text-t2 ${
+              collapsed ? "justify-center px-0" : "gap-2.5 px-3"
+            }`}
+          >
+            {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
+            {!collapsed && <span className="text-[13px]">{t("nav.collapseSidebar")}</span>}
+          </button>
+        </div>
       </aside>
 
       {/* ── Content area ── */}
       <main className="min-w-0 flex-1 overflow-hidden bg-sf-content">
+        {activeTab === "connection" && isConnected && (
+          <ConnectionPage
+            status={status}
+            activeProfile={activeProfile}
+            logs={logs}
+            tunnelStats={tunnelStats}
+            activeConnections={activeConnections}
+            recentClosed={recentClosed}
+            tunnelErrors={tunnelErrors}
+            destinations={destinations}
+            deployProgress={deployProgress}
+            deployReason={deployReason}
+            onDisconnect={handleDisconnect}
+          />
+        )}
+
         {activeTab === "profiles" && (
           <>
             <ProfileList
               profiles={profiles}
+              connectedProfileId={isConnected ? status.profileId : undefined}
               onNew={() => setNewProfileDialogOpen(true)}
               onConnect={handleConnect}
               onEdit={(id) => {
@@ -326,6 +381,7 @@ function App() {
           />
         )}
       </main>
+      </div>
     </div>
   );
 }

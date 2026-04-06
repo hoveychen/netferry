@@ -3,6 +3,7 @@ mod crypto;
 #[cfg(target_os = "macos")]
 mod helper_ipc;
 pub mod logging;
+mod menu;
 mod models;
 mod priorities;
 mod profiles;
@@ -97,6 +98,7 @@ pub fn run() {
             sidecar::kill_stale_tunnel();
 
             tray::setup_tray(app.handle())?;
+            menu::setup_menu(app.handle())?;
 
             // Handle .nfprofile files opened while the app is already running.
             // On macOS this fires for double-click / Finder "Open With";
@@ -121,6 +123,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.listen(sidecar::STATUS_EVENT, move |event| {
                 tray::rebuild_tray_menu(&app_handle);
+                menu::rebuild_app_menu(&app_handle);
                 if let Ok(status) =
                     serde_json::from_str::<models::ConnectionStatus>(event.payload())
                 {
@@ -169,14 +172,16 @@ pub fn run() {
             commands::lookup_geoip,
             commands::get_stats_url,
             commands::list_method_features,
-            commands::update_tray_speed,
+            commands::update_tray_info,
             commands::export_profile,
             commands::export_profile_to_file,
             commands::import_profile,
             commands::import_profile_from_file,
             commands::get_helper_status,
             commands::register_helper,
-            commands::set_window_theme
+            commands::set_window_theme,
+            commands::get_app_version,
+            commands::check_for_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -203,8 +208,19 @@ pub fn run() {
                 if let Some(mut child) = lock.take() {
                     #[cfg(unix)]
                     {
+                        // Send SIGTERM first so the tunnel can run fw.Restore()
+                        // to clean up pf rules. SIGKILL skips cleanup and leaves
+                        // stale redirect rules that break networking system-wide.
                         let pid = child.id() as i32;
-                        let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+                        let _ = unsafe { libc::kill(-pid, libc::SIGTERM) };
+                        let exited = sidecar::wait_child_with_timeout(
+                            &mut child,
+                            std::time::Duration::from_secs(3),
+                        );
+                        if !exited {
+                            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+                        }
+                        let _ = child.wait();
                         let _ = std::fs::remove_file(
                             std::env::temp_dir().join("netferry-tunnel.pid"),
                         );
@@ -212,9 +228,15 @@ pub fn run() {
                     #[cfg(not(unix))]
                     {
                         let _ = child.kill();
+                        let _ = child.wait();
                     }
-                    let _ = child.wait();
                 }
+                drop(lock);
+
+                // Safety net: remove any stale pf anchors left behind if
+                // the tunnel didn't clean up in time (e.g. SIGKILL path).
+                #[cfg(target_os = "macos")]
+                sidecar::clean_stale_pf_anchors_public();
             }
         });
 }

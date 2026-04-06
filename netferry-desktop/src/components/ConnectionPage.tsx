@@ -6,6 +6,7 @@ import { useRuleStore } from "@/stores/ruleStore";
 import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, RouteMode, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
 interface Props {
   status: ConnectionStatus;
@@ -177,8 +178,8 @@ function SpeedChart({ history }: { history: SpeedPoint[] }) {
 
 function statusVariant(state: ConnectionStatus["state"]) {
   if (state === "connected") return "green";
-  if (state === "connecting") return "yellow";
-  if (state === "reconnecting") return "yellow";
+  if (state === "connecting") return "warning";
+  if (state === "reconnecting") return "warning";
   if (state === "error") return "red";
   return "gray";
 }
@@ -514,6 +515,20 @@ export function ConnectionPage({
     }
   }, [logs, activeTab]);
 
+  const [regionInfo, setRegionInfo] = useState<RegionInfo | undefined>();
+
+  useEffect(() => {
+    if (!activeProfile?.remote) {
+      setRegionInfo(undefined);
+      return;
+    }
+    let cancelled = false;
+    getRegionInfo(activeProfile.remote).then((info) => {
+      if (!cancelled) setRegionInfo(info);
+    });
+    return () => { cancelled = true; };
+  }, [activeProfile?.remote]);
+
   const handleDisconnect = async () => {
     setDisconnecting(true);
     try {
@@ -570,16 +585,26 @@ export function ConnectionPage({
   ];
 
   return (
-    <div className="flex h-screen flex-col bg-surface pt-[38px]">
+    <div className="flex h-full flex-col bg-surface">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-sep px-6 py-3">
+      <div className="flex h-[52px] items-center justify-between border-b border-sep px-6">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div
-              className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${AVATAR_GRADIENTS[avatarIdx]} text-sm font-bold text-white shadow-md`}
-            >
-              {activeProfile?.name.charAt(0).toUpperCase() ?? "?"}
-            </div>
+            {regionInfo?.type === "country" ? (
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-ov-6 text-xl shadow-[inset_0_1px_0_var(--inset-highlight)] ring-1 ring-bdr">
+                {countryCodeToFlag(regionInfo.countryCode)}
+              </div>
+            ) : regionInfo?.type === "lan" || regionInfo?.type === "loopback" ? (
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-ov-6 text-lg shadow-[inset_0_1px_0_var(--inset-highlight)] ring-1 ring-bdr">
+                🏠
+              </div>
+            ) : (
+              <div
+                className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${AVATAR_GRADIENTS[avatarIdx]} text-sm font-bold text-white shadow-md`}
+              >
+                {activeProfile?.name.charAt(0).toUpperCase() ?? "?"}
+              </div>
+            )}
             {status.state === "connected" && (
               <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50" />

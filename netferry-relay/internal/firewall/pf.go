@@ -10,12 +10,19 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
 )
+
+// pfTokenFile returns the path used to persist the pf enable token so that
+// cleanup code (Rust helper / sidecar) can release it after a SIGKILL.
+func pfTokenFile() string {
+	return filepath.Join(os.TempDir(), "netferry-pf-token")
+}
 
 func newDefault() Method { return &pfMethod{} }
 func newNamed(name string) (Method, error) {
@@ -204,6 +211,8 @@ func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dns
 	}
 	if m := regexp.MustCompile(`Token : (\S+)`).FindSubmatch(out); len(m) > 1 {
 		p.token = string(m[1])
+		// Persist token so cleanup code can release it after SIGKILL.
+		_ = os.WriteFile(pfTokenFile(), m[1], 0644)
 	}
 
 	// Fix "set skip on lo0" if present — our rdr rules run on lo0.
@@ -382,6 +391,12 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	// Block non-DNS UDP (prevents QUIC leaks). Uses "quick" to override any
 	// permissive rules in the outer pf ruleset.
 	if p.blockUDP {
+		// Always allow DHCP so WiFi/Ethernet can obtain and renew IP addresses.
+		// Without this, blocking all UDP kills DHCP and macOS may disable the
+		// network interface entirely, requiring a hard power-off to recover.
+		fmt.Fprintf(&b, "pass out quick inet proto udp from any port 68 to any port 67\n")
+		fmt.Fprintf(&b, "pass out quick inet6 proto udp from any port 546 to any port 547\n")
+
 		// If DNS is not being proxied through the tunnel, allow port 53 directly
 		// so DNS resolution still works.
 		if !(dnsPort > 0 && len(v4DNS) > 0) {
@@ -404,6 +419,7 @@ func (p *pfMethod) Restore() error {
 	pfctl("-a", p.anchor, "-F", "all")
 	if p.token != "" {
 		pfctl("-X", p.token)
+		_ = os.Remove(pfTokenFile())
 	}
 	return nil
 }
@@ -460,4 +476,22 @@ func CleanStaleAnchors() {
 		anchor := string(m[1])
 		exec.Command("pfctl", "-a", anchor, "-F", "all").Run()
 	}
+	// Release any leaked pf enable token from a previous SIGKILL'd tunnel.
+	releaseStaleToken()
+}
+
+// releaseStaleToken reads the persisted pf token file and releases it via
+// pfctl -X. This prevents pf enable reference count leaks when the tunnel
+// is killed before Restore() can run.
+func releaseStaleToken() {
+	tok, err := os.ReadFile(pfTokenFile())
+	if err != nil {
+		return
+	}
+	token := strings.TrimSpace(string(tok))
+	if token != "" {
+		log.Printf("releasing stale pf token: %s", token)
+		exec.Command("pfctl", "-X", token).Run()
+	}
+	os.Remove(pfTokenFile())
 }

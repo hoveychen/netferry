@@ -1,0 +1,118 @@
+/* Navigation */
+"back" = "Back";
+"save" = "Save";
+"cancel" = "Cancel";
+"delete" = "Delete";
+"done" = "Done";
+
+/* Profile List */
+"profiles.title" = "Profiles";
+"profiles.empty.title" = "No Profiles";
+"profiles.empty.desc" = "Add a profile to get started, or scan a QR code shared by your team.";
+"profiles.add" = "Add Profile";
+"profiles.connected" = "Connected";
+"profiles.scanQr" = "Scan QR Code";
+"profiles.importFile" = "Import File";
+
+/* Profile Detail */
+"profile.new" = "New Profile";
+"profile.edit" = "Edit Profile";
+"profile.section.connection" = "Connection";
+"profile.name" = "Name";
+"profile.name.placeholder" = "e.g. Corp Network";
+"profile.remote" = "SSH Remote";
+"profile.remote.hint" = "user@host:port";
+"profile.identityKey" = "Identity Key (PEM)";
+"profile.jumpHosts" = "Jump Hosts";
+"profile.jumpHosts.add" = "Add Jump Host";
+"profile.jumpHosts.remote" = "Remote (user@host:port)";
+"profile.jumpHosts.identityKey" = "Identity Key (optional)";
+
+"profile.section.routing" = "Routing";
+"profile.subnets" = "Include Subnets";
+"profile.subnets.hint" = "One CIDR per line";
+"profile.excludeSubnets" = "Exclude Subnets";
+"profile.autoNets" = "Auto-detect Routes";
+"profile.autoNets.desc" = "Fetch routes from remote routing table";
+"profile.autoExcludeLan" = "Auto-exclude LAN";
+"profile.autoExcludeLan.desc" = "Exclude local subnets from tunnel";
+
+"profile.section.dns" = "DNS";
+"profile.dns.mode" = "DNS Mode";
+"profile.dns.off" = "Off";
+"profile.dns.all" = "All";
+"profile.dns.specific" = "Specific";
+"profile.dns.target" = "DNS Target";
+"profile.dns.target.hint" = "e.g. 8.8.8.8:53 (blank for auto)";
+
+"profile.section.advanced" = "Advanced";
+"profile.poolSize" = "Connection Pool";
+"profile.splitConn" = "Split Connection";
+"profile.splitConn.desc" = "Separate TCP for control frames";
+"profile.tcpBalance" = "TCP Load Balancing";
+"profile.tcpBalance.leastLoaded" = "Least Loaded";
+"profile.tcpBalance.roundRobin" = "Round Robin";
+"profile.enableUdp" = "UDP Proxy";
+"profile.blockUdp" = "Block UDP (QUIC)";
+"profile.blockUdp.desc" = "Prevent QUIC leaks";
+"profile.disableIpv6" = "Disable IPv6";
+"profile.mtu" = "MTU";
+"profile.extraSsh" = "Extra SSH Options";
+"profile.extraSsh.hint" = "e.g. -J jump@host";
+"profile.notes" = "Notes";
+
+"profile.delete.title" = "Delete Profile";
+"profile.delete.message" = "Are you sure you want to delete \"%@\"?";
+"profile.delete.confirm" = "Yes, delete";
+
+"error.nameRequired" = "Name is required";
+"error.remoteRequired" = "Remote address is required";
+"error.keyRequired" = "Identity key is required";
+
+/* Connection */
+"connection.title" = "Connection";
+"connection.connecting" = "Connecting…";
+"connection.connected" = "Connected";
+"connection.disconnected" = "Disconnected";
+"connection.error" = "Connection Error";
+"connection.disconnect" = "Disconnect";
+"connection.download" = "Download";
+"connection.upload" = "Upload";
+"connection.activeConns" = "Active";
+"connection.totalConns" = "Total";
+"connection.dnsQueries" = "DNS";
+"connection.speed" = "Speed";
+"connection.stats" = "Statistics";
+"connection.logs" = "Logs";
+"connection.noLogs" = "Waiting for output…";
+"connection.totalBytes" = "Total: %@";
+
+/* Settings */
+"settings.title" = "Settings";
+"settings.section.general" = "General";
+"settings.autoConnect" = "Auto-connect";
+"settings.autoConnect.desc" = "Connect on app launch";
+"settings.section.appearance" = "Appearance";
+"settings.theme" = "Theme";
+"settings.theme.system" = "System";
+"settings.theme.light" = "Light";
+"settings.theme.dark" = "Dark";
+"settings.language" = "Language";
+"settings.language.system" = "System";
+"settings.language.english" = "English";
+"settings.language.chinese" = "中文";
+"settings.section.about" = "About";
+"settings.version" = "Version";
+
+/* QR Scanner */
+"qr.title" = "Scan QR Code";
+"qr.progress" = "Scanned %d of %d";
+"qr.complete" = "Import complete!";
+"qr.cameraPermission" = "Camera permission is required to scan QR codes.";
+"qr.invalidCode" = "Not a NetFerry QR code";
+"qr.importFailed" = "Import failed: %@";
+
+/* Import */
+"import.file" = "Import File";
+"import.success" = "Profile imported!";
+"import.failed" = "Import failed: %@";

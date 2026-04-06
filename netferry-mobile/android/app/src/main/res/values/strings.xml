@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App -->
+    <string name="app_name">NetFerry</string>
+
+    <!-- Navigation / Actions -->
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="action_disconnecting">Disconnecting…</string>
+    <string name="action_new_profile">New Profile</string>
+    <string name="action_scan_qr">Scan QR Code</string>
+    <string name="action_settings">Settings</string>
+
+    <!-- Profile List -->
+    <string name="profiles_title">Profiles</string>
+    <string name="profiles_empty_title">No Profiles</string>
+    <string name="profiles_empty_desc">Add a profile to get started, or scan a QR code shared by your team.</string>
+    <string name="profiles_add">Add Profile</string>
+    <string name="profiles_connected">Connected</string>
+    <string name="profiles_no_remote">No remote set</string>
+
+    <!-- Profile Detail -->
+    <string name="profile_new">New Profile</string>
+    <string name="profile_edit">Edit Profile</string>
+    <string name="profile_section_connection">Connection</string>
+    <string name="profile_name">Name</string>
+    <string name="profile_name_placeholder">e.g. Corp Network</string>
+    <string name="profile_remote">SSH Remote</string>
+    <string name="profile_remote_hint">user@host:port</string>
+    <string name="profile_identity_key">Identity Key (PEM)</string>
+    <string name="profile_jump_hosts">Jump Hosts</string>
+    <string name="profile_jump_hosts_hint">One per line (user@host:port)</string>
+    <string name="profile_jump_host_remote">Remote</string>
+    <string name="profile_jump_host_remote_hint">user@host:port</string>
+    <string name="profile_jump_host_key">Identity Key (PEM)</string>
+    <string name="profile_jump_host_add">Add Jump Host</string>
+    <string name="profile_jump_host_remove">Remove</string>
+
+    <string name="profile_section_routing">Routing</string>
+    <string name="profile_subnets">Include Subnets</string>
+    <string name="profile_subnets_hint">One CIDR per line</string>
+    <string name="profile_exclude_subnets">Exclude Subnets</string>
+    <string name="profile_auto_nets">Auto-detect Routes</string>
+    <string name="profile_auto_nets_desc">Fetch routes from remote routing table</string>
+    <string name="profile_auto_exclude_lan">Auto-exclude LAN</string>
+    <string name="profile_auto_exclude_lan_desc">Exclude local subnets from tunnel</string>
+
+    <string name="profile_section_dns">DNS</string>
+    <string name="profile_dns_mode">DNS Mode</string>
+    <string name="profile_dns_off">Off</string>
+    <string name="profile_dns_all">All</string>
+    <string name="profile_dns_specific">Specific</string>
+    <string name="profile_dns_target">DNS Target</string>
+    <string name="profile_dns_target_hint">e.g. 8.8.8.8:53 (blank for auto)</string>
+
+    <string name="profile_section_advanced">Advanced</string>
+    <string name="profile_pool_size">Connection Pool</string>
+    <string name="profile_split_conn">Split Connection</string>
+    <string name="profile_split_conn_desc">Separate TCP for control frames</string>
+    <string name="profile_tcp_balance">TCP Load Balancing</string>
+    <string name="profile_tcp_least_loaded">Least Loaded</string>
+    <string name="profile_tcp_round_robin">Round Robin</string>
+    <string name="profile_enable_udp">UDP Proxy</string>
+    <string name="profile_block_udp">Block UDP (QUIC)</string>
+    <string name="profile_block_udp_desc">Prevent QUIC leaks</string>
+    <string name="profile_disable_ipv6">Disable IPv6</string>
+    <string name="profile_mtu">MTU</string>
+    <string name="profile_latency_buffer">Latency Buffer</string>
+    <string name="profile_extra_ssh">Extra SSH Options</string>
+    <string name="profile_extra_ssh_hint">e.g. -J jump@host</string>
+    <string name="profile_notes">Notes</string>
+
+    <string name="profile_delete_title">Delete Profile</string>
+    <string name="profile_delete_message">Are you sure you want to delete \"%s\"?</string>
+
+    <string name="error_name_required">Name is required</string>
+    <string name="error_remote_required">Remote address is required</string>
+    <string name="error_key_required">Identity key is required</string>
+
+    <!-- Connection -->
+    <string name="connection_title">Connection</string>
+    <string name="connection_connecting">Connecting…</string>
+    <string name="connection_connected">Connected</string>
+    <string name="connection_disconnected">Disconnected</string>
+    <string name="connection_error">Connection Error</string>
+    <string name="connection_download">Download</string>
+    <string name="connection_upload">Upload</string>
+    <string name="connection_active_conns">Active</string>
+    <string name="connection_total_conns">Total</string>
+    <string name="connection_dns_queries">DNS</string>
+    <string name="connection_speed">Speed</string>
+    <string name="connection_stats">Statistics</string>
+    <string name="connection_logs">Logs</string>
+    <string name="connection_no_logs">Waiting for output…</string>
+    <string name="connection_total_bytes">Total: %s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_auto_connect">Auto-connect on startup</string>
+    <string name="settings_auto_connect_desc">Connect to the selected profile when the app launches.</string>
+    <string name="settings_none">None</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_version">Version</string>
+
+    <!-- QR Scanner -->
+    <string name="qr_title">Scan QR Code</string>
+    <string name="qr_progress">Scanned %1$d of %2$d</string>
+    <string name="qr_complete">Import complete!</string>
+    <string name="qr_camera_permission">Camera permission is required to scan QR codes.</string>
+    <string name="qr_grant_permission">Grant Permission</string>
+    <string name="qr_invalid_code">Not a NetFerry QR code</string>
+    <string name="qr_import_failed">Import failed: %s</string>
+
+    <!-- Connection Banner -->
+    <string name="banner_tap_details">Tap for details</string>
+    <string name="banner_connecting_to">Connecting to %s</string>
+    <string name="banner_connected_to">Connected to %s</string>
+
+    <!-- QR Scanner extra -->
+    <string name="qr_point_camera">Point camera at a NetFerry QR code</string>
+    <string name="qr_importing">Importing profile…</string>
+    <string name="qr_camera_required_title">Camera Permission Required</string>
+    <string name="qr_camera_required_desc">Camera access is needed to scan QR codes. Please grant camera permission in your device settings.</string>
+    <string name="qr_requesting_permission">Requesting camera permission…</string>
+    <string name="qr_set_mismatch">QR code set mismatch. Please start over.</string>
+
+    <!-- Settings extra -->
+    <string name="settings_app_desc">Secure SSH tunnel VPN</string>
+    <string name="settings_language_system">System default</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_chinese">\u4E2D\u6587</string>
+
+    <!-- Import File -->
+    <string name="import_file">Import File</string>
+    <string name="import_success">Profile imported!</string>
+    <string name="import_failed">Import failed: %s</string>
+
+    <!-- VPN Notification -->
+    <string name="vpn_notification_channel">VPN Status</string>
+    <string name="vpn_notification_title">NetFerry VPN</string>
+</resources>

@@ -37,8 +37,14 @@ func ListenSOCKS5(port int, client mux.TunnelClient, counters *stats.Counters) e
 		return fmt.Errorf("socks5 listen :%d: %w", port, err)
 	}
 	defer ln.Close()
+	return ServeSOCKS5(ln, client, counters)
+}
 
-	log.Printf("proxy: SOCKS5 listening on :%d", port)
+// ServeSOCKS5 accepts connections on a pre-bound listener and runs the SOCKS5
+// proxy loop. Use this instead of ListenSOCKS5 when you need control over the
+// listener (e.g. to use an OS-assigned port on mobile).
+func ServeSOCKS5(ln net.Listener, client mux.TunnelClient, counters *stats.Counters) error {
+	log.Printf("proxy: SOCKS5 serving on %s", ln.Addr())
 	for {
 		conn, err := ln.Accept()
 		if err != nil {

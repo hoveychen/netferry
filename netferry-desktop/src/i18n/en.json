@@ -12,7 +12,9 @@
     "import": "Import",
     "create": "Create",
     "profiles": "Profiles",
-    "destinations": "Destinations"
+    "destinations": "Destinations",
+    "connection": "Connection",
+    "collapseSidebar": "Collapse"
   },
   "welcome": {
     "title": "Welcome to NetFerry",
@@ -32,6 +34,7 @@
     "lanExcl": "LAN excl.",
     "imported": "Imported",
     "connect": "Connect →",
+    "connected": "Connected",
     "renameProfile": "Rename profile",
     "editProfile": "Edit profile",
     "exportProfile": "Export profile",
@@ -39,17 +42,27 @@
     "done": "Done!",
     "copyToClipboard": "Copy to clipboard",
     "saveAsNfprofile": "Save as .nfprofile",
+    "showQrCode": "Show QR Code",
     "exportFailed": "Export failed: {{error}}"
   },
   "importDialog": {
     "title": "Import Profile",
-    "openFile": "Open .nfprofile file",
+    "openFile": "Open or drag .nfprofile file here",
+    "dropFile": "Drop file to import",
     "orPasteText": "or paste text",
     "placeholder": "Paste encrypted profile data here...",
     "importing": "Importing..."
   },
   "exportDialog": {
     "title": "Export Profile"
+  },
+  "qrExport": {
+    "title": "QR Code Export",
+    "generating": "Generating QR code…",
+    "pageIndicator": "{{current}} / {{total}}",
+    "qrLabel": "{{name}} — Part {{current}} of {{total}}",
+    "qrScanOrder": "Scan in order: {{current}} of {{total}}",
+    "multiHint": "Scan all QR codes in order to import the full profile."
   },
   "newProfile": {
     "title": "Create Profile",
@@ -210,7 +223,17 @@
     "language": "Language",
     "languageDesc": "Choose the display language for the application.",
     "english": "English",
-    "chinese": "中文"
+    "chinese": "中文",
+    "trayDisplay": "Tray Icon Display",
+    "trayDisplayDesc": "Choose what information to show next to the tray icon.",
+    "traySpeed": "Download / Upload Speed",
+    "trayConnections": "Active Connections",
+    "trayNone": "Nothing"
+  },
+  "update": {
+    "available": "A new version (v{{version}}) is available!",
+    "download": "Download",
+    "dismiss": "Dismiss"
   },
   "helper": {
     "checkingSetup": "Checking system setup...",

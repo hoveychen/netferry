@@ -48,3 +48,9 @@ netferry-relay/tunnel
 netferry-relay/tunnel.exe
 
 *.nfprofile
+netferry-relay/mobile/binaries/server-linux-amd64
+netferry-relay/mobile/binaries/server-linux-arm64
+
+# Mobile build artifacts (gomobile output)
+netferry-mobile/ios/NetFerry/NetFerryEngine.xcframework/
+netferry-mobile/android/app/libs/*.jar

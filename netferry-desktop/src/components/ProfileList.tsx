@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Clipboard, Download, FileDown, Pencil, Plus, Share2 } from "lucide-react";
+import { Clipboard, Download, FileDown, Pencil, Plus, QrCode, Share2 } from "lucide-react";
 import { save as showSaveDialog, open as showOpenDialog } from "@tauri-apps/plugin-dialog";
 import type { Profile } from "@/types";
 import { exportProfile, exportProfileToFile } from "@/api";
 import { Button } from "@/components/ui/button";
+import { QrCodeExportDialog } from "@/components/QrCodeExportDialog";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
 interface Props {
   profiles: Profile[];
+  connectedProfileId?: string;
   onNew: () => void;
   onConnect: (profile: Profile) => void;
   onEdit: (id: string) => void;
@@ -59,7 +62,7 @@ function isExportable(profile: Profile): boolean {
   return true;
 }
 
-export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onImportFile }: Props) {
+export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, onEdit, onImport, onImportFile }: Props) {
   const { t } = useTranslation();
   const [regionMap, setRegionMap] = useState<Record<string, RegionInfo>>({});
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
@@ -68,6 +71,8 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [qrProfile, setQrProfile] = useState<Profile | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   // Close export menu on outside click
   useEffect(() => {
@@ -76,6 +81,13 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [exportMenuId]);
+
+  // Open import dialog when triggered from app menu bar
+  useEffect(() => {
+    const handler = () => setImportDialogOpen(true);
+    window.addEventListener("menu-open-import", handler);
+    return () => window.removeEventListener("menu-open-import", handler);
+  }, []);
 
   const handleExportClipboard = async (profile: Profile) => {
     setExportMenuId(null);
@@ -142,6 +154,25 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
     }
   };
 
+  const handleFileDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const text = await file.text();
+      await onImport(text.trim());
+      setImportDialogOpen(false);
+      setImportText("");
+    } catch (err) {
+      setImportError(String(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   useEffect(() => {
     for (const profile of profiles) {
       getRegionInfo(profile.remote).then((info) => {
@@ -153,7 +184,7 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3">
+      <div className="flex h-[52px] items-center justify-between px-6">
         <h1 className="text-[15px] font-semibold text-t1">{t("nav.profiles")}</h1>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => setImportDialogOpen(true)} title={t("profileList.importProfile")}>
@@ -212,11 +243,17 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {profiles.map((profile) => (
+            {profiles.map((profile) => {
+              const isActive = profile.id === connectedProfileId;
+              return (
               <div
                 key={profile.id}
-                className="group relative flex cursor-pointer flex-col rounded-2xl border border-sep bg-ov-4 p-5 shadow-[inset_0_1px_0_var(--inset-highlight)] transition-all duration-200 hover:-translate-y-0.5 hover:border-edge hover:bg-ov-6 hover:shadow-2xl hover:shadow-black/40"
-                onClick={() => onConnect(profile)}
+                className={`group relative flex flex-col rounded-2xl border p-5 shadow-[inset_0_1px_0_var(--inset-highlight)] transition-all duration-200 ${
+                  isActive
+                    ? "border-accent/30 bg-accent/[0.06] ring-1 ring-accent/20"
+                    : "cursor-pointer border-sep bg-ov-4 hover:-translate-y-0.5 hover:border-edge hover:bg-ov-6 hover:shadow-2xl hover:shadow-black/40"
+                }`}
+                onClick={() => !isActive && onConnect(profile)}
               >
                 {/* Action buttons */}
                 <div className="absolute right-3.5 top-3.5 flex gap-1 opacity-0 transition-all group-hover:opacity-100">
@@ -258,10 +295,22 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                             <FileDown className="h-3.5 w-3.5" />
                             {t("profileList.saveAsNfprofile")}
                           </button>
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-t2 hover:bg-ov-8"
+                            onClick={() => {
+                              setExportMenuId(null);
+                              setQrProfile(profile);
+                            }}
+                          >
+                            <QrCode className="h-3.5 w-3.5" />
+                            {t("profileList.showQrCode")}
+                          </button>
                         </div>
                       )}
                     </div>
                   )}
+                  {!isActive && (
                   <button
                     type="button"
                     className="rounded-lg p-1.5 text-t5 transition-all hover:bg-ov-8 hover:text-t2"
@@ -273,10 +322,19 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
+                  )}
                 </div>
 
                 <div className="mb-4 flex items-center gap-3">
-                  <ProfileAvatar profile={profile} region={regionMap[profile.id]} />
+                  <div className="relative">
+                    <ProfileAvatar profile={profile} region={regionMap[profile.id]} />
+                    {isActive && (
+                      <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                      </span>
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[15px] font-semibold text-t1">
                       {profile.name}
@@ -301,31 +359,55 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
                       {t("profileList.imported")}
                     </span>
                   )}
-                  <span className="ml-auto text-[11px] text-t5 transition-colors group-hover:text-accent">
-                    {t("profileList.connect")}
+                  <span className={`ml-auto text-[11px] transition-colors ${
+                    isActive
+                      ? "font-medium text-success"
+                      : "text-t5 group-hover:text-accent"
+                  }`}>
+                    {isActive ? t("profileList.connected") : t("profileList.connect")}
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
+      {/* QR code export dialog */}
+      {qrProfile && (
+        <QrCodeExportDialog profile={qrProfile} onClose={() => setQrProfile(null)} />
+      )}
+
       {/* Import dialog */}
-      {importDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl">
+      {importDialogOpen && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => { setImportDialogOpen(false); setImportText(""); setImportError(null); }}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h2 className="mb-4 text-lg font-semibold text-t1">{t("importDialog.title")}</h2>
 
-            {/* Open file */}
+            {/* Drop zone / open file */}
             <button
               type="button"
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-edge bg-ov-3 px-4 py-4 text-sm text-t3 transition-colors hover:border-accent/40 hover:bg-accent/[0.05] hover:text-t2"
+              className={`mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm transition-colors ${
+                dragging
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-edge bg-ov-3 text-t3 hover:border-accent/40 hover:bg-accent/[0.05] hover:text-t2"
+              }`}
               onClick={handleImportFromFile}
               disabled={importing}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleFileDrop}
             >
               <Download className="h-4 w-4" />
-              {t("importDialog.openFile")}
+              {dragging ? t("importDialog.dropFile") : t("importDialog.openFile")}
             </button>
 
             <div className="mb-3 flex items-center gap-3">
@@ -363,7 +445,8 @@ export function ProfileList({ profiles, onNew, onConnect, onEdit, onImport, onIm
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

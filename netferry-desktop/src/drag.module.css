@@ -1,0 +1,14 @@
+.dragRegion {
+  -webkit-app-region: drag;
+}
+
+/* Interactive controls must sit above the drag bar (z-index:100) to remain clickable */
+:global(button),
+:global(a),
+:global(input),
+:global(select),
+:global(textarea),
+:global([role="button"]) {
+  position: relative;
+  z-index: 200;
+}

@@ -1,0 +1,570 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00F27C2AB028C45959C6488F /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = E4116D672B96B74D1A9DF41A /* AppIcon.png */; };
+		0317EEEAF2BFE9DFD38836E4 /* LanguageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF8CE55EB93A22922836B1C /* LanguageManager.swift */; };
+		0B3FA7F7F5AF73BDB338396C /* VPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C874AF95D39563DE1EAE22 /* VPNManager.swift */; };
+		1E820BDE4C7B59E53C7FC647 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */; };
+		37ABB4CC412A74F7040CA042 /* ProfileListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60036E334AA128CEA6ED3209 /* ProfileListView.swift */; };
+		427ACA039DD94FA2DC8CEFF3 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5A6207F214046A9344DB21E5 /* Localizable.strings */; };
+		5007913A197B006B134F611B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F84D4F31AF58FBD062B75EF /* SettingsView.swift */; };
+		7ABB02868BAA7054A1A77EC9 /* Profile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F5EA5A0290C968CCDC7A87 /* Profile.swift */; };
+		7E827F8A4AABD7DB6C3B6BEB /* NetFerryEngine.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; };
+		86E6C2FBACDBC25C6A773E6F /* ProfileDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */; };
+		89C578E79260EBABE2445E23 /* TunnelStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4158F4B82BEE56B59BA73382 /* TunnelStats.swift */; };
+		96A3AA52667BBC86A9FAF4EF /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C653BDD2A90A0E192448168 /* ProfileStore.swift */; };
+		B4695A251BB6767F8D2CE867 /* PacketTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B5C51D762F16DD5EF12CA7E9 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0F829081ECD883032F1D7D /* ConnectionView.swift */; };
+		C0B5E6B86A2C48841EE8637E /* NetFerryEngine.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		CBB9726D19331A2D9FC165FE /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */; };
+		DBCD175126C15DD47A0F317F /* NetFerryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BE4F6CA27BA6A47516E15FD /* NetFerryApp.swift */; };
+		E88F89A2176985A259F9C63A /* NetFerryEngine.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AA5853747170973AA105A516 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 227FC383BD296C66E104E1F5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3D78F1DFAA9BE65C4B8C831C;
+			remoteInfo = PacketTunnel;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3217E611FD852875F71796FB /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				C0B5E6B86A2C48841EE8637E /* NetFerryEngine.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3AF6B7B000FE08EEC0D40BBB /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B4695A251BB6767F8D2CE867 /* PacketTunnel.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		0C76AA5C7BB6A337DBE2E1B0 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		235BC86B4B4EEEDD4A235453 /* PacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PacketTunnel.entitlements; sourceTree = "<group>"; };
+		2A8E6BEE70FE7926F4D23721 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		3CF8CE55EB93A22922836B1C /* LanguageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageManager.swift; sourceTree = "<group>"; };
+		4158F4B82BEE56B59BA73382 /* TunnelStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStats.swift; sourceTree = "<group>"; };
+		46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		47A5FDE246E08F8EB7230EF8 /* NetFerry.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NetFerry.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		48F5EA5A0290C968CCDC7A87 /* Profile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Profile.swift; sourceTree = "<group>"; };
+		5C653BDD2A90A0E192448168 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
+		60036E334AA128CEA6ED3209 /* ProfileListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileListView.swift; sourceTree = "<group>"; };
+		6BE4F6CA27BA6A47516E15FD /* NetFerryApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetFerryApp.swift; sourceTree = "<group>"; };
+		72C874AF95D39563DE1EAE22 /* VPNManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPNManager.swift; sourceTree = "<group>"; };
+		746BEBEB6D1E6103AF56E53D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		7F84D4F31AF58FBD062B75EF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		81AB47A6F8190F680FF9FFD4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		9E0F829081ECD883032F1D7D /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+		A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = NetFerryEngine.xcframework; sourceTree = "<group>"; };
+		BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E4116D672B96B74D1A9DF41A /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
+		EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailView.swift; sourceTree = "<group>"; };
+		F8BF57EC7714A453B4615EB8 /* NetFerry.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NetFerry.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		44FE23B8F933F95F26F75514 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E827F8A4AABD7DB6C3B6BEB /* NetFerryEngine.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E9A754B25AF244E8B1529523 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E88F89A2176985A259F9C63A /* NetFerryEngine.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		017E603A15489CBBCE6D58F1 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		3B1CD62E45F72E9A53452465 /* NetFerry */ = {
+			isa = PBXGroup;
+			children = (
+				E4116D672B96B74D1A9DF41A /* AppIcon.png */,
+				2A8E6BEE70FE7926F4D23721 /* Info.plist */,
+				5A6207F214046A9344DB21E5 /* Localizable.strings */,
+				F8BF57EC7714A453B4615EB8 /* NetFerry.entitlements */,
+				6BE4F6CA27BA6A47516E15FD /* NetFerryApp.swift */,
+				DBC3AF5464E0234A0EE5B069 /* Models */,
+				CC9BBAE22F49BA5E5ECE771A /* Stores */,
+				76DFCEF10DB87164F4A7A627 /* Views */,
+			);
+			path = NetFerry;
+			sourceTree = "<group>";
+		};
+		76DFCEF10DB87164F4A7A627 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				9E0F829081ECD883032F1D7D /* ConnectionView.swift */,
+				EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */,
+				60036E334AA128CEA6ED3209 /* ProfileListView.swift */,
+				0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */,
+				7F84D4F31AF58FBD062B75EF /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		85B6978A71529878679ECA08 /* PacketTunnel */ = {
+			isa = PBXGroup;
+			children = (
+				746BEBEB6D1E6103AF56E53D /* Info.plist */,
+				235BC86B4B4EEEDD4A235453 /* PacketTunnel.entitlements */,
+				46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */,
+			);
+			path = PacketTunnel;
+			sourceTree = "<group>";
+		};
+		95BAB95CD3ABFC6F6C6C0A73 = {
+			isa = PBXGroup;
+			children = (
+				3B1CD62E45F72E9A53452465 /* NetFerry */,
+				85B6978A71529878679ECA08 /* PacketTunnel */,
+				017E603A15489CBBCE6D58F1 /* Frameworks */,
+				BF949595F357B018402E75B8 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		BF949595F357B018402E75B8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				47A5FDE246E08F8EB7230EF8 /* NetFerry.app */,
+				BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CC9BBAE22F49BA5E5ECE771A /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				3CF8CE55EB93A22922836B1C /* LanguageManager.swift */,
+				5C653BDD2A90A0E192448168 /* ProfileStore.swift */,
+				72C874AF95D39563DE1EAE22 /* VPNManager.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		DBC3AF5464E0234A0EE5B069 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				48F5EA5A0290C968CCDC7A87 /* Profile.swift */,
+				4158F4B82BEE56B59BA73382 /* TunnelStats.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3D78F1DFAA9BE65C4B8C831C /* PacketTunnel */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DBC17075A460028E8D5FC271 /* Build configuration list for PBXNativeTarget "PacketTunnel" */;
+			buildPhases = (
+				4D93594F6B1AB0BE05AC9A88 /* Sources */,
+				44FE23B8F933F95F26F75514 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PacketTunnel;
+			packageProductDependencies = (
+			);
+			productName = PacketTunnel;
+			productReference = BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B9076BD087068CCF9EB288A3 /* NetFerry */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 101FBD00D617FB9933894EC7 /* Build configuration list for PBXNativeTarget "NetFerry" */;
+			buildPhases = (
+				D2FB17EDDBBE66BF518FDF44 /* Sources */,
+				4B1678F2CE53D6ED2A7651C2 /* Resources */,
+				E9A754B25AF244E8B1529523 /* Frameworks */,
+				3AF6B7B000FE08EEC0D40BBB /* Embed Foundation Extensions */,
+				3217E611FD852875F71796FB /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				15146AF19DEED42F1EB159A2 /* PBXTargetDependency */,
+			);
+			name = NetFerry;
+			packageProductDependencies = (
+			);
+			productName = NetFerry;
+			productReference = 47A5FDE246E08F8EB7230EF8 /* NetFerry.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		227FC383BD296C66E104E1F5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = F44B5B105B506D4F20ED9813 /* Build configuration list for PBXProject "NetFerry" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+				"zh-Hans",
+			);
+			mainGroup = 95BAB95CD3ABFC6F6C6C0A73;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B9076BD087068CCF9EB288A3 /* NetFerry */,
+				3D78F1DFAA9BE65C4B8C831C /* PacketTunnel */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4B1678F2CE53D6ED2A7651C2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00F27C2AB028C45959C6488F /* AppIcon.png in Resources */,
+				427ACA039DD94FA2DC8CEFF3 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4D93594F6B1AB0BE05AC9A88 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CBB9726D19331A2D9FC165FE /* PacketTunnelProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D2FB17EDDBBE66BF518FDF44 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B5C51D762F16DD5EF12CA7E9 /* ConnectionView.swift in Sources */,
+				0317EEEAF2BFE9DFD38836E4 /* LanguageManager.swift in Sources */,
+				DBCD175126C15DD47A0F317F /* NetFerryApp.swift in Sources */,
+				7ABB02868BAA7054A1A77EC9 /* Profile.swift in Sources */,
+				86E6C2FBACDBC25C6A773E6F /* ProfileDetailView.swift in Sources */,
+				37ABB4CC412A74F7040CA042 /* ProfileListView.swift in Sources */,
+				96A3AA52667BBC86A9FAF4EF /* ProfileStore.swift in Sources */,
+				1E820BDE4C7B59E53C7FC647 /* QRScannerView.swift in Sources */,
+				5007913A197B006B134F611B /* SettingsView.swift in Sources */,
+				89C578E79260EBABE2445E23 /* TunnelStats.swift in Sources */,
+				0B3FA7F7F5AF73BDB338396C /* VPNManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		15146AF19DEED42F1EB159A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3D78F1DFAA9BE65C4B8C831C /* PacketTunnel */;
+			targetProxy = AA5853747170973AA105A516 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		5A6207F214046A9344DB21E5 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				81AB47A6F8190F680FF9FFD4 /* en */,
+				0C76AA5C7BB6A337DBE2E1B0 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		5AD0BDC953B5244F4E4132B2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = PacketTunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.netferry.app.PacketTunnel;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6E64C9DC5698634853D33DC3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NetFerry/NetFerry.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = NetFerry/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.netferry.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		806C19FBF4E76667B2DE8C67 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		B8BA74437C155FE3FFD9726F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NetFerry/NetFerry.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = NetFerry/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.netferry.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C10A714D0489C4381EC0A70B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		EDF0BDF8D152F1762DB7742B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = PacketTunnel/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.netferry.app.PacketTunnel;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		101FBD00D617FB9933894EC7 /* Build configuration list for PBXNativeTarget "NetFerry" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6E64C9DC5698634853D33DC3 /* Debug */,
+				B8BA74437C155FE3FFD9726F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DBC17075A460028E8D5FC271 /* Build configuration list for PBXNativeTarget "PacketTunnel" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EDF0BDF8D152F1762DB7742B /* Debug */,
+				5AD0BDC953B5244F4E4132B2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F44B5B105B506D4F20ED9813 /* Build configuration list for PBXProject "NetFerry" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C10A714D0489C4381EC0A70B /* Debug */,
+				806C19FBF4E76667B2DE8C67 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 227FC383BD296C66E104E1F5 /* Project object */;
+}

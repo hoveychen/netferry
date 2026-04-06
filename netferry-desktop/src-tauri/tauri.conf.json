@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "NetFerry",
+        "title": "",
         "width": 1220,
         "height": 760,
         "minWidth": 980,

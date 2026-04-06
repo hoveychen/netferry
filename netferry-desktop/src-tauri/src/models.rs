@@ -76,10 +76,16 @@ pub struct Profile {
     pub imported: bool,
 }
 
+fn default_tray_display_mode() -> String {
+    "speed".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GlobalSettings {
     pub auto_connect_profile_id: Option<String>,
+    #[serde(default = "default_tray_display_mode")]
+    pub tray_display_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

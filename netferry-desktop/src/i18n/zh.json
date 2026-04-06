@@ -12,7 +12,9 @@
     "import": "导入",
     "create": "创建",
     "profiles": "配置",
-    "destinations": "目标规则"
+    "destinations": "目标规则",
+    "connection": "连接",
+    "collapseSidebar": "收起"
   },
   "welcome": {
     "title": "欢迎使用 NetFerry",
@@ -32,6 +34,7 @@
     "lanExcl": "排除局域网",
     "imported": "已导入",
     "connect": "连接 →",
+    "connected": "已连接",
     "renameProfile": "重命名配置",
     "editProfile": "编辑配置",
     "exportProfile": "导出配置",
@@ -39,17 +42,27 @@
     "done": "完成！",
     "copyToClipboard": "复制到剪贴板",
     "saveAsNfprofile": "保存为 .nfprofile 文件",
+    "showQrCode": "显示二维码",
     "exportFailed": "导出失败：{{error}}"
   },
   "importDialog": {
     "title": "导入配置",
-    "openFile": "打开 .nfprofile 文件",
+    "openFile": "打开或拖入 .nfprofile 文件",
+    "dropFile": "松开以导入文件",
     "orPasteText": "或粘贴文本",
     "placeholder": "在此粘贴加密的配置数据...",
     "importing": "导入中..."
   },
   "exportDialog": {
     "title": "导出配置"
+  },
+  "qrExport": {
+    "title": "二维码导出",
+    "generating": "正在生成二维码…",
+    "pageIndicator": "{{current}} / {{total}}",
+    "qrLabel": "{{name}} — 第 {{current}} 张，共 {{total}} 张",
+    "qrScanOrder": "请按顺序扫描：第 {{current}} 张 / 共 {{total}} 张",
+    "multiHint": "请按顺序扫描所有二维码以导入完整配置。"
   },
   "newProfile": {
     "title": "创建配置",
@@ -210,7 +223,17 @@
     "language": "语言",
     "languageDesc": "选择应用的显示语言。",
     "english": "English",
-    "chinese": "中文"
+    "chinese": "中文",
+    "trayDisplay": "托盘图标显示",
+    "trayDisplayDesc": "选择在托盘图标旁显示的信息。",
+    "traySpeed": "下行 / 上行速度",
+    "trayConnections": "当前连接数",
+    "trayNone": "不显示"
+  },
+  "update": {
+    "available": "发现新版本 (v{{version}})！",
+    "download": "下载",
+    "dismiss": "忽略"
   },
   "helper": {
     "checkingSetup": "检查系统设置...",

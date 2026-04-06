@@ -38,8 +38,11 @@ export interface Profile {
   imported?: boolean;
 }
 
+export type TrayDisplayMode = "speed" | "connections" | "none";
+
 export interface GlobalSettings {
   autoConnectProfileId: string | null;
+  trayDisplayMode: TrayDisplayMode;
 }
 
 export interface SshHostEntry {
@@ -124,4 +127,12 @@ export interface TunnelError {
 export interface DeployProgress {
   sent: number;
   total: number;
+}
+
+export interface UpdateInfo {
+  has_update: boolean;
+  latest_version: string;
+  current_version: string;
+  release_url: string;
+  release_notes: string;
 }

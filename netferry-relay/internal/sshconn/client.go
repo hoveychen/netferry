@@ -16,6 +16,25 @@ import (
 
 const dialTimeout = 30 * time.Second
 
+// dialFunc is an optional override for net.DialTimeout. When set, all
+// outbound TCP connections for SSH go through this function. This allows
+// mobile platforms to call VpnService.protect() on the socket fd before
+// connecting, preventing routing loops through the VPN tunnel.
+var dialFunc func(network, addr string, timeout time.Duration) (net.Conn, error)
+
+// SetDialFunc sets a custom dial function for SSH connections.
+// Pass nil to restore the default net.DialTimeout behavior.
+func SetDialFunc(fn func(network, addr string, timeout time.Duration) (net.Conn, error)) {
+	dialFunc = fn
+}
+
+func dialTCP(addr string) (net.Conn, error) {
+	if dialFunc != nil {
+		return dialFunc("tcp", addr, dialTimeout)
+	}
+	return net.DialTimeout("tcp", addr, dialTimeout)
+}
+
 // JumpHostSpec describes an explicit jump host, independent of ~/.ssh/config.
 type JumpHostSpec struct {
 	// Remote in [user@]host[:port] format.
@@ -61,7 +80,7 @@ func Dial(hc *HostConfig, ac AuthConfig, jumpHosts ...JumpHostSpec) (*ssh.Client
 	}
 
 	// Direct connection.
-	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	conn, err := dialTCP(addr)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
@@ -99,7 +118,7 @@ func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, 
 
 		var conn net.Conn
 		if currentClient == nil {
-			conn, err = net.DialTimeout("tcp", jumpAddr, dialTimeout)
+			conn, err = dialTCP(jumpAddr)
 			if err != nil {
 				return nil, fmt.Errorf("ProxyJump dial %s: %w", jumpAddr, err)
 			}
@@ -164,7 +183,7 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 		var conn net.Conn
 		var err error
 		if currentClient == nil {
-			conn, err = net.DialTimeout("tcp", jumpAddr, dialTimeout)
+			conn, err = dialTCP(jumpAddr)
 			if err != nil {
 				return nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
 			}

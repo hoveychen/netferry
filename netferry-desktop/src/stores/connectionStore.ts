@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { connectProfile, disconnectProfile, getConnectionStatus, getStatsUrl, updateTraySpeed } from "@/api";
+import { connectProfile, disconnectProfile, getConnectionStatus, getStatsUrl, updateTrayInfo } from "@/api";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { onSidecarConnected, onSidecarDisconnected } from "@/stores/ruleStore";
 import type {
   ConnectionEvent,
@@ -223,7 +224,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       try {
         const stats: TunnelStats = JSON.parse((e as MessageEvent).data);
         get().setTunnelStats(stats);
-        updateTraySpeed(stats.rxBytesPerSec, stats.txBytesPerSec).catch(() => {});
+        const displayMode = useSettingsStore.getState().settings.trayDisplayMode ?? "speed";
+        updateTrayInfo(displayMode, stats.rxBytesPerSec, stats.txBytesPerSec, stats.activeConns).catch(() => {});
       } catch {}
     });
 

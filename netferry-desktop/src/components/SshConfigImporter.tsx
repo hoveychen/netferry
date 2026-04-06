@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { importSshHosts } from "@/api";
 import type { JumpHost, Profile, SshHostEntry } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { newProfile } from "@/stores/profileStore";
 
 interface Props {
@@ -148,9 +150,9 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-1 text-[17px] font-semibold text-t1">
           {t("sshImporter.title")}
         </h3>
@@ -163,8 +165,8 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
 
         {!loading && !error && (
           <>
-            <select
-              className="mb-3.5 h-9 w-full rounded-lg border border-bdr bg-elevated px-3 py-2 text-sm text-t1 outline-none transition-all focus:border-accent/60 focus:ring-2 focus:ring-accent/15 cursor-pointer"
+            <Select
+              className="mb-3.5"
               value={selectedHost}
               onChange={(e) => setSelectedHost(e.target.value)}
             >
@@ -173,7 +175,7 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
                   {h.host}
                 </option>
               ))}
-            </select>
+            </Select>
 
             {selected && (
               <div className="mb-5 rounded-xl border border-sep bg-ov-4 p-4 text-sm">
@@ -252,6 +254,7 @@ export function SshConfigImporter({ open, onClose, onImport }: Props) {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
