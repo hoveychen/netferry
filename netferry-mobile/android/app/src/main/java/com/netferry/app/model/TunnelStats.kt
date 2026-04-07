@@ -8,14 +8,16 @@ data class TunnelStats(
     val rxBytesPerSec: Long = 0,
     @SerializedName("txBytesPerSec")
     val txBytesPerSec: Long = 0,
-    @SerializedName("rxBytesTotal")
+    @SerializedName("totalRxBytes")
     val rxBytesTotal: Long = 0,
-    @SerializedName("txBytesTotal")
+    @SerializedName("totalTxBytes")
     val txBytesTotal: Long = 0,
-    @SerializedName("activeConnections")
+    @SerializedName("activeConns")
     val activeConnections: Int = 0,
-    @SerializedName("totalConnections")
-    val totalConnections: Long = 0
+    @SerializedName("totalConns")
+    val totalConnections: Long = 0,
+    @SerializedName("dnsQueries")
+    val dnsQueries: Long = 0
 ) {
     companion object {
         private val gson = Gson()

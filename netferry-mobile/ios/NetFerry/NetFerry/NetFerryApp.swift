@@ -8,10 +8,25 @@ struct NetFerryApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ProfileListView()
-                .environment(profileStore)
-                .environment(vpnManager)
-                .preferredColorScheme(colorScheme)
+            TabView {
+                HomeView()
+                    .tabItem {
+                        Label(L("nav.home"), systemImage: "link")
+                    }
+
+                ProfileListView()
+                    .tabItem {
+                        Label(L("nav.profiles"), systemImage: "list.bullet")
+                    }
+
+                SettingsView()
+                    .tabItem {
+                        Label(L("nav.settings"), systemImage: "gear")
+                    }
+            }
+            .environment(profileStore)
+            .environment(vpnManager)
+            .preferredColorScheme(colorScheme)
         }
     }
 

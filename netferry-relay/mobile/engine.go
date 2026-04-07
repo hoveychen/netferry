@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/hoveychen/netferry/relay/internal/sshconn"
 )
 
 // PlatformCallback is implemented by the native side (Swift/Kotlin).
@@ -17,7 +21,7 @@ type PlatformCallback interface {
 	ProtectSocket(fd int32) bool
 
 	// OnStateChange is called when the engine state changes.
-	// state is one of: "disconnected", "connecting", "connected", "error".
+	// state is one of: "disconnected", "connecting", "connected", "reconnecting", "error".
 	OnStateChange(state string)
 
 	// OnLog delivers a log line from the tunnel engine.
@@ -25,15 +29,23 @@ type PlatformCallback interface {
 
 	// OnStats delivers periodic stats as a JSON string.
 	OnStats(statsJSON string)
+
+	// OnPortsChanged is called after a successful reconnection when the local
+	// SOCKS5/DNS proxy ports have changed. iOS must call setTunnelNetworkSettings
+	// with the new ports; Android can no-op (uses TUN forwarder directly).
+	OnPortsChanged(socksPort int32, dnsPort int32)
 }
 
 // State constants.
 const (
-	StateDisconnected = "disconnected"
-	StateConnecting   = "connecting"
-	StateConnected    = "connected"
-	StateError        = "error"
+	StateDisconnected  = "disconnected"
+	StateConnecting    = "connecting"
+	StateConnected     = "connected"
+	StateReconnecting  = "reconnecting"
+	StateError         = "error"
 )
+
+const reconnectInterval = 5 * time.Second
 
 // Engine is the main entry point for the mobile tunnel.
 // Create with NewEngine, call Start to connect, Stop to disconnect.
@@ -45,6 +57,12 @@ type Engine struct {
 	tunnel   *tunnelSession
 	stopCh   chan struct{}
 	stoppedW sync.WaitGroup
+
+	// Stored for reconnection.
+	configJSON string
+	cfg        *Config
+	useTUN     bool
+	tunFile    *os.File // non-nil for Android TUN mode; owned by Engine
 }
 
 // NewEngine creates a new engine with the given platform callback.
@@ -75,11 +93,13 @@ func (e *Engine) Start(configJSON string) error {
 	}
 
 	e.mu.Lock()
-	if e.state == StateConnecting || e.state == StateConnected {
+	if e.state == StateConnecting || e.state == StateConnected || e.state == StateReconnecting {
 		e.mu.Unlock()
 		return fmt.Errorf("engine already running")
 	}
 	e.stopCh = make(chan struct{})
+	e.configJSON = configJSON
+	e.cfg = cfg
 	e.setState(StateConnecting)
 	e.mu.Unlock()
 
@@ -88,9 +108,13 @@ func (e *Engine) Start(configJSON string) error {
 	log.SetPrefix("c : ")
 	log.SetOutput(&callbackLogWriter{cb: e.callback})
 
+	// Hook Android socket protection for SSH dialing.
+	e.setDialFunc()
+
 	// Create and start tunnel session.
 	session, err := newTunnelSession(cfg, e.callback, e.stopCh)
 	if err != nil {
+		e.clearDialFunc()
 		e.setState(StateError)
 		return fmt.Errorf("tunnel setup: %w", err)
 	}
@@ -100,21 +124,10 @@ func (e *Engine) Start(configJSON string) error {
 	e.setState(StateConnected)
 	e.mu.Unlock()
 
-	// Start stats reporting loop.
-	e.stoppedW.Add(1)
+	// Start stats reporting and reconnect watcher.
+	e.stoppedW.Add(2)
 	go e.statsLoop()
-
-	// Wait for tunnel to end.
-	e.stoppedW.Add(1)
-	go func() {
-		defer e.stoppedW.Done()
-		session.Wait()
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		if e.state == StateConnected {
-			e.setState(StateDisconnected)
-		}
-	}()
+	go e.reconnectWatcher()
 
 	return nil
 }
@@ -125,7 +138,24 @@ func (e *Engine) Start(configJSON string) error {
 // Use this on Android where VpnService.establish() returns a TUN fd.
 // On iOS, use Start() instead — traffic is routed via NEProxySettings.
 func (e *Engine) StartWithTUN(configJSON string, tunFD int32) error {
+	// Wrap the fd in an os.File owned by the Engine. The Engine manages its
+	// lifecycle; tunForwarder borrows it without closing.
+	tunFile := os.NewFile(uintptr(tunFD), "tun")
+	if tunFile == nil {
+		return fmt.Errorf("invalid TUN fd %d", tunFD)
+	}
+
+	e.mu.Lock()
+	e.useTUN = true
+	e.tunFile = tunFile
+	e.mu.Unlock()
+
 	if err := e.Start(configJSON); err != nil {
+		e.mu.Lock()
+		e.tunFile = nil
+		e.useTUN = false
+		e.mu.Unlock()
+		tunFile.Close()
 		return err
 	}
 
@@ -134,11 +164,11 @@ func (e *Engine) StartWithTUN(configJSON string, tunFD int32) error {
 	e.mu.Unlock()
 
 	if session == nil {
+		e.Stop()
 		return fmt.Errorf("tunnel not started")
 	}
 
-	cfg, _ := parseConfig(configJSON)
-	fwd, err := newTunForwarder(tunFD, cfg.MTU, session.tunnelClient(), session.counters)
+	fwd, err := newTunForwarder(tunFile, e.cfg.MTU, session.tunnelClient(), session.counters)
 	if err != nil {
 		e.Stop()
 		return fmt.Errorf("tun forwarder: %w", err)
@@ -162,10 +192,20 @@ func (e *Engine) Stop() {
 		e.tunnel.Close()
 		e.tunnel = nil
 	}
+	tunFile := e.tunFile
+	e.tunFile = nil
+	e.useTUN = false
 	e.setState(StateDisconnected)
 	e.mu.Unlock()
 
+	// Close TUN fd IMMEDIATELY so the OS tears down VPN routing right away,
+	// before waiting for goroutines (which may take seconds during reconnect).
+	if tunFile != nil {
+		tunFile.Close()
+	}
+
 	e.stoppedW.Wait()
+	e.clearDialFunc()
 }
 
 // GetState returns the current engine state.
@@ -219,6 +259,115 @@ func (e *Engine) setState(s string) {
 	if e.callback != nil {
 		e.callback.OnStateChange(s)
 	}
+}
+
+// reconnectWatcher monitors the active tunnel session and triggers auto-
+// reconnect when the session ends unexpectedly (not user-initiated Stop).
+func (e *Engine) reconnectWatcher() {
+	defer e.stoppedW.Done()
+	for {
+		e.mu.Lock()
+		session := e.tunnel
+		e.mu.Unlock()
+		if session == nil {
+			return
+		}
+
+		// Block until the tunnel session ends.
+		session.Wait()
+
+		// Check if this was a user-initiated stop.
+		select {
+		case <-e.stopCh:
+			return
+		default:
+		}
+
+		// Unexpected disconnect — clean up dead session and reconnect.
+		log.Println("tunnel session ended unexpectedly, attempting reconnect...")
+		e.mu.Lock()
+		if e.tunnel != nil {
+			e.tunnel.Close()
+			e.tunnel = nil
+		}
+		e.setState(StateReconnecting)
+		e.mu.Unlock()
+
+		if !e.reconnectLoop() {
+			return // stopped by user
+		}
+		// reconnectLoop succeeded — loop back to watch the new session.
+	}
+}
+
+// reconnectLoop retries creating a new tunnel session with a fixed interval.
+// Returns true on success, false if cancelled via stopCh.
+func (e *Engine) reconnectLoop() bool {
+	attempt := 0
+	for {
+		attempt++
+
+		// Wait before retrying.
+		select {
+		case <-e.stopCh:
+			return false
+		case <-time.After(reconnectInterval):
+		}
+
+		log.Printf("reconnect attempt #%d", attempt)
+
+		e.setDialFunc()
+		session, err := newTunnelSession(e.cfg, e.callback, e.stopCh)
+		if err != nil {
+			log.Printf("reconnect attempt #%d failed: %v", attempt, err)
+			continue
+		}
+
+		// Re-create TUN forwarder for Android if needed.
+		e.mu.Lock()
+		useTUN := e.useTUN
+		tunFile := e.tunFile
+		e.mu.Unlock()
+
+		if useTUN && tunFile != nil {
+			fwd, err := newTunForwarder(tunFile, e.cfg.MTU, session.tunnelClient(), session.counters)
+			if err != nil {
+				log.Printf("reconnect: tun forwarder: %v", err)
+				session.Close()
+				continue
+			}
+			session.setTunForwarder(fwd)
+		}
+
+		e.mu.Lock()
+		e.tunnel = session
+		e.setState(StateConnected)
+		e.mu.Unlock()
+
+		// Notify iOS of new SOCKS5/DNS ports (they change on reconnect).
+		if !useTUN && e.callback != nil && session.stack != nil {
+			e.callback.OnPortsChanged(
+				int32(session.stack.SOCKSPort()),
+				int32(session.stack.DNSPort()),
+			)
+		}
+
+		log.Printf("reconnect succeeded on attempt #%d", attempt)
+		return true
+	}
+}
+
+// setDialFunc hooks Android socket protection for SSH dialing.
+func (e *Engine) setDialFunc() {
+	if e.callback != nil {
+		sshconn.SetDialFunc(func(network, addr string, timeout time.Duration) (net.Conn, error) {
+			return protectedDial(network, addr, timeout, e.callback)
+		})
+	}
+}
+
+func (e *Engine) clearDialFunc() {
+	sshconn.SetDialFunc(nil)
 }
 
 func (e *Engine) statsLoop() {

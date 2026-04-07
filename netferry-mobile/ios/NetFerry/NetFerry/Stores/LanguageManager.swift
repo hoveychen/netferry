@@ -58,3 +58,9 @@ extension Text {
         }
     }
 }
+
+/// Global helper: returns a localized string respecting the language override.
+/// Use this wherever `String(localized:)` was previously used.
+func L(_ key: String) -> String {
+    LanguageManager.shared.localized(key)
+}

@@ -19,6 +19,57 @@ struct ProfileDetailView: View {
     }
 
     var body: some View {
+        if profile.imported {
+            importedBody
+        } else {
+            editableBody
+        }
+    }
+
+    // MARK: - Imported (restricted view)
+
+    private var importedBody: some View {
+        Form {
+            Section {
+                Text(L("profile.imported.notice"))
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            Section(L("profile.section.connection")) {
+                TextField(L("profile.name"), text: $profile.name)
+                    .textContentType(.name)
+                    .autocorrectionDisabled()
+            }
+
+            Section {
+                Button(L("profile.delete.confirm"), role: .destructive) {
+                    store.delete(profile)
+                    dismiss()
+                }
+            }
+        }
+        .navigationTitle(profile.name.isEmpty
+            ? L("profile.imported.title")
+            : profile.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(L("cancel")) { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(L("save")) {
+                    store.save(profile)
+                    dismiss()
+                }
+                .disabled(profile.name.isEmpty)
+            }
+        }
+    }
+
+    // MARK: - Editable (full view)
+
+    private var editableBody: some View {
         Form {
             connectionSection
             jumpHostsSection
@@ -29,7 +80,7 @@ struct ProfileDetailView: View {
 
             if !isNew {
                 Section {
-                    Button(String(localized: "profile.delete.confirm"), role: .destructive) {
+                    Button(L("profile.delete.confirm"), role: .destructive) {
                         store.delete(profile)
                         dismiss()
                     }
@@ -37,15 +88,15 @@ struct ProfileDetailView: View {
             }
         }
         .navigationTitle(isNew
-            ? String(localized: "profile.new")
-            : String(localized: "profile.edit"))
+            ? L("profile.new")
+            : L("profile.edit"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(String(localized: "cancel")) { dismiss() }
+                Button(L("cancel")) { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(String(localized: "save")) { saveProfile() }
+                Button(L("save")) { saveProfile() }
                     .disabled(profile.remote.isEmpty)
             }
         }
@@ -54,12 +105,12 @@ struct ProfileDetailView: View {
     // MARK: - Connection
 
     private var connectionSection: some View {
-        Section(String(localized: "profile.section.connection")) {
-            TextField(String(localized: "profile.name"), text: $profile.name)
+        Section(L("profile.section.connection")) {
+            TextField(L("profile.name"), text: $profile.name)
                 .textContentType(.name)
                 .autocorrectionDisabled()
 
-            TextField(String(localized: "profile.remote.hint"), text: $profile.remote)
+            TextField(L("profile.remote.hint"), text: $profile.remote)
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -95,7 +146,7 @@ struct ProfileDetailView: View {
             Button {
                 profile.jumpHosts.append(JumpHost())
             } label: {
-                Label(String(localized: "profile.jumpHosts.add"), systemImage: "plus.circle")
+                Label(L("profile.jumpHosts.add"), systemImage: "plus.circle")
             }
         } header: {
             Text(l10n: "profile.jumpHosts")
@@ -105,9 +156,9 @@ struct ProfileDetailView: View {
     // MARK: - Routing
 
     private var routingSection: some View {
-        Section(String(localized: "profile.section.routing")) {
-            Toggle(String(localized: "profile.autoNets"), isOn: $profile.autoNets)
-            Toggle(String(localized: "profile.autoExcludeLan"), isOn: $profile.autoExcludeLan)
+        Section(L("profile.section.routing")) {
+            Toggle(L("profile.autoNets"), isOn: $profile.autoNets)
+            Toggle(L("profile.autoExcludeLan"), isOn: $profile.autoExcludeLan)
 
             VStack(alignment: .leading) {
                 Text(l10n: "profile.subnets")
@@ -136,8 +187,8 @@ struct ProfileDetailView: View {
     // MARK: - DNS
 
     private var dnsSection: some View {
-        Section(String(localized: "profile.section.dns")) {
-            Picker(String(localized: "profile.dns.mode"), selection: $profile.dns) {
+        Section(L("profile.section.dns")) {
+            Picker(L("profile.dns.mode"), selection: $profile.dns) {
                 Text(l10n: "profile.dns.off").tag("off")
                 Text(l10n: "profile.dns.all").tag("all")
                 Text(l10n: "profile.dns.specific").tag("specific")
@@ -145,7 +196,7 @@ struct ProfileDetailView: View {
             .pickerStyle(.segmented)
 
             if profile.dns != "off" {
-                TextField(String(localized: "profile.dns.target.hint"), text: $profile.dnsTarget)
+                TextField(L("profile.dns.target.hint"), text: $profile.dnsTarget)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -156,19 +207,19 @@ struct ProfileDetailView: View {
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        Section(String(localized: "profile.section.advanced")) {
-            Stepper(String(localized: "profile.poolSize") + ": \(profile.poolSize)",
+        Section(L("profile.section.advanced")) {
+            Stepper(L("profile.poolSize") + ": \(profile.poolSize)",
                     value: $profile.poolSize, in: 1...10)
-            Toggle(String(localized: "profile.splitConn"), isOn: $profile.splitConn)
-            Picker(String(localized: "profile.tcpBalance"), selection: $profile.tcpBalanceMode) {
+            Toggle(L("profile.splitConn"), isOn: $profile.splitConn)
+            Picker(L("profile.tcpBalance"), selection: $profile.tcpBalanceMode) {
                 Text(l10n: "profile.tcpBalance.leastLoaded").tag("least-loaded")
                 Text(l10n: "profile.tcpBalance.roundRobin").tag("round-robin")
             }
-            Toggle(String(localized: "profile.enableUdp"), isOn: $profile.enableUdp)
-            Toggle(String(localized: "profile.blockUdp"), isOn: $profile.blockUdp)
-            Toggle(String(localized: "profile.disableIpv6"), isOn: $profile.disableIpv6)
+            Toggle(L("profile.enableUdp"), isOn: $profile.enableUdp)
+            Toggle(L("profile.blockUdp"), isOn: $profile.blockUdp)
+            Toggle(L("profile.disableIpv6"), isOn: $profile.disableIpv6)
             Stepper("MTU: \(profile.mtu)", value: $profile.mtu, in: 1280...9000, step: 100)
-            TextField(String(localized: "profile.extraSsh.hint"), text: $profile.extraSshOptions)
+            TextField(L("profile.extraSsh.hint"), text: $profile.extraSshOptions)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
         }
@@ -177,7 +228,7 @@ struct ProfileDetailView: View {
     // MARK: - Notes
 
     private var notesSection: some View {
-        Section(String(localized: "profile.notes")) {
+        Section(L("profile.notes")) {
             TextEditor(text: $profile.notes)
                 .frame(minHeight: 60)
         }
@@ -214,7 +265,7 @@ private struct JumpHostEntry: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                TextField(String(localized: "profile.jumpHosts.remote"), text: $jumpHost.remote)
+                TextField(L("profile.jumpHosts.remote"), text: $jumpHost.remote)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -229,7 +280,7 @@ private struct JumpHostEntry: View {
             }
 
             DisclosureGroup(
-                String(localized: "profile.jumpHosts.identityKey"),
+                L("profile.jumpHosts.identityKey"),
                 isExpanded: $showKey
             ) {
                 TextEditor(text: $jumpHost.identityKey)

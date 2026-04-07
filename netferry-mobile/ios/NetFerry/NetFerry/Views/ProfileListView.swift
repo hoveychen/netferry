@@ -6,8 +6,6 @@ struct ProfileListView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(VPNManager.self) private var vpnManager
     @State private var showingNewProfile = false
-    @State private var showingSettings = false
-    @State private var showingConnection = false
     @State private var showingQRScanner = false
     @State private var showingFileImporter = false
     @State private var selectedProfile: Profile?
@@ -25,15 +23,8 @@ struct ProfileListView: View {
                     profileList
                 }
             }
-            .navigationTitle("NetFerry")
+            .navigationTitle(L("nav.profiles"))
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Image(systemName: "gear")
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 16) {
                         Button {
@@ -70,16 +61,6 @@ struct ProfileListView: View {
                 QRScannerView()
                     .environment(store)
             }
-            .sheet(isPresented: $showingSettings) {
-                NavigationStack {
-                    SettingsView()
-                }
-            }
-            .fullScreenCover(isPresented: $showingConnection) {
-                ConnectionView()
-                    .environment(vpnManager)
-                    .environment(store)
-            }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.data],
@@ -97,22 +78,17 @@ struct ProfileListView: View {
             } message: {
                 Text(importError ?? "")
             }
-            .onChange(of: vpnManager.status) { _, newValue in
-                if newValue == .connected || newValue == .connecting {
-                    showingConnection = true
-                }
-            }
         }
     }
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No Profiles", systemImage: "network.slash")
+            Label(L("profiles.empty.title"), systemImage: "network.slash")
         } description: {
-            Text("Add a profile to get started.")
+            Text(L("profiles.empty.desc"))
         } actions: {
             VStack(spacing: 12) {
-                Button("Add Profile") {
+                Button(L("profiles.add")) {
                     showingNewProfile = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -120,7 +96,7 @@ struct ProfileListView: View {
                 Button {
                     showingQRScanner = true
                 } label: {
-                    Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+                    Label(L("profiles.scanQr"), systemImage: "qrcode.viewfinder")
                 }
             }
         }
@@ -192,6 +168,7 @@ struct ProfileListView: View {
                 }
 
                 profile.id = UUID()
+                profile.imported = true
                 store.save(profile)
             } catch {
                 importError = error.localizedDescription
@@ -224,9 +201,16 @@ private struct ProfileRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(profile.displayName)
-                        .font(.body)
-                        .foregroundStyle(.primary)
+                    HStack(spacing: 6) {
+                        Text(profile.displayName)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                        if profile.imported {
+                            Text(L("profile.imported"))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Text(profile.remote)
                         .font(.caption)
                         .foregroundStyle(.secondary)

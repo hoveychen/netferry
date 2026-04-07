@@ -177,7 +177,7 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Build sidecar
-        run: python scripts/build_sidecar.py --target ${{ matrix.rust_target }}
+        run: python ../scripts/build_sidecar.py --target ${{ matrix.rust_target }}
 
       - name: Build bundle (app only, unsigned)
         if: startsWith(matrix.os, 'macos')
@@ -373,8 +373,14 @@ jobs:
             -o ../netferry-mobile/android/app/libs/netferry-engine.aar \
             ./mobile/
 
+      - name: Decode Android keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > netferry-mobile/android/app/release.keystore
+
       - name: Build Android APK
         working-directory: netferry-mobile/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease --no-daemon
 

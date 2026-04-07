@@ -19,7 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DESKTOP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DESKTOP_DIR="$(cd "$SCRIPT_DIR/../netferry-desktop" && pwd)"
 
 # Load .env if present
 if [[ -f "$DESKTOP_DIR/.env" ]]; then
@@ -40,7 +40,7 @@ echo "==> Version: v$VERSION"
 
 # ── Build sidecar (Go cross-compilation — works on any OS) ───────────────────
 echo "==> Building sidecar"
-python3 scripts/build_sidecar.py --target "$RUST_TARGET" --version "v$VERSION"
+python3 "$SCRIPT_DIR/build_sidecar.py" --target "$RUST_TARGET" --version "v$VERSION"
 
 SIDECAR_PATH="$DESKTOP_DIR/src-tauri/binaries/netferry-tunnel-${RUST_TARGET}.exe"
 echo "    Sidecar: $SIDECAR_PATH"

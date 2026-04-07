@@ -215,7 +215,8 @@ struct QRScannerView: View {
         }
 
         do {
-            let profile = try JSONDecoder().decode(Profile.self, from: data)
+            var profile = try JSONDecoder().decode(Profile.self, from: data)
+            profile.imported = true
             store.save(profile)
             importedProfile = profile
             showingSuccess = true

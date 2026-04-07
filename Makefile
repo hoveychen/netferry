@@ -20,7 +20,7 @@ $(DESKTOP_DIR)/node_modules: $(DESKTOP_DIR)/package-lock.json
 
 ## sidecar: Build netferry-tunnel Go sidecar
 sidecar:
-	cd $(DESKTOP_DIR) && python3 scripts/build_sidecar.py --target $(RUST_TARGET)
+	python3 scripts/build_sidecar.py --target $(RUST_TARGET)
 
 ## bundle: Compile Tauri app and produce .app / .dmg
 bundle: $(DESKTOP_DIR)/node_modules

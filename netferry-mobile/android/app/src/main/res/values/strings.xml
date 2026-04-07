@@ -74,6 +74,10 @@
     <string name="profile_extra_ssh_hint">e.g. -J jump@host</string>
     <string name="profile_notes">Notes</string>
 
+    <string name="profile_imported">Imported</string>
+    <string name="profile_imported_notice">This profile was imported. Only the name can be changed.</string>
+    <string name="profile_imported_title">Imported Profile</string>
+
     <string name="profile_delete_title">Delete Profile</string>
     <string name="profile_delete_message">Are you sure you want to delete \"%s\"?</string>
 
@@ -145,6 +149,17 @@
     <string name="import_file">Import File</string>
     <string name="import_success">Profile imported!</string>
     <string name="import_failed">Import failed: %s</string>
+
+    <!-- Navigation tabs -->
+    <string name="nav_home">Connection</string>
+    <string name="nav_profiles">Profiles</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home screen -->
+    <string name="home_select_profile">Select a profile</string>
+    <string name="home_no_profiles">No profiles yet</string>
+    <string name="home_no_profiles_desc">Add a profile in the Profiles tab to get started.</string>
+    <string name="home_logs">Logs</string>
 
     <!-- VPN Notification -->
     <string name="vpn_notification_channel">VPN Status</string>

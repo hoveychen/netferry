@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:sidecar": "python3 scripts/build_sidecar.py",
+    "build:sidecar": "python3 ../scripts/build_sidecar.py",
     "preview": "vite preview",
     "dev:ui": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "npm run build && npm run build:sidecar && tauri build",

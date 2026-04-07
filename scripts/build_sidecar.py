@@ -62,8 +62,8 @@ def main() -> int:
     parser.add_argument("--version", help="Override version string (e.g. passed from build_mac_local.sh)")
     args = parser.parse_args()
 
-    workspace = Path(__file__).resolve().parents[2]
-    project = Path(__file__).resolve().parents[1]
+    workspace = Path(__file__).resolve().parents[1]
+    project = workspace / "netferry-desktop"
     relay_dir = workspace / "netferry-relay"
     binaries_dir = project / "src-tauri" / "binaries"
     binaries_dir.mkdir(parents=True, exist_ok=True)

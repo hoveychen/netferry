@@ -3,7 +3,6 @@ package mobile
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -46,11 +45,7 @@ type tunForwarder struct {
 	wg     sync.WaitGroup
 }
 
-func newTunForwarder(tunFD int32, mtuSize int, tunnel mux.TunnelClient, counters *stats.Counters) (*tunForwarder, error) {
-	tunFile := os.NewFile(uintptr(tunFD), "tun")
-	if tunFile == nil {
-		return nil, io.ErrClosedPipe
-	}
+func newTunForwarder(tunFile *os.File, mtuSize int, tunnel mux.TunnelClient, counters *stats.Counters) (*tunForwarder, error) {
 
 	s := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
@@ -60,7 +55,6 @@ func newTunForwarder(tunFD int32, mtuSize int, tunnel mux.TunnelClient, counters
 	ep := channel.New(512, uint32(mtuSize), "")
 
 	if tcpipErr := s.CreateNIC(tunNICID, ep); tcpipErr != nil {
-		tunFile.Close()
 		return nil, fmt.Errorf("create NIC: %v", tcpipErr)
 	}
 
@@ -261,9 +255,11 @@ func (tf *tunForwarder) handleUDP(r *udp.ForwarderRequest) {
 	conn.WriteTo(resp, srcAddr)
 }
 
+// Close shuts down the gVisor stack and goroutines but does NOT close the
+// underlying TUN file. The caller (Engine) owns the TUN fd lifecycle so that
+// the same fd can be reused across reconnections.
 func (tf *tunForwarder) Close() {
 	tf.cancel()
-	tf.tunFile.Close()
 	tf.ep.Close()
 	tf.s.Close()
 	tf.wg.Wait()

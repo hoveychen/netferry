@@ -61,6 +61,10 @@
 "profile.extraSsh.hint" = "e.g. -J jump@host";
 "profile.notes" = "Notes";
 
+"profile.imported" = "Imported";
+"profile.imported.notice" = "This profile was imported. Only the name can be changed.";
+"profile.imported.title" = "Imported Profile";
+
 "profile.delete.title" = "Delete Profile";
 "profile.delete.message" = "Are you sure you want to delete \"%@\"?";
 "profile.delete.confirm" = "Yes, delete";
@@ -111,6 +115,18 @@
 "qr.cameraPermission" = "Camera permission is required to scan QR codes.";
 "qr.invalidCode" = "Not a NetFerry QR code";
 "qr.importFailed" = "Import failed: %@";
+
+/* Navigation Tabs */
+"nav.home" = "Connection";
+"nav.profiles" = "Profiles";
+"nav.settings" = "Settings";
+
+/* Home Screen */
+"home.tagline" = "Secure SSH tunnel VPN";
+"home.selectProfile" = "Select a profile";
+"home.noProfiles" = "No profiles yet";
+"home.noProfiles.desc" = "Add a profile in the Profiles tab to get started.";
+"home.logs" = "Logs";
 
 /* Import */
 "import.file" = "Import File";

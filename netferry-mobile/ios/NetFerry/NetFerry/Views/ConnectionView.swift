@@ -185,7 +185,7 @@ struct SpeedSample: Identifiable {
     let txKBps: Double
 }
 
-private struct SpeedCard: View {
+struct SpeedCard: View {
     let title: String
     let speed: String
     let total: String
@@ -214,7 +214,7 @@ private struct SpeedCard: View {
     }
 }
 
-private struct StatItem: View {
+struct StatItem: View {
     let title: String
     let value: String
 

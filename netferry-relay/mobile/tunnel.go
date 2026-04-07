@@ -3,7 +3,6 @@ package mobile
 import (
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"sync"
 	"time"
@@ -67,13 +66,8 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 
 	log.Printf("connecting to %s@%s:%d", hc.User, hc.HostName, hc.Port)
 
-	// Hook socket protection on Android.
-	if callback != nil {
-		sshconn.SetDialFunc(func(network, addr string, timeout time.Duration) (net.Conn, error) {
-			return protectedDial(network, addr, timeout, callback)
-		})
-		defer sshconn.SetDialFunc(nil)
-	}
+	// NOTE: Socket protection (SetDialFunc) must be set by the caller (Engine)
+	// before calling newTunnelSession so it persists across reconnections.
 
 	sshClient, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {

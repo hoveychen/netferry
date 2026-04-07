@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		00F27C2AB028C45959C6488F /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = E4116D672B96B74D1A9DF41A /* AppIcon.png */; };
+		F1A2B3C4D5E6F708192A3B4C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */; };
 		0317EEEAF2BFE9DFD38836E4 /* LanguageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF8CE55EB93A22922836B1C /* LanguageManager.swift */; };
 		0B3FA7F7F5AF73BDB338396C /* VPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C874AF95D39563DE1EAE22 /* VPNManager.swift */; };
 		1E820BDE4C7B59E53C7FC647 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */; };
@@ -21,6 +22,7 @@
 		96A3AA52667BBC86A9FAF4EF /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C653BDD2A90A0E192448168 /* ProfileStore.swift */; };
 		B4695A251BB6767F8D2CE867 /* PacketTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B5C51D762F16DD5EF12CA7E9 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0F829081ECD883032F1D7D /* ConnectionView.swift */; };
+		A1B2C3D4E5F60718A9B0C1D2 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */; };
 		C0B5E6B86A2C48841EE8637E /* NetFerryEngine.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		CBB9726D19331A2D9FC165FE /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */; };
 		DBCD175126C15DD47A0F317F /* NetFerryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BE4F6CA27BA6A47516E15FD /* NetFerryApp.swift */; };
@@ -80,9 +82,11 @@
 		7F84D4F31AF58FBD062B75EF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		81AB47A6F8190F680FF9FFD4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		9E0F829081ECD883032F1D7D /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = NetFerryEngine.xcframework; sourceTree = "<group>"; };
 		BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4116D672B96B74D1A9DF41A /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailView.swift; sourceTree = "<group>"; };
 		F8BF57EC7714A453B4615EB8 /* NetFerry.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NetFerry.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -119,6 +123,7 @@
 			isa = PBXGroup;
 			children = (
 				E4116D672B96B74D1A9DF41A /* AppIcon.png */,
+				F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */,
 				2A8E6BEE70FE7926F4D23721 /* Info.plist */,
 				5A6207F214046A9344DB21E5 /* Localizable.strings */,
 				F8BF57EC7714A453B4615EB8 /* NetFerry.entitlements */,
@@ -134,6 +139,7 @@
 			isa = PBXGroup;
 			children = (
 				9E0F829081ECD883032F1D7D /* ConnectionView.swift */,
+				A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */,
 				EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */,
 				60036E334AA128CEA6ED3209 /* ProfileListView.swift */,
 				0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */,
@@ -269,6 +275,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				00F27C2AB028C45959C6488F /* AppIcon.png in Resources */,
+				F1A2B3C4D5E6F708192A3B4C /* Assets.xcassets in Resources */,
 				427ACA039DD94FA2DC8CEFF3 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -289,6 +296,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B5C51D762F16DD5EF12CA7E9 /* ConnectionView.swift in Sources */,
+				A1B2C3D4E5F60718A9B0C1D2 /* HomeView.swift in Sources */,
 				0317EEEAF2BFE9DFD38836E4 /* LanguageManager.swift in Sources */,
 				DBCD175126C15DD47A0F317F /* NetFerryApp.swift in Sources */,
 				7ABB02868BAA7054A1A77EC9 /* Profile.swift in Sources */,

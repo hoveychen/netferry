@@ -21,4 +21,4 @@ npm run tauri build
 
 - `src/`: Frontend UI
 - `src-tauri/`: Rust backend and packaging config
-- `scripts/build_sidecar.py`: Builds the `netferry-tunnel` sidecar
+- `../scripts/build_sidecar.py`: Builds the `netferry-tunnel` sidecar

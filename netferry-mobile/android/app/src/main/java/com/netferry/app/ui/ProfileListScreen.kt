@@ -26,16 +26,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -88,9 +87,7 @@ fun ProfileListScreen(
     onDelete: (Profile) -> Unit,
     onAddProfile: () -> Unit,
     onSaveProfile: (Profile) -> Unit,
-    onScanQR: () -> Unit,
-    onSettings: () -> Unit,
-    onConnectionScreenClick: () -> Unit
+    onScanQR: () -> Unit
 ) {
     val context = LocalContext.current
     val importSuccessMsg = stringResource(R.string.import_success)
@@ -105,8 +102,8 @@ fun ProfileListScreen(
             val fileContent = inputStream?.bufferedReader()?.readText() ?: ""
             inputStream?.close()
             val profileJson = Mobile.decryptProfile(fileContent)
-            val profile = Gson().fromJson(profileJson, Profile::class.java)
-            onSaveProfile(profile)
+            val profile = Gson().fromJson(profileJson, Profile::class.java).sanitized()
+            onSaveProfile(profile.copy(imported = true))
             Toast.makeText(context, importSuccessMsg, Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e("ProfileList", "Import failed", e)
@@ -116,6 +113,7 @@ fun ProfileListScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -141,14 +139,15 @@ fun ProfileListScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = onSettings) {
+                    IconButton(onClick = onAddProfile) {
                         Icon(
-                            Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.action_settings),
+                            Icons.Default.Add,
+                            contentDescription = stringResource(R.string.profiles_add),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
@@ -228,20 +227,6 @@ fun ProfileListScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item { Spacer(modifier = Modifier.height(4.dp)) }
-
-                // Connection banner
-                if (connectedProfileId != null &&
-                    (vpnState == NetFerryVpnService.VpnState.CONNECTED ||
-                     vpnState == NetFerryVpnService.VpnState.CONNECTING)
-                ) {
-                    item {
-                        ConnectionBanner(
-                            profileName = profiles.find { it.id == connectedProfileId }?.name ?: "",
-                            vpnState = vpnState,
-                            onClick = onConnectionScreenClick
-                        )
-                    }
-                }
 
                 items(profiles, key = { it.id }) { profile ->
                     val isConnected = profile.id == connectedProfileId &&
@@ -332,80 +317,6 @@ fun ProfileListScreen(
 }
 
 @Composable
-private fun ConnectionBanner(
-    profileName: String,
-    vpnState: NetFerryVpnService.VpnState,
-    onClick: () -> Unit
-) {
-    val isConnected = vpnState == NetFerryVpnService.VpnState.CONNECTED
-    val statusColor = if (isConnected) StatusGreen else StatusOrange
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
-            .drawBehind {
-                // Green/amber left accent bar
-                drawRect(
-                    color = statusColor,
-                    topLeft = Offset.Zero,
-                    size = androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height)
-                )
-            }
-            .padding(start = 12.dp, end = 16.dp, top = 14.dp, bottom = 14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Status dot
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(statusColor)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (isConnected)
-                        stringResource(R.string.connection_connected)
-                    else
-                        stringResource(R.string.connection_connecting),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = profileName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text(
-                stringResource(R.string.banner_tap_details),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Icon(
-                Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
-            )
-        }
-    }
-}
-
-@Composable
 private fun ProfileCard(
     profile: Profile,
     isConnected: Boolean,
@@ -485,6 +396,15 @@ private fun ProfileCard(
                             text = stringResource(R.string.profiles_connected),
                             style = MaterialTheme.typography.labelMedium,
                             color = StatusGreen,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (profile.imported) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.profile_imported),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium
                         )
                     }

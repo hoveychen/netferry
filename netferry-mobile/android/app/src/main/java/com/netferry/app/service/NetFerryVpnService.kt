@@ -10,6 +10,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import com.netferry.app.AppLog
 import com.netferry.app.MainActivity
 import com.netferry.app.R
 import com.netferry.app.model.Profile
@@ -33,6 +34,7 @@ class NetFerryVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        AppLog.d(TAG, "onStartCommand: action=${intent?.action}, hasConfig=${intent?.hasExtra(EXTRA_CONFIG_JSON)}")
         if (intent?.action == ACTION_STOP) {
             disconnect()
             return START_NOT_STICKY
@@ -53,17 +55,29 @@ class NetFerryVpnService : VpnService() {
         startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
         _vpnState.value = VpnState.CONNECTING
 
+        AppLog.d(TAG, "Building VPN: mtu=$mtu, fullTunnel=$isFullTunnel, subnets=$subnetsJson")
+
         try {
             val builder = Builder()
-                .setSession("NetFerry - $currentProfileName")
-                .addAddress("10.0.0.1", 32)
-                .setMtu(mtu)
-                .addDnsServer("127.0.0.1")
+            AppLog.d(TAG, "Builder created")
+            builder.setSession("NetFerry - $currentProfileName")
+            AppLog.d(TAG, "setSession OK")
+            builder.addAddress("10.0.0.1", 24)
+            AppLog.d(TAG, "addAddress OK")
+            builder.setMtu(mtu)
+            AppLog.d(TAG, "setMtu OK")
+            // Android rejects loopback (127.0.0.1) as VPN DNS. Use a virtual
+            // address within the VPN subnet — the TUN forwarder intercepts all
+            // port-53 traffic regardless of destination IP.
+            builder.addDnsServer("10.0.0.2")
+            AppLog.d(TAG, "addDnsServer OK")
 
             if (isFullTunnel) {
                 builder.addRoute("0.0.0.0", 0)
+                AppLog.d(TAG, "Added full-tunnel route")
             } else {
                 val subnets = parseSubnets(subnetsJson)
+                AppLog.d(TAG, "Adding ${subnets.size} subnet routes: $subnets")
                 for (subnet in subnets) {
                     val parts = subnet.split("/")
                     if (parts.size == 2) {
@@ -76,12 +90,14 @@ class NetFerryVpnService : VpnService() {
                 builder.setMetered(false)
             }
 
+            AppLog.d(TAG, "Calling builder.establish()...")
             vpnInterface = builder.establish() ?: run {
-                Log.e(TAG, "Failed to establish VPN interface")
+                AppLog.e(TAG, "builder.establish() returned null")
                 _vpnState.value = VpnState.ERROR
                 stopSelf()
                 return START_NOT_STICKY
             }
+            AppLog.d(TAG, "VPN interface established, fd=${vpnInterface!!.fd}")
 
             val callback = object : PlatformCallback {
                 override fun protectSocket(fd: Int): Boolean {
@@ -89,7 +105,7 @@ class NetFerryVpnService : VpnService() {
                 }
 
                 override fun onStateChange(state: String) {
-                    Log.i(TAG, "Engine state: $state")
+                    AppLog.d(TAG, "Engine state change: $state")
                     when (state) {
                         "connected" -> {
                             _vpnState.value = VpnState.CONNECTED
@@ -97,6 +113,10 @@ class NetFerryVpnService : VpnService() {
                         }
                         "connecting" -> {
                             _vpnState.value = VpnState.CONNECTING
+                        }
+                        "reconnecting" -> {
+                            _vpnState.value = VpnState.CONNECTING
+                            updateNotification("Reconnecting to $currentProfileName...")
                         }
                         "disconnected" -> {
                             _vpnState.value = VpnState.DISCONNECTED
@@ -106,6 +126,10 @@ class NetFerryVpnService : VpnService() {
                             _vpnState.value = VpnState.ERROR
                         }
                     }
+                }
+
+                override fun onPortsChanged(socksPort: Int, dnsPort: Int) {
+                    // No-op on Android: traffic goes through TUN forwarder directly.
                 }
 
                 override fun onLog(msg: String) {
@@ -138,48 +162,65 @@ class NetFerryVpnService : VpnService() {
             // IP packets from the TUN fd via a userspace TCP/IP stack (gVisor
             // netstack). TCP connections are forwarded through the mux tunnel;
             // DNS queries (port 53) are forwarded through the mux DNS channel.
+            //
+            // Engine.Start() blocks until the tunnel is established, so run
+            // on a background thread to avoid freezing the UI.
             val tunFd = vpnInterface!!.fd
-            eng.startWithTUN(configJson, tunFd)
-
-            Log.i(TAG, "Engine started with TUN fd=$tunFd")
+            AppLog.d(TAG, "Starting engine on background thread...")
+            Thread {
+                try {
+                    eng.startWithTUN(configJson, tunFd)
+                    AppLog.d(TAG, "Engine started successfully with TUN fd=$tunFd")
+                } catch (e: Exception) {
+                    // Only handle if we haven't been disconnected already
+                    if (engine != null) {
+                        AppLog.e(TAG, "Engine startWithTUN failed", e)
+                        _vpnState.value = VpnState.ERROR
+                        _logMessages.value = _logMessages.value + "Error: ${e.message}"
+                    }
+                }
+            }.start()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start VPN engine", e)
+            AppLog.e(TAG, "Failed to start VPN setup (${e.javaClass.simpleName})", e)
             _vpnState.value = VpnState.ERROR
             _logMessages.value = _logMessages.value + "Error: ${e.message}"
-            cleanup()
-            stopSelf()
+            disconnect()
         }
 
-        return START_STICKY
+        return START_REDELIVER_INTENT
     }
 
     fun disconnect() {
         _vpnState.value = VpnState.DISCONNECTED
         _connectedProfileId.value = null
-        cleanup()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-    }
-
-    private fun cleanup() {
-        try {
-            engine?.stop()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping engine", e)
-        }
+        val eng = engine
+        val vpnFd = vpnInterface
         engine = null
+        vpnInterface = null
 
+        // Close VPN interface FIRST on the main thread to tear down VPN routing
+        // immediately. Engine.Stop() also closes the underlying fd (no-op double
+        // close), so this is safe even if the background thread races.
         try {
-            vpnInterface?.close()
+            vpnFd?.close()
         } catch (e: Exception) {
             Log.e(TAG, "Error closing VPN interface", e)
         }
-        vpnInterface = null
 
+        // engine.stop() blocks (waits for Go goroutines), run off main thread
+        Thread {
+            try {
+                eng?.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping engine", e)
+            }
+        }.start()
         _logMessages.value = emptyList()
         _speedHistory.value = emptyList()
         _tunnelStats.value = TunnelStats()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -298,6 +339,7 @@ class NetFerryVpnService : VpnService() {
         val connectedProfileId: StateFlow<String?> = _connectedProfileId.asStateFlow()
 
         fun startVpn(context: Context, profile: Profile) {
+            AppLog.d(TAG, "startVpn called: profile='${profile.name}', id=${profile.id}")
             val intent = Intent(context, NetFerryVpnService::class.java).apply {
                 putExtra(EXTRA_CONFIG_JSON, profile.toConfigJson())
                 putExtra(EXTRA_PROFILE_NAME, profile.name)

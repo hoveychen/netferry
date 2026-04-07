@@ -132,7 +132,7 @@ go build -o netferry-tunnel ./cmd/tunnel
 ```bash
 cd netferry-desktop
 npm install
-python scripts/build_sidecar.py
+python ../scripts/build_sidecar.py
 npm run tauri build
 ```
 

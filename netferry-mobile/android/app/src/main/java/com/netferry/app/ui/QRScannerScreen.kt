@@ -233,8 +233,8 @@ fun QRScannerScreen(
                                     scope.launch {
                                         try {
                                             val profileJson = Mobile.importFromQR(chunksJson)
-                                            val profile = Gson().fromJson(profileJson, Profile::class.java)
-                                            onProfileImported(profile)
+                                            val profile = Gson().fromJson(profileJson, Profile::class.java).sanitized()
+                                            onProfileImported(profile.copy(imported = true))
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Failed to import profile", e)
                                             errorMessage = e.message ?: "Import failed"

@@ -61,6 +61,10 @@
 "profile.extraSsh.hint" = "例如：-J jump@host";
 "profile.notes" = "备注";
 
+"profile.imported" = "已导入";
+"profile.imported.notice" = "此配置为导入配置，仅可修改名称。";
+"profile.imported.title" = "已导入的配置";
+
 "profile.delete.title" = "删除配置";
 "profile.delete.message" = "确定要删除「%@」吗？";
 "profile.delete.confirm" = "确认删除";
@@ -111,6 +115,18 @@
 "qr.cameraPermission" = "扫描二维码需要相机权限。";
 "qr.invalidCode" = "不是 NetFerry 二维码";
 "qr.importFailed" = "导入失败：%@";
+
+/* Navigation Tabs */
+"nav.home" = "连接";
+"nav.profiles" = "配置";
+"nav.settings" = "设置";
+
+/* Home Screen */
+"home.tagline" = "安全的 SSH 隧道 VPN";
+"home.selectProfile" = "选择配置";
+"home.noProfiles" = "暂无配置";
+"home.noProfiles.desc" = "请在「配置」标签页添加配置。";
+"home.logs" = "日志";
 
 /* Import */
 "import.file" = "导入文件";

@@ -69,7 +69,7 @@ jobs:
         run: npm ci
 
       - name: Build sidecar
-        run: python scripts/build_sidecar.py --target ${{ matrix.rust_target }}
+        run: python ../scripts/build_sidecar.py --target ${{ matrix.rust_target }}
 
       - name: Build frontend
         run: npm run build

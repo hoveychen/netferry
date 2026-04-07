@@ -32,7 +32,8 @@ data class Profile(
     val disableIpv6: Boolean = false,
     val extraSshOptions: String = "",
     val notes: String = "",
-    val mtu: Int = 1500
+    val mtu: Int = 1500,
+    val imported: Boolean = false
 ) : Serializable {
 
     fun toConfigJson(): String {
@@ -67,6 +68,37 @@ data class Profile(
 
     val isFullTunnel: Boolean
         get() = subnets.contains("0.0.0.0/0")
+
+    /**
+     * Gson bypasses Kotlin constructors and sets missing/null JSON fields to null,
+     * even for non-null types. This rebuilds the Profile through the constructor
+     * so all defaults are properly applied.
+     */
+    @Suppress("USELESS_ELVIS")
+    fun sanitized(): Profile = Profile(
+        id = id ?: UUID.randomUUID().toString(),
+        name = name ?: "",
+        remote = remote ?: "",
+        identityKey = identityKey ?: "",
+        jumpHosts = jumpHosts ?: emptyList(),
+        subnets = subnets ?: listOf("0.0.0.0/0"),
+        excludeSubnets = excludeSubnets ?: emptyList(),
+        autoNets = autoNets,
+        dns = dns ?: "all",
+        dnsTarget = dnsTarget ?: "",
+        enableUdp = enableUdp,
+        blockUdp = blockUdp,
+        poolSize = if (poolSize > 0) poolSize else 2,
+        splitConn = splitConn,
+        tcpBalanceMode = tcpBalanceMode ?: "least-loaded",
+        latencyBufferSize = if (latencyBufferSize > 0) latencyBufferSize else 2097152,
+        autoExcludeLan = autoExcludeLan,
+        disableIpv6 = disableIpv6,
+        extraSshOptions = extraSshOptions ?: "",
+        notes = notes ?: "",
+        mtu = if (mtu > 0) mtu else 1500,
+        imported = imported
+    )
 
     companion object {
         private fun String.toJsonString(): String {

@@ -3,6 +3,8 @@ import NetFerryEngine
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: MobileEngine?
+    /// Stored for rebuilding network settings on reconnect (port changes).
+    private var configJSON: String?
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -14,6 +16,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler(TunnelError.missingConfiguration)
             return
         }
+
+        self.configJSON = configJSON
 
         let callback = TunnelCallback(provider: self)
         guard let eng = MobileNewEngine(callback) else {
@@ -224,6 +228,13 @@ class TunnelCallback: NSObject, MobilePlatformCallbackProtocol {
     func onStateChange(_ state: String?) {
         guard let state else { return }
         NSLog("PacketTunnel: state changed to \(state)")
+        if state == "reconnecting" {
+            // Signal the NE framework that we're temporarily reasserting the tunnel.
+            // This keeps the VPN "up" from the OS perspective while we reconnect.
+            provider?.reasserting = true
+        } else if state == "connected" {
+            provider?.reasserting = false
+        }
     }
 
     func onLog(_ msg: String?) {
@@ -233,5 +244,23 @@ class TunnelCallback: NSObject, MobilePlatformCallbackProtocol {
 
     func onStats(_ statsJSON: String?) {
         // Stats are retrieved on demand via handleAppMessage.
+    }
+
+    func onPortsChanged(_ socksPort: Int32, dnsPort: Int32) {
+        guard let provider = provider else { return }
+        NSLog("PacketTunnel: ports changed SOCKS=%d DNS=%d, updating network settings", socksPort, dnsPort)
+        let configJSON = provider.configJSON ?? "{}"
+        let settings = provider.buildNetworkSettings(
+            configJSON: configJSON,
+            socksPort: Int(socksPort),
+            dnsPort: Int(dnsPort)
+        )
+        provider.setTunnelNetworkSettings(settings) { error in
+            if let error {
+                NSLog("PacketTunnel: setTunnelNetworkSettings after reconnect error: \(error)")
+            } else {
+                NSLog("PacketTunnel: network settings updated after reconnect")
+            }
+        }
     }
 }

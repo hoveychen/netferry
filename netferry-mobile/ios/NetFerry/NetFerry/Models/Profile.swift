@@ -32,6 +32,7 @@ struct Profile: Identifiable, Codable, Hashable {
     var extraSshOptions: String
     var notes: String
     var mtu: Int
+    var imported: Bool
 
     init(
         id: UUID = UUID(),
@@ -54,7 +55,8 @@ struct Profile: Identifiable, Codable, Hashable {
         disableIpv6: Bool = false,
         extraSshOptions: String = "",
         notes: String = "",
-        mtu: Int = 1500
+        mtu: Int = 1500,
+        imported: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -77,6 +79,35 @@ struct Profile: Identifiable, Codable, Hashable {
         self.extraSshOptions = extraSshOptions
         self.notes = notes
         self.mtu = mtu
+        self.imported = imported
+    }
+
+    // Custom decoder: use decodeIfPresent for all fields so that null values
+    // or missing keys (e.g. desktop exports Option<String> as null) don't crash.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        remote = try container.decodeIfPresent(String.self, forKey: .remote) ?? ""
+        identityKey = try container.decodeIfPresent(String.self, forKey: .identityKey) ?? ""
+        jumpHosts = try container.decodeIfPresent([JumpHost].self, forKey: .jumpHosts) ?? []
+        subnets = try container.decodeIfPresent([String].self, forKey: .subnets) ?? ["0.0.0.0/0"]
+        excludeSubnets = try container.decodeIfPresent([String].self, forKey: .excludeSubnets) ?? []
+        autoNets = try container.decodeIfPresent(Bool.self, forKey: .autoNets) ?? false
+        dns = try container.decodeIfPresent(String.self, forKey: .dns) ?? "all"
+        dnsTarget = try container.decodeIfPresent(String.self, forKey: .dnsTarget) ?? ""
+        enableUdp = try container.decodeIfPresent(Bool.self, forKey: .enableUdp) ?? false
+        blockUdp = try container.decodeIfPresent(Bool.self, forKey: .blockUdp) ?? true
+        poolSize = try container.decodeIfPresent(Int.self, forKey: .poolSize) ?? 2
+        splitConn = try container.decodeIfPresent(Bool.self, forKey: .splitConn) ?? false
+        tcpBalanceMode = try container.decodeIfPresent(String.self, forKey: .tcpBalanceMode) ?? "least-loaded"
+        latencyBufferSize = try container.decodeIfPresent(Int.self, forKey: .latencyBufferSize) ?? 2097152
+        autoExcludeLan = try container.decodeIfPresent(Bool.self, forKey: .autoExcludeLan) ?? true
+        disableIpv6 = try container.decodeIfPresent(Bool.self, forKey: .disableIpv6) ?? false
+        extraSshOptions = try container.decodeIfPresent(String.self, forKey: .extraSshOptions) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        mtu = try container.decodeIfPresent(Int.self, forKey: .mtu) ?? 1500
+        imported = try container.decodeIfPresent(Bool.self, forKey: .imported) ?? false
     }
 
     var displayName: String {

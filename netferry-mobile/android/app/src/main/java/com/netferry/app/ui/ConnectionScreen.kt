@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,7 +58,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -83,6 +86,7 @@ fun ConnectionScreen(
     onBack: () -> Unit
 ) {
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -99,6 +103,7 @@ fun ConnectionScreen(
                         )
                     }
                 },
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
@@ -158,7 +163,7 @@ fun ConnectionScreen(
                 StatCard(
                     icon = Icons.Default.Dns,
                     label = stringResource(R.string.connection_dns_queries),
-                    value = "-",
+                    value = stats.dnsQueries.toString(),
                     subtitle = "",
                     modifier = Modifier.weight(1f)
                 )
@@ -354,7 +359,7 @@ fun ConnectionScreen(
 }
 
 @Composable
-private fun StatusHeader(
+internal fun StatusHeader(
     vpnState: NetFerryVpnService.VpnState,
     profileName: String
 ) {
@@ -426,7 +431,7 @@ private fun StatusHeader(
 }
 
 @Composable
-private fun StatCard(
+internal fun StatCard(
     icon: ImageVector,
     label: String,
     value: String,
@@ -478,7 +483,7 @@ private fun StatCard(
 }
 
 @Composable
-private fun StatsRow(label: String, value: String) {
+internal fun StatsRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -508,27 +513,75 @@ private fun StatsRow(label: String, value: String) {
 }
 
 @Composable
-private fun SpeedChart(
+internal fun SpeedChart(
     history: List<NetFerryVpnService.SpeedSample>,
     modifier: Modifier = Modifier
 ) {
     val rxColor = StatusGreen
     val txColor = MaterialTheme.colorScheme.primary
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+    val rxLabel = stringResource(R.string.connection_download)
+    val txLabel = stringResource(R.string.connection_upload)
 
     Canvas(modifier = modifier) {
         if (history.size < 2) return@Canvas
 
         val maxSpeed = history.maxOf { maxOf(it.rxBytesPerSec, it.txBytesPerSec) }
             .coerceAtLeast(1024)
-        val width = size.width
-        val height = size.height
-        val stepX = width / (history.size - 1).coerceAtLeast(1)
+
+        // Choose a nice round max for the Y axis.
+        val yMax = niceYMax(maxSpeed)
+
+        val labelWidth = 48.dp.toPx()
+        val legendHeight = 20.dp.toPx()
+        val chartLeft = labelWidth
+        val chartWidth = size.width - chartLeft
+        val chartTop = legendHeight
+        val chartHeight = size.height - chartTop
+        val stepX = chartWidth / (history.size - 1).coerceAtLeast(1)
+
+        // Grid lines + Y-axis labels (3 lines: 0, mid, max)
+        val textPaint = android.graphics.Paint().apply {
+            color = labelColor.toArgb()
+            textSize = 10.sp.toPx()
+            isAntiAlias = true
+        }
+        for (i in 0..2) {
+            val frac = i / 2f
+            val yPos = chartTop + chartHeight * (1f - frac)
+            val value = (yMax * frac).toLong()
+            // Grid line
+            drawLine(gridColor, androidx.compose.ui.geometry.Offset(chartLeft, yPos), androidx.compose.ui.geometry.Offset(size.width, yPos), strokeWidth = 1.dp.toPx())
+            // Label
+            val label = formatSpeedShort(value)
+            drawContext.canvas.nativeCanvas.drawText(label, 0f, yPos + 4.sp.toPx(), textPaint)
+        }
+
+        // Legend (top-right): colored line + text
+        val legendY = 4.dp.toPx()
+        val dotR = 4.dp.toPx()
+        val legendTextPaint = android.graphics.Paint().apply {
+            color = labelColor.toArgb()
+            textSize = 11.sp.toPx()
+            isAntiAlias = true
+        }
+        // Upload legend
+        val txLabelWidth = legendTextPaint.measureText(txLabel)
+        val txLegendX = size.width - txLabelWidth
+        drawContext.canvas.nativeCanvas.drawText(txLabel, txLegendX, legendY + 11.sp.toPx(), legendTextPaint)
+        drawCircle(txColor, dotR, androidx.compose.ui.geometry.Offset(txLegendX - dotR - 4.dp.toPx(), legendY + 7.dp.toPx()))
+        // Download legend
+        val rxLabelWidth = legendTextPaint.measureText(rxLabel)
+        val rxLegendX = txLegendX - txLabelWidth - 20.dp.toPx()
+        drawContext.canvas.nativeCanvas.drawText(rxLabel, rxLegendX, legendY + 11.sp.toPx(), legendTextPaint)
+        drawCircle(rxColor, dotR, androidx.compose.ui.geometry.Offset(rxLegendX - dotR - 4.dp.toPx(), legendY + 7.dp.toPx()))
 
         // Download line
         val rxPath = Path()
         history.forEachIndexed { index, sample ->
-            val x = index * stepX
-            val y = height - (sample.rxBytesPerSec.toFloat() / maxSpeed * height)
+            val x = chartLeft + index * stepX
+            val y = chartTop + chartHeight - (sample.rxBytesPerSec.toFloat() / yMax * chartHeight)
             if (index == 0) rxPath.moveTo(x, y) else rxPath.lineTo(x, y)
         }
         drawPath(rxPath, rxColor, style = Stroke(width = 2.dp.toPx()))
@@ -536,14 +589,36 @@ private fun SpeedChart(
         // Upload line
         val txPath = Path()
         history.forEachIndexed { index, sample ->
-            val x = index * stepX
-            val y = height - (sample.txBytesPerSec.toFloat() / maxSpeed * height)
+            val x = chartLeft + index * stepX
+            val y = chartTop + chartHeight - (sample.txBytesPerSec.toFloat() / yMax * chartHeight)
             if (index == 0) txPath.moveTo(x, y) else txPath.lineTo(x, y)
         }
         drawPath(txPath, txColor, style = Stroke(width = 2.dp.toPx()))
+    }
+}
 
-        // Legend dots
-        drawCircle(rxColor, 4.dp.toPx(), androidx.compose.ui.geometry.Offset(width - 80.dp.toPx(), 10.dp.toPx()))
-        drawCircle(txColor, 4.dp.toPx(), androidx.compose.ui.geometry.Offset(width - 40.dp.toPx(), 10.dp.toPx()))
+/** Pick a nice round ceiling for the Y axis. */
+private fun niceYMax(maxBytes: Long): Float {
+    if (maxBytes <= 0) return 1024f
+    // Round up to a nice number (1, 2, 5 × power of 1024)
+    val units = longArrayOf(
+        1024, 2048, 5120, 10240,                          // KB range
+        102_400, 512_000, 1_048_576,                       // 100KB..1MB
+        2_097_152, 5_242_880, 10_485_760,                  // 2..10MB
+        52_428_800, 104_857_600, 524_288_000, 1_073_741_824 // 50MB..1GB
+    )
+    for (u in units) {
+        if (maxBytes <= u) return u.toFloat()
+    }
+    return (maxBytes * 1.2f)
+}
+
+/** Format bytes/sec as a short label for Y-axis (e.g. "1 KB", "5 MB"). */
+private fun formatSpeedShort(bytesPerSec: Long): String {
+    return when {
+        bytesPerSec < 1024 -> "${bytesPerSec}B"
+        bytesPerSec < 1_048_576 -> "${bytesPerSec / 1024}K"
+        bytesPerSec < 1_073_741_824 -> "${bytesPerSec / 1_048_576}M"
+        else -> "${bytesPerSec / 1_073_741_824}G"
     }
 }

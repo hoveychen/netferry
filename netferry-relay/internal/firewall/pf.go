@@ -226,9 +226,11 @@ func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dns
 
 	// Build and load the anchor rules.
 	rules := p.buildRules(subnets, excludes, proxyPort, dnsPort, dnsServers)
+	log.Printf("pf: loading anchor %q rules (blockUDP=%v, v6Subnets=%d):\n%s", p.anchor, p.blockUDP, len(subnets), rules)
 	if err := pfctlStdin(rules, "-a", p.anchor, "-f", "/dev/stdin"); err != nil {
 		return fmt.Errorf("load pf rules: %w", err)
 	}
+	log.Printf("pf: anchor %q loaded successfully", p.anchor)
 
 	return nil
 }
@@ -400,16 +402,16 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 		// If DNS is not being proxied through the tunnel, allow port 53 directly
 		// so DNS resolution still works.
 		if !(dnsPort > 0 && len(v4DNS) > 0) {
-			fmt.Fprintf(&b, "pass out quick inet proto udp port 53\n")
+			fmt.Fprintf(&b, "pass out quick inet proto udp to any port 53\n")
 		}
 		fmt.Fprintf(&b, "block out quick inet proto udp all\n")
 
-		if len(v6Subnets) > 0 {
-			if !(dnsPort > 0 && len(v6DNS) > 0) {
-				fmt.Fprintf(&b, "pass out quick inet6 proto udp port 53\n")
-			}
-			fmt.Fprintf(&b, "block out quick inet6 proto udp all\n")
+		// Always block IPv6 UDP too — even without IPv6 subnets configured,
+		// apps can use QUIC over IPv6 to bypass the IPv4-only block.
+		if !(dnsPort > 0 && len(v6DNS) > 0) {
+			fmt.Fprintf(&b, "pass out quick inet6 proto udp to any port 53\n")
 		}
+		fmt.Fprintf(&b, "block out quick inet6 proto udp all\n")
 	}
 
 	return b.Bytes()
