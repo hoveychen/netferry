@@ -78,21 +78,6 @@ pub fn run() {
                 });
             }
 
-            // macOS vibrancy (frosted glass)
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
-                    let effects = EffectsBuilder::new()
-                        .effect(Effect::Sidebar)
-                        .state(EffectState::FollowsWindowActiveState)
-                        .build();
-                    let _ = window.set_effects(effects);
-                }
-            }
-
             // Kill any tunnel process group left over from a previous crash or
             // force-quit (the PID file records the PGID written at connect time).
             sidecar::kill_stale_tunnel();
