@@ -366,6 +366,7 @@ jobs:
           if [ -n "$NETFERRY_EXPORT_KEY" ]; then
             LDFLAGS="$LDFLAGS -X github.com/hoveychen/netferry/relay/mobile.ExportKey=$NETFERRY_EXPORT_KEY"
           fi
+          mkdir -p ../netferry-mobile/android/app/libs
           gomobile bind \
             -target=android/arm64 \
             -androidapi 26 \
