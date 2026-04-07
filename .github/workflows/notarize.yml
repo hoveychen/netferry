@@ -1,6 +1,12 @@
 name: notarize
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to notarize (e.g. v0.1.2)'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
@@ -38,8 +44,12 @@ jobs:
 
           security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
+            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          curl -fsSL http://certs.apple.com/devidg2.der -o $RUNNER_TEMP/devidg2.der
+          security import $RUNNER_TEMP/devidg2.der -A -t cert -k $KEYCHAIN_PATH || true
+
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Download DMG from release
@@ -59,7 +69,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          # Write the API key .p8 file for notarytool
           API_KEY_PATH=$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8
           echo -n "$APPLE_API_KEY" | base64 --decode -o "$API_KEY_PATH"
 
@@ -93,8 +102,8 @@ jobs:
             --wait \
             --output-format json | tee /tmp/notarize_result.json || true
 
-          SUBMISSION_ID=$(cat /tmp/notarize_result.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
-          STATUS=$(cat /tmp/notarize_result.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+          SUBMISSION_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" < /tmp/notarize_result.json 2>/dev/null || true)
+          STATUS=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" < /tmp/notarize_result.json 2>/dev/null || true)
 
           echo "=== Submission ID: $SUBMISSION_ID ==="
           echo "=== Status: $STATUS ==="
