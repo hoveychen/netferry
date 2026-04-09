@@ -437,6 +437,8 @@ jobs:
 
   notarize:
     needs: publish
+    permissions:
+      contents: write
     uses: ./.github/workflows/notarize.yml
     with:
       tag: ${{ github.ref_name }}
