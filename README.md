@@ -44,8 +44,8 @@ NetFerry is a transparent tunneling tool that routes traffic through any SSH ser
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [NetFerry_macos_silicon.dmg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_silicon.dmg) |
-| **macOS (Intel)** | [NetFerry_macos_intel.dmg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_intel.dmg) |
+| **macOS (Apple Silicon)** | [NetFerry_macos_silicon.pkg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_silicon.pkg) |
+| **macOS (Intel)** | [NetFerry_macos_intel.pkg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_intel.pkg) |
 | **Linux (x64)** | [.deb](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.deb) · [AppImage](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.AppImage) |
 | **Windows (x64)** | [.msi](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.msi) · [.exe](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.exe) |
 
