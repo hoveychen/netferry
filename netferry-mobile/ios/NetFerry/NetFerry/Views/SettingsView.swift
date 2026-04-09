@@ -11,6 +11,8 @@ struct SettingsView: View {
         return "\(version) (\(build))"
     }()
 
+    private let engineVersion: String = MobileGetVersion()
+
     var body: some View {
         NavigationStack {
             Form {
@@ -47,6 +49,7 @@ struct SettingsView: View {
                 // ── ABOUT ───────────────────────────────────────────
                 Section {
                     LabeledContent(L("settings.version"), value: appVersion)
+                    LabeledContent(L("settings.engineVersion"), value: engineVersion)
                 } header: {
                     Text(l10n: "settings.section.about")
                 }

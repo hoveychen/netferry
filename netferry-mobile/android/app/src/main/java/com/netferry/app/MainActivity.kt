@@ -49,6 +49,7 @@ import com.netferry.app.ui.SettingsScreen
 import com.netferry.app.ui.theme.NetFerryTheme
 import com.netferry.app.viewmodel.ConnectionViewModel
 import com.netferry.app.viewmodel.ProfileViewModel
+import mobile.Mobile
 
 class MainActivity : AppCompatActivity() {
 
@@ -107,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                 val stats by connectionViewModel.tunnelStats.collectAsState()
                 val speedHistory by connectionViewModel.speedHistory.collectAsState()
                 val logMessages by connectionViewModel.logMessages.collectAsState()
+                val deployProgress by connectionViewModel.deployProgress.collectAsState()
 
                 // Bottom navigation tabs
                 data class TabItem(val route: String, val titleResId: Int, val icon: ImageVector)
@@ -170,6 +172,7 @@ class MainActivity : AppCompatActivity() {
                                 stats = stats,
                                 speedHistory = speedHistory,
                                 logMessages = logMessages,
+                                deployProgress = deployProgress,
                                 onConnect = { profile -> requestVpnAndConnect(profile) },
                                 onDisconnect = { connectionViewModel.disconnect() }
                             )
@@ -199,6 +202,7 @@ class MainActivity : AppCompatActivity() {
                                 profiles = profiles,
                                 autoConnectProfileId = profileViewModel.getAutoConnectProfileId(),
                                 appVersion = BuildConfig.VERSION_NAME,
+                                engineVersion = Mobile.getVersion(),
                                 themeMode = themeMode,
                                 languageMode = languageMode,
                                 onAutoConnectChanged = { id ->

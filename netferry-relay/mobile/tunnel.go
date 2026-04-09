@@ -91,7 +91,7 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 	}
 
 	// ── Deploy server ───────────────────────────────────────────────────────
-	remotePath, err := deploy.EnsureServer(sshClient, Version)
+	remotePath, err := deploy.EnsureServer(sshClient, version)
 	if err != nil {
 		s.Close()
 		return nil, fmt.Errorf("deploy server: %w", err)

@@ -107,9 +107,36 @@ struct HomeView: View {
 
             statusHeader
 
-            ProgressView()
-                .scaleEffect(1.5)
-                .padding()
+            if let dp = vpnManager.deployProgress, dp.isUploading {
+                VStack(spacing: 8) {
+                    Text(dp.reason == "first-deploy"
+                         ? L("deploy.first")
+                         : dp.reason == "update"
+                         ? L("deploy.update")
+                         : L("deploy.uploading"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    ProgressView(value: dp.fraction)
+                        .progressViewStyle(.linear)
+                        .padding(.horizontal, 24)
+
+                    HStack {
+                        Text("\(DeployProgress.formatBytes(dp.sent)) / \(DeployProgress.formatBytes(dp.total))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("\(dp.percent)%")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 24)
+                }
+            } else {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .padding()
+            }
 
             Button {
                 vpnManager.disconnect()

@@ -26,7 +26,7 @@ RELAY_DIR="netferry-relay"
 MOBILE_DIR="netferry-mobile/android"
 AAR_OUT="$MOBILE_DIR/app/libs/netferry-engine.aar"
 
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION=$(date +'%y.%-m.%-d-%s')
 BUILD_TYPE="Debug"
 GRADLE_TASK="assembleDebug"
 
@@ -79,7 +79,7 @@ echo ""
 echo "==> Building Go mobile AAR (arm64)..."
 mkdir -p "$(dirname "$AAR_OUT")"
 
-MOBILE_LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.Version=$VERSION -s -w"
+MOBILE_LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.version=$VERSION -s -w"
 if [[ -n "${NETFERRY_EXPORT_KEY:-}" ]]; then
     MOBILE_LDFLAGS="$MOBILE_LDFLAGS -X github.com/hoveychen/netferry/relay/mobile.ExportKey=$NETFERRY_EXPORT_KEY"
     echo "Export key: embedded"

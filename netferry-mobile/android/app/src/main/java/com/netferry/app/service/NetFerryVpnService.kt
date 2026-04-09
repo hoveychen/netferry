@@ -142,6 +142,24 @@ class NetFerryVpnService : VpnService() {
                     _logMessages.value = logs
                 }
 
+                override fun onDeployProgress(sent: Long, total: Long) {
+                    val current = _deployProgress.value
+                    _deployProgress.value = DeployProgress(
+                        sent = sent,
+                        total = total,
+                        reason = current?.reason
+                    )
+                }
+
+                override fun onDeployReason(reason: String) {
+                    val current = _deployProgress.value
+                    _deployProgress.value = DeployProgress(
+                        sent = current?.sent ?: 0,
+                        total = current?.total ?: 0,
+                        reason = reason
+                    )
+                }
+
                 override fun onStats(statsJSON: String) {
                     val stats = TunnelStats.fromJson(statsJSON)
                     _tunnelStats.value = stats
@@ -219,6 +237,7 @@ class NetFerryVpnService : VpnService() {
         _logMessages.value = emptyList()
         _speedHistory.value = emptyList()
         _tunnelStats.value = TunnelStats()
+        _deployProgress.value = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -301,6 +320,12 @@ class NetFerryVpnService : VpnService() {
         val txBytesPerSec: Long
     )
 
+    data class DeployProgress(
+        val sent: Long,
+        val total: Long,
+        val reason: String? = null
+    )
+
     enum class VpnState {
         DISCONNECTED, CONNECTING, CONNECTED, ERROR
     }
@@ -337,6 +362,9 @@ class NetFerryVpnService : VpnService() {
 
         private val _connectedProfileId = MutableStateFlow<String?>(null)
         val connectedProfileId: StateFlow<String?> = _connectedProfileId.asStateFlow()
+
+        private val _deployProgress = MutableStateFlow<DeployProgress?>(null)
+        val deployProgress: StateFlow<DeployProgress?> = _deployProgress.asStateFlow()
 
         fun startVpn(context: Context, profile: Profile) {
             AppLog.d(TAG, "startVpn called: profile='${profile.name}', id=${profile.id}")

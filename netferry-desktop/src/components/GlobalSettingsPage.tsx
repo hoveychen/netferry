@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowDownUp, Monitor, Moon, Sun, Unplug, EyeOff } from "lucide-react";
+import { getAppVersion, getTunnelVersion } from "@/api";
 
 import type { GlobalSettings, Profile, TrayDisplayMode } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,13 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   const [saving, setSaving] = useState(false);
   const [language, setLanguage] = useState(i18n.language);
   const [theme, setTheme] = useState<ThemeMode>(getThemeMode);
+  const [appVersion, setAppVersion] = useState("");
+  const [tunnelVersion, setTunnelVersion] = useState("");
+
+  useEffect(() => {
+    getAppVersion().then(setAppVersion).catch(() => {});
+    getTunnelVersion().then(setTunnelVersion).catch(() => {});
+  }, []);
 
   const save = async () => {
     setSaving(true);
@@ -169,6 +177,22 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
                 <option value="en">{t("settings.english")}</option>
                 <option value="zh">{t("settings.chinese")}</option>
               </Select>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.about")}
+            </p>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-t2">{t("settings.appVersion")}</span>
+                <span className="text-t3">{appVersion || "—"}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-t2">{t("settings.tunnelVersion")}</span>
+                <span className="text-t3">{tunnelVersion || "—"}</span>
+              </div>
             </div>
           </div>
         </div>

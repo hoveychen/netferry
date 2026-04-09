@@ -90,6 +90,9 @@
 "connection.logs" = "Logs";
 "connection.noLogs" = "Waiting for output…";
 "connection.totalBytes" = "Total: %@";
+"deploy.first" = "Deploying server (first time)…";
+"deploy.update" = "Updating server…";
+"deploy.uploading" = "Uploading server…";
 
 /* Settings */
 "settings.title" = "Settings";
@@ -107,6 +110,7 @@
 "settings.language.chinese" = "中文";
 "settings.section.about" = "About";
 "settings.version" = "Version";
+"settings.engineVersion" = "Engine Version";
 
 /* QR Scanner */
 "qr.title" = "Scan QR Code";

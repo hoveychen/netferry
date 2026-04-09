@@ -166,6 +166,7 @@ pub fn run() {
             commands::register_helper,
             commands::set_window_theme,
             commands::get_app_version,
+            commands::get_tunnel_version,
             commands::check_for_update
         ])
         .build(tauri::generate_context!())

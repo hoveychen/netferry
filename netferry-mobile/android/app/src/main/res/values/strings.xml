@@ -102,6 +102,11 @@
     <string name="connection_no_logs">Waiting for output…</string>
     <string name="connection_total_bytes">Total: %s</string>
 
+    <!-- Deploy progress -->
+    <string name="deploy_first">Deploying server (first time)…</string>
+    <string name="deploy_update">Updating server…</string>
+    <string name="deploy_uploading">Uploading server…</string>
+
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_section_general">General</string>
@@ -116,6 +121,7 @@
     <string name="settings_language">Language</string>
     <string name="settings_section_about">About</string>
     <string name="settings_version">Version</string>
+    <string name="settings_engine_version">Engine Version</string>
 
     <!-- QR Scanner -->
     <string name="qr_title">Scan QR Code</string>

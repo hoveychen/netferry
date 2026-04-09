@@ -55,6 +55,7 @@ fun SettingsScreen(
     profiles: List<Profile>,
     autoConnectProfileId: String?,
     appVersion: String,
+    engineVersion: String,
     themeMode: String,
     languageMode: String,
     onAutoConnectChanged: (String?) -> Unit,
@@ -161,6 +162,13 @@ fun SettingsScreen(
                 SettingsInfoItem(
                     title = stringResource(R.string.settings_version),
                     value = appVersion
+                )
+
+                Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)))
+
+                SettingsInfoItem(
+                    title = stringResource(R.string.settings_engine_version),
+                    value = engineVersion
                 )
 
                 Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)))

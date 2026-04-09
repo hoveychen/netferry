@@ -90,6 +90,9 @@
 "connection.logs" = "日志";
 "connection.noLogs" = "等待输出…";
 "connection.totalBytes" = "总计：%@";
+"deploy.first" = "首次部署服务端…";
+"deploy.update" = "更新服务端…";
+"deploy.uploading" = "上传服务端…";
 
 /* Settings */
 "settings.title" = "设置";
@@ -107,6 +110,7 @@
 "settings.language.chinese" = "中文";
 "settings.section.about" = "关于";
 "settings.version" = "版本";
+"settings.engineVersion" = "引擎版本";
 
 /* QR Scanner */
 "qr.title" = "扫描二维码";

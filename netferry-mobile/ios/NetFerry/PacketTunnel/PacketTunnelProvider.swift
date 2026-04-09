@@ -3,6 +3,7 @@ import NetFerryEngine
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: MobileEngine?
+    private var tunnelCallback: TunnelCallback?
     /// Stored for rebuilding network settings on reconnect (port changes).
     private var configJSON: String?
 
@@ -20,6 +21,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         self.configJSON = configJSON
 
         let callback = TunnelCallback(provider: self)
+        self.tunnelCallback = callback
         guard let eng = MobileNewEngine(callback) else {
             completionHandler(TunnelError.engineCreationFailed)
             return
@@ -85,6 +87,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         case "state":
             let state = engine?.getState() ?? "unknown"
             completionHandler?(state.data(using: .utf8))
+        case "deploy":
+            if let cb = tunnelCallback {
+                let json = """
+                {"sent":\(cb.deploySent),"total":\(cb.deployTotal),"reason":"\(cb.deployReason)"}
+                """
+                completionHandler?(json.data(using: .utf8))
+            } else {
+                completionHandler?(nil)
+            }
         default:
             completionHandler?(nil)
         }
@@ -214,6 +225,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 class TunnelCallback: NSObject, MobilePlatformCallbackProtocol {
     private weak var provider: PacketTunnelProvider?
 
+    /// Deploy progress state, readable by handleAppMessage.
+    private(set) var deploySent: Int64 = 0
+    private(set) var deployTotal: Int64 = 0
+    private(set) var deployReason: String = ""
+
     init(provider: PacketTunnelProvider) {
         self.provider = provider
         super.init()
@@ -244,6 +260,15 @@ class TunnelCallback: NSObject, MobilePlatformCallbackProtocol {
 
     func onStats(_ statsJSON: String?) {
         // Stats are retrieved on demand via handleAppMessage.
+    }
+
+    func onDeployProgress(_ sent: Int64, total: Int64) {
+        deploySent = sent
+        deployTotal = total
+    }
+
+    func onDeployReason(_ reason: String?) {
+        deployReason = reason ?? ""
     }
 
     func onPortsChanged(_ socksPort: Int32, dnsPort: Int32) {

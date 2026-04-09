@@ -22,13 +22,13 @@ $(DESKTOP_DIR)/node_modules: $(DESKTOP_DIR)/package-lock.json
 sidecar:
 	python3 scripts/build_sidecar.py --target $(RUST_TARGET)
 
-## bundle: Compile Tauri app and produce .app / .dmg
+## bundle: Compile Tauri app and produce .app bundle
 bundle: $(DESKTOP_DIR)/node_modules
 	cd $(DESKTOP_DIR) && CI=false npm run tauri build -- --target $(RUST_TARGET)
 	@echo ""
 	@echo "Build artifacts:"
 	@ls -1 $(BUNDLE_DIR)/macos/ 2>/dev/null | sed 's/^/  macos\//'
-	@ls -1 $(BUNDLE_DIR)/dmg/   2>/dev/null | sed 's/^/  dmg\//'
+	@ls -1 $(BUNDLE_DIR)/pkg/   2>/dev/null | sed 's/^/  pkg\//'
 
 ## relay: Build relay binaries only (server + tunnel)
 relay:

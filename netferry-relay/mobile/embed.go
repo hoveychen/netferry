@@ -6,10 +6,13 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/deploy"
 )
 
-// Version is set at build time via ldflags:
+// version is set at build time via ldflags:
 //
-//	gomobile bind -ldflags="-X github.com/hoveychen/netferry/relay/mobile.Version=1.0.0" ...
-var Version = "dev"
+//	gomobile bind -ldflags="-X github.com/hoveychen/netferry/relay/mobile.version=1.0.0" ...
+var version = "dev"
+
+// GetVersion returns the engine version string set at build time.
+func GetVersion() string { return version }
 
 // serverBinaries holds cross-compiled server binaries for deployment to
 // remote hosts. Embedded at build time — run `make build-servers` first.

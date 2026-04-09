@@ -7,7 +7,9 @@
 #   APPLE_SIGNING_IDENTITY     - e.g. "Developer ID Application: Your Name (TEAMID)"
 #
 # Optional:
-#   RUST_TARGET   - aarch64-apple-darwin (default) or x86_64-apple-darwin
+#   RUST_TARGET              - aarch64-apple-darwin (default) or x86_64-apple-darwin
+#   APPLE_INSTALLER_IDENTITY - e.g. "Developer ID Installer: Your Name (TEAMID)"
+#                              Defaults to APPLE_SIGNING_IDENTITY with "Application" → "Installer"
 #
 # Usage:
 #   bash scripts/build_mac_local.sh
@@ -183,9 +185,9 @@ codesign --force --options runtime \
   --sign "$APPLE_SIGNING_IDENTITY" \
   "$APP_PATH"
 
-# ── Create DMG ────────────────────────────────────────────────────────────────
-DMG_DIR="$DESKTOP_DIR/src-tauri/target/$RUST_TARGET/release/bundle/dmg"
-mkdir -p "$DMG_DIR"
+# ── Create PKG installer ──────────────────────────────────────────────────────
+PKG_DIR="$DESKTOP_DIR/src-tauri/target/$RUST_TARGET/release/bundle/pkg"
+mkdir -p "$PKG_DIR"
 
 case "$RUST_TARGET" in
   aarch64-apple-darwin) ARCH_LABEL="macos_silicon" ;;
@@ -193,26 +195,32 @@ case "$RUST_TARGET" in
   *)                    ARCH_LABEL="$RUST_TARGET" ;;
 esac
 
+# Derive the installer signing identity from the application signing identity.
+# "Developer ID Application: Name (TEAM)" → "Developer ID Installer: Name (TEAM)"
+APPLE_INSTALLER_IDENTITY="${APPLE_INSTALLER_IDENTITY:-${APPLE_SIGNING_IDENTITY/Application/Installer}}"
+
 VERSION_US="v${VERSION//./_}"
-DMG_PATH="$DMG_DIR/NetFerry_${ARCH_LABEL}_${VERSION_US}.dmg"
+PKG_PATH="$PKG_DIR/NetFerry_${ARCH_LABEL}_${VERSION_US}.pkg"
 
-echo "==> Creating DMG: $DMG_PATH"
-# Create a temporary folder with the .app and an Applications symlink
-TMP_DMG_SRC=$(mktemp -d)
-cp -R "$APP_PATH" "$TMP_DMG_SRC/"
-ln -s /Applications "$TMP_DMG_SRC/Applications"
+echo "==> Creating PKG: $PKG_PATH"
 
-hdiutil create \
-  -volname "NetFerry" \
-  -srcfolder "$TMP_DMG_SRC" \
-  -ov -format UDZO \
-  "$DMG_PATH"
-rm -rf "$TMP_DMG_SRC"
+# Build a component package from the signed .app bundle
+COMPONENT_PKG="$PKG_DIR/NetFerry-component.pkg"
+pkgbuild \
+  --component "$APP_PATH" \
+  --install-location /Applications \
+  --identifier com.hoveychen.netferry \
+  --version "$VERSION" \
+  "$COMPONENT_PKG"
 
-# ── Sign DMG ──────────────────────────────────────────────────────────────────
-echo "==> Signing DMG"
-codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
+# Build the final product archive (signed installer)
+echo "==> Signing PKG with: $APPLE_INSTALLER_IDENTITY"
+productbuild \
+  --package "$COMPONENT_PKG" \
+  --sign "$APPLE_INSTALLER_IDENTITY" \
+  "$PKG_PATH"
+rm -f "$COMPONENT_PKG"
 
 echo ""
 echo "==> Done!"
-echo "    DMG: $DMG_PATH"
+echo "    PKG: $PKG_PATH"

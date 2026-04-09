@@ -8,8 +8,8 @@
 # For Android: Android NDK (set ANDROID_NDK_HOME)
 
 MODULE  := github.com/hoveychen/netferry/relay/mobile
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X $(MODULE).Version=$(VERSION)
+VERSION := $(shell date +'%y.%-m.%-d-%s')
+LDFLAGS := -X $(MODULE).version=$(VERSION)
 
 .PHONY: ios android all clean servers
 

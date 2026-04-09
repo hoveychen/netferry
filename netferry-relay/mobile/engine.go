@@ -34,6 +34,13 @@ type PlatformCallback interface {
 	// SOCKS5/DNS proxy ports have changed. iOS must call setTunnelNetworkSettings
 	// with the new ports; Android can no-op (uses TUN forwarder directly).
 	OnPortsChanged(socksPort int32, dnsPort int32)
+
+	// OnDeployProgress reports sidecar upload progress (bytes sent / total).
+	OnDeployProgress(sent int64, total int64)
+
+	// OnDeployReason reports why a deploy is happening.
+	// reason is one of: "first-deploy", "update", "up-to-date".
+	OnDeployReason(reason string)
 }
 
 // State constants.
@@ -388,13 +395,31 @@ func (e *Engine) statsLoop() {
 }
 
 // callbackLogWriter sends log output to the PlatformCallback.
+// It intercepts deploy-progress and deploy-reason log lines and routes
+// them to dedicated callbacks, mirroring the desktop sidecar behaviour.
 type callbackLogWriter struct {
 	cb PlatformCallback
 }
 
 func (w *callbackLogWriter) Write(p []byte) (int, error) {
-	if w.cb != nil {
-		w.cb.OnLog(string(p))
+	if w.cb == nil {
+		return len(p), nil
 	}
+	msg := string(p)
+
+	// Parse deploy-specific log lines (format: "c : deploy-progress: SENT/TOTAL").
+	var sent, total int64
+	if _, err := fmt.Sscanf(msg, "c : deploy-progress: %d/%d", &sent, &total); err == nil {
+		w.cb.OnDeployProgress(sent, total)
+		return len(p), nil
+	}
+
+	var reason string
+	if _, err := fmt.Sscanf(msg, "c : deploy-reason: %s", &reason); err == nil {
+		w.cb.OnDeployReason(reason)
+		return len(p), nil
+	}
+
+	w.cb.OnLog(msg)
 	return len(p), nil
 }

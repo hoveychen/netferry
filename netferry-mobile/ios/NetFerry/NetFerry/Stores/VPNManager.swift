@@ -8,11 +8,13 @@ final class VPNManager {
     private(set) var status: NEVPNStatus = .disconnected
     private(set) var connectedProfileID: UUID?
     private(set) var stats: TunnelStats = TunnelStats()
+    private(set) var deployProgress: DeployProgress?
 
     private var manager: NETunnelProviderManager?
     // nonisolated(unsafe) allows deinit to access these for cleanup.
     nonisolated(unsafe) private var statusObserver: NSObjectProtocol?
     nonisolated(unsafe) private var statsTimer: Timer?
+    nonisolated(unsafe) private var deployTimer: Timer?
 
     init() {
         startObservingStatus()
@@ -26,6 +28,7 @@ final class VPNManager {
             NotificationCenter.default.removeObserver(observer)
         }
         statsTimer?.invalidate()
+        deployTimer?.invalidate()
     }
 
     var isConnected: Bool {
@@ -120,11 +123,19 @@ final class VPNManager {
                 guard let vpnStatus else { return }
                 self.status = vpnStatus
 
+                if vpnStatus == .connecting || vpnStatus == .reasserting {
+                    self.startDeployPolling()
+                } else {
+                    self.stopDeployPolling()
+                }
+
                 if vpnStatus == .connected {
                     self.startStatsPolling()
+                    self.deployProgress = nil
                 } else if vpnStatus == .disconnected {
                     self.stopStatsPolling()
                     self.stats = TunnelStats()
+                    self.deployProgress = nil
                 }
             }
         }
@@ -160,6 +171,36 @@ final class VPNManager {
         }
     }
 
+    private func startDeployPolling() {
+        stopDeployPolling()
+        deployTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollDeploy()
+            }
+        }
+    }
+
+    private func stopDeployPolling() {
+        deployTimer?.invalidate()
+        deployTimer = nil
+    }
+
+    private func pollDeploy() {
+        guard let session = manager?.connection as? NETunnelProviderSession else { return }
+        do {
+            try session.sendProviderMessage("deploy".data(using: .utf8)!) { [weak self] response in
+                guard let self, let data = response, let json = String(data: data, encoding: .utf8) else { return }
+                if let progress = DeployProgress.from(json: json) {
+                    Task { @MainActor in
+                        self.deployProgress = progress
+                    }
+                }
+            }
+        } catch {
+            // Extension may not be ready yet during early connecting phase.
+        }
+    }
+
     enum VPNError: LocalizedError {
         case invalidConfiguration
 
@@ -169,5 +210,41 @@ final class VPNManager {
                 return "Invalid VPN configuration"
             }
         }
+    }
+}
+
+struct DeployProgress: Equatable {
+    let sent: Int64
+    let total: Int64
+    let reason: String
+
+    var fraction: Double {
+        total > 0 ? Double(sent) / Double(total) : 0
+    }
+
+    var percent: Int {
+        Int(fraction * 100)
+    }
+
+    var isUploading: Bool {
+        total > 0 && reason != "up-to-date"
+    }
+
+    static func from(json: String) -> DeployProgress? {
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sent = dict["sent"] as? Int64,
+              let total = dict["total"] as? Int64,
+              let reason = dict["reason"] as? String else {
+            return nil
+        }
+        return DeployProgress(sent: sent, total: total, reason: reason)
+    }
+
+    static func formatBytes(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
+        if bytes < 1024 * 1024 * 1024 { return String(format: "%.1f MB", Double(bytes) / (1024 * 1024)) }
+        return String(format: "%.2f GB", Double(bytes) / (1024 * 1024 * 1024))
     }
 }

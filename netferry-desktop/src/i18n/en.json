@@ -228,7 +228,10 @@
     "trayDisplayDesc": "Choose what information to show next to the tray icon.",
     "traySpeed": "Download / Upload Speed",
     "trayConnections": "Active Connections",
-    "trayNone": "Nothing"
+    "trayNone": "Nothing",
+    "about": "About",
+    "appVersion": "App Version",
+    "tunnelVersion": "Engine Version"
   },
   "update": {
     "available": "A new version (v{{version}}) is available!",

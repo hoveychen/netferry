@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.netferry.app.R
 import com.netferry.app.model.Profile
 import com.netferry.app.model.TunnelStats
+import com.netferry.app.model.TunnelStats.Companion.formatBytes
 import com.netferry.app.service.NetFerryVpnService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +77,7 @@ fun HomeScreen(
     stats: TunnelStats,
     speedHistory: List<NetFerryVpnService.SpeedSample>,
     logMessages: List<String>,
+    deployProgress: NetFerryVpnService.DeployProgress? = null,
     onConnect: (Profile) -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -93,6 +95,7 @@ fun HomeScreen(
                 profileName = connectedProfileId?.let { id ->
                     profiles.find { it.id == id }?.name
                 } ?: "",
+                deployProgress = deployProgress,
                 onDisconnect = onDisconnect
             )
         }
@@ -274,6 +277,7 @@ private fun DisconnectedHome(
 @Composable
 private fun ConnectingHome(
     profileName: String,
+    deployProgress: NetFerryVpnService.DeployProgress? = null,
     onDisconnect: () -> Unit
 ) {
     Column(
@@ -292,13 +296,62 @@ private fun ConnectingHome(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        LinearProgressIndicator(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(4.dp)),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        if (deployProgress != null && deployProgress.total > 0 && deployProgress.reason != "up-to-date") {
+            // Deploy progress with percentage
+            val fraction = deployProgress.sent.toFloat() / deployProgress.total.toFloat()
+            val percent = (fraction * 100).toInt()
+
+            Text(
+                text = when (deployProgress.reason) {
+                    "first-deploy" -> stringResource(R.string.deploy_first)
+                    "update" -> stringResource(R.string.deploy_update)
+                    else -> stringResource(R.string.deploy_uploading)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${formatBytes(deployProgress.sent)} / ${formatBytes(deployProgress.total)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "$percent%",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            // Indeterminate progress (no deploy or already up-to-date)
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        }
 
         Spacer(modifier = Modifier.height(32.dp))
 

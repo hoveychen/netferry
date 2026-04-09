@@ -203,6 +203,31 @@ impl AppState {
     }
 }
 
+/// Runs `netferry-tunnel --version` and returns the version string.
+pub fn query_tunnel_version() -> Result<String, String> {
+    let binary = resolve_tunnel_exe();
+    let mut cmd = Command::new(&binary);
+    cmd.arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run tunnel binary: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tunnel --version exited with {}",
+            output.status
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Runs `netferry-tunnel --list-features` and returns the parsed JSON.
 pub fn query_method_features() -> Result<HashMap<String, Vec<String>>, String> {
     let binary = resolve_tunnel_exe();

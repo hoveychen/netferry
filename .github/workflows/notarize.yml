@@ -27,41 +27,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Import Apple certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
-            -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          curl -fsSL http://certs.apple.com/devidg2.der -o $RUNNER_TEMP/devidg2.der
-          security import $RUNNER_TEMP/devidg2.der -A -t cert -k $KEYCHAIN_PATH || true
-
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-      - name: Download DMG from release
+      - name: Download PKG from release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download ${{ inputs.tag }} \
             --repo ${{ github.repository }} \
-            --pattern "${{ matrix.stable_name }}_*.dmg" \
+            --pattern "${{ matrix.stable_name }}_*.pkg" \
             --dir .
-          VERSIONED=$(ls ${{ matrix.stable_name }}_*.dmg | head -1)
-          echo "VERSIONED_DMG=$VERSIONED" >> $GITHUB_ENV
+          VERSIONED=$(ls ${{ matrix.stable_name }}_*.pkg | head -1)
+          echo "VERSIONED_PKG=$VERSIONED" >> $GITHUB_ENV
 
       - name: Notarize and staple
         env:
@@ -72,30 +47,13 @@ jobs:
           API_KEY_PATH=$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8
           echo -n "$APPLE_API_KEY" | base64 --decode -o "$API_KEY_PATH"
 
-          echo "=== DMG file info ==="
-          ls -la "$VERSIONED_DMG"
-          file "$VERSIONED_DMG"
-          codesign -dvvv --strict "$VERSIONED_DMG" 2>&1 || echo "(DMG itself may not be signed, checking contents...)"
-
-          echo "=== Mounting DMG to inspect contents ==="
-          MOUNT_DIR=$(hdiutil attach "$VERSIONED_DMG" -nobrowse | tail -1 | awk '{print $NF}')
-          echo "Mounted at: $MOUNT_DIR"
-          ls -laR "$MOUNT_DIR"
-          APP_PATH=$(find "$MOUNT_DIR" -name "*.app" -maxdepth 2 | head -1)
-          if [ -n "$APP_PATH" ]; then
-            echo "=== App bundle signature ==="
-            codesign -dvvv --strict "$APP_PATH" 2>&1 || true
-            echo "=== Verify deep signature ==="
-            codesign --verify --deep --strict --verbose=4 "$APP_PATH" 2>&1 || true
-            echo "=== Check entitlements ==="
-            codesign -d --entitlements - "$APP_PATH" 2>&1 || true
-            echo "=== Spctl assessment ==="
-            spctl --assess --type execute --verbose=4 "$APP_PATH" 2>&1 || true
-          fi
-          hdiutil detach "$MOUNT_DIR" || true
+          echo "=== PKG file info ==="
+          ls -la "$VERSIONED_PKG"
+          file "$VERSIONED_PKG"
+          pkgutil --check-signature "$VERSIONED_PKG" 2>&1 || true
 
           echo "=== Submitting to notary service ==="
-          xcrun notarytool submit "$VERSIONED_DMG" \
+          xcrun notarytool submit "$VERSIONED_PKG" \
             --key "$API_KEY_PATH" \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER" \
@@ -124,20 +82,16 @@ jobs:
             exit 1
           fi
 
-          xcrun stapler staple "$VERSIONED_DMG"
+          xcrun stapler staple "$VERSIONED_PKG"
           echo "=== Staple verification ==="
-          xcrun stapler validate "$VERSIONED_DMG"
-          cp "$VERSIONED_DMG" "${{ matrix.stable_name }}.dmg"
+          xcrun stapler validate "$VERSIONED_PKG"
+          cp "$VERSIONED_PKG" "${{ matrix.stable_name }}.pkg"
 
-      - name: Upload notarized DMGs back to release
+      - name: Upload notarized PKGs back to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload ${{ inputs.tag }} \
             --repo ${{ github.repository }} \
             --clobber \
-            "$VERSIONED_DMG" "${{ matrix.stable_name }}.dmg"
-
-      - name: Clean up keychain
-        if: always()
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
+            "$VERSIONED_PKG" "${{ matrix.stable_name }}.pkg"

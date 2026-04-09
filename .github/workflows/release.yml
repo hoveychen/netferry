@@ -77,11 +77,11 @@ jobs:
           - os: macos-14
             rust_target: aarch64-apple-darwin
             bundle_glob: |
-              netferry-desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              netferry-desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/*.pkg
           - os: macos-latest
             rust_target: x86_64-apple-darwin
             bundle_glob: |
-              netferry-desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              netferry-desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/*.pkg
           - os: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
             bundle_glob: |
@@ -241,29 +241,34 @@ jobs:
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH"
 
-      - name: Create and sign DMG (macOS)
+      - name: Create and sign PKG (macOS)
         if: startsWith(matrix.os, 'macos')
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
-          DMG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg"
-          mkdir -p "$DMG_DIR"
+          PKG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg"
+          mkdir -p "$PKG_DIR"
 
-          TMP_SRC=$(mktemp -d)
-          cp -R "$APP_PATH" "$TMP_SRC/"
-          ln -s /Applications "$TMP_SRC/Applications"
+          # Derive installer identity if not explicitly set
+          INSTALLER_ID="${APPLE_INSTALLER_IDENTITY:-${APPLE_SIGNING_IDENTITY/Application/Installer}}"
 
-          hdiutil create \
-            -volname "NetFerry" \
-            -srcfolder "$TMP_SRC" \
-            -ov -format UDZO \
-            "$DMG_DIR/NetFerry_${VERSION}_bundle.dmg"
-          rm -rf "$TMP_SRC"
+          # Build component package from the signed .app
+          pkgbuild \
+            --component "$APP_PATH" \
+            --install-location /Applications \
+            --identifier com.hoveychen.netferry \
+            --version "$VERSION" \
+            "$PKG_DIR/NetFerry-component.pkg"
 
-          codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
-            "$DMG_DIR/NetFerry_${VERSION}_bundle.dmg"
+          # Build signed product archive
+          productbuild \
+            --package "$PKG_DIR/NetFerry-component.pkg" \
+            --sign "$INSTALLER_ID" \
+            "$PKG_DIR/NetFerry_${VERSION}_bundle.pkg"
+          rm -f "$PKG_DIR/NetFerry-component.pkg"
 
       - name: Build bundle (non-macOS)
         if: "!startsWith(matrix.os, 'macos')"
@@ -277,12 +282,12 @@ jobs:
           VERSION="${VERSION//./_}"
           case "${{ matrix.rust_target }}" in
             aarch64-apple-darwin)
-              mv src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/NetFerry_*.dmg \
-                 src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/NetFerry_macos_silicon_${VERSION}.dmg
+              mv src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
+                 src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_macos_silicon_${VERSION}.pkg
               ;;
             x86_64-apple-darwin)
-              mv src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/NetFerry_*.dmg \
-                 src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/NetFerry_macos_intel_${VERSION}.dmg
+              mv src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
+                 src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_macos_intel_${VERSION}.pkg
               ;;
             x86_64-unknown-linux-gnu)
               mv src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb \
@@ -362,7 +367,7 @@ jobs:
           NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.1.12297006
         run: |
-          LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.Version=${{ steps.version.outputs.version }} -s -w"
+          LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.version=${{ steps.version.outputs.version }} -s -w"
           if [ -n "$NETFERRY_EXPORT_KEY" ]; then
             LDFLAGS="$LDFLAGS -X github.com/hoveychen/netferry/relay/mobile.ExportKey=$NETFERRY_EXPORT_KEY"
           fi
@@ -405,8 +410,8 @@ jobs:
 
       - name: Add stable filenames for latest-release URLs
         run: |
-          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon_*.dmg' -type f | head -1)" release-artifacts/NetFerry_macos_silicon.dmg
-          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel_*.dmg' -type f | head -1)" release-artifacts/NetFerry_macos_intel.dmg
+          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon_*.pkg' -type f | head -1)" release-artifacts/NetFerry_macos_silicon.pkg
+          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel_*.pkg' -type f | head -1)" release-artifacts/NetFerry_macos_intel.pkg
           cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)" release-artifacts/NetFerry_linux_x64.deb
           cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.AppImage' -type f | head -1)" release-artifacts/NetFerry_linux_x64.AppImage
           cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.msi' -type f | head -1)" release-artifacts/NetFerry_windows_x64.msi

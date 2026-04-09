@@ -1,4 +1,4 @@
-VERSION := $(shell git -C .. describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION := $(shell date +'%y.%-m.%-d-%s')
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) -s -w"
 
 # Server cross-compilation targets (remote side, zero CGO)

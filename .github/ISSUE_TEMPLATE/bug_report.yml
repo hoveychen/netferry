@@ -11,7 +11,7 @@ body:
     attributes:
       label: Environment
       description: OS / NetFerry version / installation method
-      placeholder: macOS 15 / NetFerry 0.1.0 / dmg
+      placeholder: macOS 15 / NetFerry 0.1.0 / pkg
     validations:
       required: true
   - type: textarea

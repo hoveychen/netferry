@@ -99,6 +99,10 @@ export function getAppVersion() {
   return invoke<string>("get_app_version");
 }
 
+export function getTunnelVersion() {
+  return invoke<string>("get_tunnel_version");
+}
+
 export function checkForUpdate() {
   return invoke<UpdateInfo>("check_for_update");
 }

@@ -254,6 +254,11 @@ pub fn get_app_version(app: AppHandle) -> String {
     app.config().version.clone().unwrap_or_else(|| "0.0.0".into())
 }
 
+#[tauri::command]
+pub fn get_tunnel_version() -> String {
+    sidecar::query_tunnel_version().unwrap_or_else(|_| "unknown".into())
+}
+
 #[derive(serde::Serialize)]
 pub struct UpdateInfo {
     pub has_update: bool,

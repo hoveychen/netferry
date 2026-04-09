@@ -46,6 +46,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             null
         )
 
+    val deployProgress: StateFlow<NetFerryVpnService.DeployProgress?> =
+        NetFerryVpnService.deployProgress.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            null
+        )
+
     fun disconnect() {
         NetFerryVpnService.stopVpn(getApplication())
     }

@@ -43,35 +43,19 @@ func EnsureServer(client *ssh.Client, version string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no embedded binary for arch %q (file %q): %w", arch, binaryName, err)
 	}
-	localSize := int64(len(localData))
 
-	// Step 4: compare with remote file size.
+	// Step 4: check if this version already exists on remote.
 	remoteSize := remoteFileSize(client, remotePath)
-
-	switch {
-	case remoteSize < 0:
-		// File doesn't exist → first deploy.
-		log.Printf("deploy-reason: first-deploy")
-	case remoteSize == localSize:
-		// Same size → already up to date, skip upload.
-		log.Printf("deploy-reason: up-to-date")
-		return remotePath, nil
-	case remoteSize < localSize:
-		// Remote is smaller → new version available, upload.
-		log.Printf("deploy-reason: update")
-	default:
-		// Remote is larger than local → don't downgrade.
+	if remoteSize >= 0 {
 		log.Printf("deploy-reason: up-to-date")
 		return remotePath, nil
 	}
+	log.Printf("deploy-reason: first-deploy")
 
 	// Step 5: upload binary.
 	if err := uploadData(client, localData, remotePath); err != nil {
 		return "", fmt.Errorf("upload server binary: %w", err)
 	}
-
-	// Step 6: clean up old versions (best-effort).
-	go cleanOldVersions(client, arch, version)
 
 	return remotePath, nil
 }
@@ -219,17 +203,6 @@ func uploadData(client *ssh.Client, data []byte, remotePath string) error {
 		return fmt.Errorf("upload command: %w", err)
 	}
 	return nil
-}
-
-// cleanOldVersions removes server binaries for the same arch but different versions.
-func cleanOldVersions(client *ssh.Client, arch, currentVersion string) {
-	dir := "~/.cache/netferry"
-	// List all server-*-ARCH files, remove those not matching currentVersion.
-	cmd := fmt.Sprintf(
-		"ls %s/server-*-%s 2>/dev/null | grep -v %s | xargs rm -f 2>/dev/null; true",
-		dir, shellQuote(arch), shellQuote(currentVersion),
-	)
-	runSession(client, cmd) //nolint:errcheck
 }
 
 // runSession runs a command on the remote host and returns stdout.

@@ -46,14 +46,9 @@ def detect_target() -> str:
 
 
 def get_version(relay_dir: Path) -> str:
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(relay_dir.parent), "describe", "--tags", "--always", "--dirty"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except subprocess.CalledProcessError:
-        return "dev"
+    from datetime import datetime
+    d = datetime.now()
+    return f"{d.year % 100}.{d.month}.{d.day}-{int(d.timestamp())}"
 
 
 def main() -> int:

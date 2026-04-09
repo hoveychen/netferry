@@ -228,7 +228,10 @@
     "trayDisplayDesc": "选择在托盘图标旁显示的信息。",
     "traySpeed": "下行 / 上行速度",
     "trayConnections": "当前连接数",
-    "trayNone": "不显示"
+    "trayNone": "不显示",
+    "about": "关于",
+    "appVersion": "应用版本",
+    "tunnelVersion": "引擎版本"
   },
   "update": {
     "available": "发现新版本 (v{{version}})！",
