@@ -147,17 +147,21 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Import Apple certificate
+      - name: Import Apple certificates
         if: startsWith(matrix.os, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          INSTALLER_CERTIFICATE_PATH=$RUNNER_TEMP/installer_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
 
           echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$APPLE_INSTALLER_CERTIFICATE" | base64 --decode -o $INSTALLER_CERTIFICATE_PATH
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
@@ -165,8 +169,11 @@ jobs:
 
           security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import $INSTALLER_CERTIFICATE_PATH -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           # codesign: is required in addition to apple-tool:,apple: for codesign tool access
-          security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
+          # productbuild: is required for productbuild signing access
+          security set-key-partition-list -S "apple-tool:,apple:,codesign:,productbuild:" \
             -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
           # Import Apple Developer ID Certification Authority G2 intermediate cert.
