@@ -10,6 +10,9 @@
 MODULE  := github.com/hoveychen/netferry/relay/mobile
 VERSION := $(shell date +'%y.%-m.%-d-%s')
 LDFLAGS := -X $(MODULE).version=$(VERSION)
+ifdef NETFERRY_EXPORT_KEY
+LDFLAGS += -X $(MODULE).ExportKey=$(NETFERRY_EXPORT_KEY)
+endif
 
 .PHONY: ios android all clean servers
 

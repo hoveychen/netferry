@@ -53,5 +53,7 @@ netferry-relay/mobile/binaries/server-linux-arm64
 
 # Mobile build artifacts (gomobile output)
 netferry-mobile/ios/NetFerry/NetFerryEngine.xcframework/
+netferry-relay/mobile/NetFerryEngine.xcframework/
 netferry-mobile/android/app/libs/*.jar
 *.keystore
+*.xcuserstate

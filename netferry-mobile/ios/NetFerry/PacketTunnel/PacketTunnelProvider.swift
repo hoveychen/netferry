@@ -5,7 +5,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: MobileEngine?
     private var tunnelCallback: TunnelCallback?
     /// Stored for rebuilding network settings on reconnect (port changes).
-    private var configJSON: String?
+    fileprivate var configJSON: String?
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -103,7 +103,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Network Settings
 
-    private func buildNetworkSettings(
+    fileprivate func buildNetworkSettings(
         configJSON: String,
         socksPort: Int,
         dnsPort: Int

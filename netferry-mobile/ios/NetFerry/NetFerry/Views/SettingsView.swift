@@ -1,4 +1,5 @@
 import SwiftUI
+import NetFerryEngine
 
 struct SettingsView: View {
     @AppStorage("appTheme") private var appTheme = "system"

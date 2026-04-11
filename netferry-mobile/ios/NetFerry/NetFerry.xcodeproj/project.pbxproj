@@ -3,12 +3,11 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		00F27C2AB028C45959C6488F /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = E4116D672B96B74D1A9DF41A /* AppIcon.png */; };
-		F1A2B3C4D5E6F708192A3B4C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */; };
 		0317EEEAF2BFE9DFD38836E4 /* LanguageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CF8CE55EB93A22922836B1C /* LanguageManager.swift */; };
 		0B3FA7F7F5AF73BDB338396C /* VPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72C874AF95D39563DE1EAE22 /* VPNManager.swift */; };
 		1E820BDE4C7B59E53C7FC647 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A964ADD2DAD9084FCD9CF7D /* QRScannerView.swift */; };
@@ -20,13 +19,14 @@
 		86E6C2FBACDBC25C6A773E6F /* ProfileDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */; };
 		89C578E79260EBABE2445E23 /* TunnelStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4158F4B82BEE56B59BA73382 /* TunnelStats.swift */; };
 		96A3AA52667BBC86A9FAF4EF /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C653BDD2A90A0E192448168 /* ProfileStore.swift */; };
+		A1B2C3D4E5F60718A9B0C1D2 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */; };
 		B4695A251BB6767F8D2CE867 /* PacketTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B5C51D762F16DD5EF12CA7E9 /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0F829081ECD883032F1D7D /* ConnectionView.swift */; };
-		A1B2C3D4E5F60718A9B0C1D2 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */; };
 		C0B5E6B86A2C48841EE8637E /* NetFerryEngine.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		CBB9726D19331A2D9FC165FE /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */; };
 		DBCD175126C15DD47A0F317F /* NetFerryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BE4F6CA27BA6A47516E15FD /* NetFerryApp.swift */; };
 		E88F89A2176985A259F9C63A /* NetFerryEngine.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */; };
+		F1A2B3C4D5E6F708192A3B4C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,7 +72,7 @@
 		3CF8CE55EB93A22922836B1C /* LanguageManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageManager.swift; sourceTree = "<group>"; };
 		4158F4B82BEE56B59BA73382 /* TunnelStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStats.swift; sourceTree = "<group>"; };
 		46EA91C20F6FBBB7F031AFE4 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
-		47A5FDE246E08F8EB7230EF8 /* NetFerry.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NetFerry.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		47A5FDE246E08F8EB7230EF8 /* NetFerry.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NetFerry.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		48F5EA5A0290C968CCDC7A87 /* Profile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Profile.swift; sourceTree = "<group>"; };
 		5C653BDD2A90A0E192448168 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		60036E334AA128CEA6ED3209 /* ProfileListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileListView.swift; sourceTree = "<group>"; };
@@ -84,10 +84,10 @@
 		9E0F829081ECD883032F1D7D /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718A9B0C1D3 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A234FE6DAAAC59C41D2EA48B /* NetFerryEngine.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = NetFerryEngine.xcframework; sourceTree = "<group>"; };
-		BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB47B522925CA70C7E46BF58 /* PacketTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4116D672B96B74D1A9DF41A /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
-		F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		EA15CA3B1C6E82E8092E4F5A /* ProfileDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDetailView.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F708192A3B4D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F8BF57EC7714A453B4615EB8 /* NetFerry.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NetFerry.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -259,7 +259,6 @@
 			);
 			mainGroup = 95BAB95CD3ABFC6F6C6C0A73;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -338,6 +337,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6HU93XQG5B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
@@ -362,6 +362,7 @@
 				CODE_SIGN_ENTITLEMENTS = NetFerry/NetFerry.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6HU93XQG5B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
@@ -441,6 +442,7 @@
 				CODE_SIGN_ENTITLEMENTS = NetFerry/NetFerry.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6HU93XQG5B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
@@ -525,6 +527,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PacketTunnel/PacketTunnel.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6HU93XQG5B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
