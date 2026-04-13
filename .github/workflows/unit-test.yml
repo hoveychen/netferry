@@ -1,0 +1,31 @@
+name: unit-test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "netferry-relay/**"
+      - ".github/workflows/unit-test.yml"
+  pull_request:
+    paths:
+      - "netferry-relay/**"
+      - ".github/workflows/unit-test.yml"
+  workflow_dispatch:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: netferry-relay
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: netferry-relay/go.mod
+          cache-dependency-path: netferry-relay/go.sum
+
+      - name: Run unit tests
+        run: go test ./...
