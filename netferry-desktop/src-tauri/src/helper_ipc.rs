@@ -81,8 +81,11 @@ fn query_helper_version() -> Result<u32, String> {
 }
 
 /// Force-restart the helper by unregistering then re-registering.
-fn restart_helper() -> Result<(), String> {
-    log::warn!("Restarting helper daemon (protocol version mismatch)");
+///
+/// `reason` is logged so the helper log explains why the restart happened
+/// (protocol mismatch, socket unreachable, etc.).
+fn restart_helper(reason: &str) -> Result<(), String> {
+    log::warn!("Restarting helper daemon ({reason})");
     let rc = unsafe { netferry_unregister_helper() };
     if rc != 0 {
         return Err("Failed to unregister the stale helper daemon.".to_string());
@@ -129,7 +132,18 @@ pub fn ensure_helper_running() -> Result<bool, String> {
     }
 
     // Wait up to 8 s for the helper to start and bind the socket.
-    wait_for_socket(Duration::from_secs(8))?;
+    //
+    // If the socket never appears, the registration record in launchd is most
+    // likely out of sync with the on-disk binary (e.g. after a forced shutdown
+    // corrupted the SMAppService launch-constraint entry, macOS SIGKILLs the
+    // helper before main() runs and launchd throttles respawns).  A plain
+    // register() is a no-op in that state because SMAppService still reports
+    // status=Enabled — we have to unregister + re-register to rebuild the
+    // launch constraints from the current binary signature.
+    if let Err(e) = wait_for_socket(Duration::from_secs(8)) {
+        log::warn!("Helper socket not reachable ({e}) — restarting");
+        restart_helper("socket unreachable")?;
+    }
 
     // ── Version gate ─────────────────────────────────────────────────────────
     // SMAppService.register() updates the on-disk binary but does NOT restart
@@ -142,11 +156,11 @@ pub fn ensure_helper_running() -> Result<bool, String> {
             log::warn!(
                 "Running helper protocol v{v}, expected v{PROTOCOL_VERSION} — restarting"
             );
-            restart_helper()?;
+            restart_helper("protocol version mismatch")?;
         }
         Err(e) => {
             log::warn!("Cannot query helper version ({e}) — restarting");
-            restart_helper()?;
+            restart_helper("version query failed")?;
         }
     }
 
