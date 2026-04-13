@@ -27,5 +27,12 @@ jobs:
           go-version-file: netferry-relay/go.mod
           cache-dependency-path: netferry-relay/go.sum
 
+      - name: Build embedded server binaries
+        run: |
+          make build-servers
+          mkdir -p mobile/binaries
+          cp cmd/tunnel/binaries/server-linux-amd64 mobile/binaries/
+          cp cmd/tunnel/binaries/server-linux-arm64 mobile/binaries/
+
       - name: Run unit tests
         run: go test ./...
