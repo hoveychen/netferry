@@ -401,6 +401,42 @@ jobs:
           cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-final/netferry-tunnel-linux-arm64
           cp "$(find release-artifacts/netferry-android -name '*.apk' -type f | head -1)" release-final/NetFerry_android_arm64.apk
 
+      - name: Generate release body with download links
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          base="https://github.com/${REPO}/releases/download/${TAG}"
+          cat > release-body.md <<EOF
+          ## Downloads
+
+          ### App Installers
+
+          | Platform | Architecture | Download |
+          | --- | --- | --- |
+          | macOS | Apple Silicon | [NetFerry_macos_silicon.pkg](${base}/NetFerry_macos_silicon.pkg) |
+          | macOS | Intel | [NetFerry_macos_intel.pkg](${base}/NetFerry_macos_intel.pkg) |
+          | Windows | x64 | [NetFerry_windows_x64.msi](${base}/NetFerry_windows_x64.msi) |
+
+          ### Tunnel CLI (Linux)
+
+          | Platform | Architecture | Download |
+          | --- | --- | --- |
+          | Linux | x86_64 | [netferry-tunnel-linux-amd64](${base}/netferry-tunnel-linux-amd64) |
+          | Linux | ARM64 | [netferry-tunnel-linux-arm64](${base}/netferry-tunnel-linux-arm64) |
+
+          ### Mobile Companion
+
+          | Platform | Architecture | Download |
+          | --- | --- | --- |
+          | Android | ARM64 | [NetFerry_android_arm64.apk](${base}/NetFerry_android_arm64.apk) |
+
+          Scan the QR code in Desktop → Settings → Mobile to connect.
+
+          ---
+
+          EOF
+
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
@@ -408,6 +444,7 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body_path: release-body.md
           files: release-final/*
 
   notarize:
