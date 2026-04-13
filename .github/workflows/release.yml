@@ -82,16 +82,10 @@ jobs:
             rust_target: x86_64-apple-darwin
             bundle_glob: |
               netferry-desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/*.pkg
-          - os: ubuntu-22.04
-            rust_target: x86_64-unknown-linux-gnu
-            bundle_glob: |
-              netferry-desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-              netferry-desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
             bundle_glob: |
               netferry-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-              netferry-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -101,10 +95,13 @@ jobs:
 
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          BUILD_NUM: ${{ github.run_number }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json && rm package.json.bak
           sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
+          sed -i.bak "s/\"bundleVersion\": \"[^\"]*\"/\"bundleVersion\": \"$BUILD_NUM\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
           sed -i.bak "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
         shell: bash
 
@@ -130,19 +127,6 @@ jobs:
         with:
           go-version-file: netferry-relay/go.mod
           cache-dependency-path: netferry-relay/go.sum
-
-      - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            libwebkit2gtk-4.1-dev \
-            libssl-dev \
-            libxdo-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
 
       - name: Install deps
         run: npm ci
@@ -277,36 +261,26 @@ jobs:
             "$PKG_DIR/NetFerry_${VERSION}_bundle.pkg"
           rm -f "$PKG_DIR/NetFerry-component.pkg"
 
-      - name: Build bundle (non-macOS)
-        if: "!startsWith(matrix.os, 'macos')"
+      - name: Build bundle (Windows)
+        if: matrix.os == 'windows-latest'
         env:
           NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
-        run: npm run tauri build -- --target ${{ matrix.rust_target }}
+        run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles msi
 
-      - name: Rename bundle to friendly name
+      - name: Rename bundle to stable name
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          VERSION="${VERSION//./_}"
           case "${{ matrix.rust_target }}" in
             aarch64-apple-darwin)
               mv src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
-                 src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_macos_silicon_${VERSION}.pkg
+                 src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_macos_silicon.pkg
               ;;
             x86_64-apple-darwin)
               mv src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
-                 src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_macos_intel_${VERSION}.pkg
-              ;;
-            x86_64-unknown-linux-gnu)
-              mv src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb \
-                 src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/NetFerry_linux_x64_${VERSION}.deb
-              mv src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage \
-                 src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/NetFerry_linux_x64_${VERSION}.AppImage
+                 src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_macos_intel.pkg
               ;;
             x86_64-pc-windows-msvc)
               mv src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi \
-                 src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/NetFerry_windows_x64_${VERSION}.msi
-              mv src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe \
-                 src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/NetFerry_windows_x64_${VERSION}.exe
+                 src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/NetFerry_windows_x64.msi
               ;;
           esac
         shell: bash
@@ -394,6 +368,8 @@ jobs:
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          NETFERRY_VERSION_NAME: ${{ steps.version.outputs.version }}
+          NETFERRY_VERSION_CODE: ${{ github.run_number }}
         run: |
           ./gradlew assembleRelease --no-daemon
 
@@ -415,23 +391,15 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Add stable filenames for latest-release URLs
+      - name: Collect stable-name release files
         run: |
-          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon_*.pkg' -type f | head -1)" release-artifacts/NetFerry_macos_silicon.pkg
-          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel_*.pkg' -type f | head -1)" release-artifacts/NetFerry_macos_intel.pkg
-          cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.deb' -type f | head -1)" release-artifacts/NetFerry_linux_x64.deb
-          cp "$(find release-artifacts/netferry-x86_64-unknown-linux-gnu -name '*.AppImage' -type f | head -1)" release-artifacts/NetFerry_linux_x64.AppImage
-          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.msi' -type f | head -1)" release-artifacts/NetFerry_windows_x64.msi
-          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name '*.exe' -type f | head -1)" release-artifacts/NetFerry_windows_x64.exe
-
-          # CLI-only tunnel binaries (already have stable names)
-          cp release-artifacts/netferry-tunnel-linux-amd64/netferry-tunnel-linux-amd64 release-artifacts/netferry-tunnel-linux-amd64.bin
-          cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-artifacts/netferry-tunnel-linux-arm64.bin
-          mv release-artifacts/netferry-tunnel-linux-amd64.bin release-artifacts/netferry-tunnel-linux-amd64
-          mv release-artifacts/netferry-tunnel-linux-arm64.bin release-artifacts/netferry-tunnel-linux-arm64
-
-          # Android APK
-          cp "$(find release-artifacts/netferry-android -name '*.apk' -type f | head -1)" release-artifacts/NetFerry_android_arm64.apk 2>/dev/null || true
+          mkdir -p release-final
+          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon.pkg' -type f | head -1)" release-final/NetFerry_macos_silicon.pkg
+          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel.pkg' -type f | head -1)" release-final/NetFerry_macos_intel.pkg
+          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name 'NetFerry_windows_x64.msi' -type f | head -1)" release-final/NetFerry_windows_x64.msi
+          cp release-artifacts/netferry-tunnel-linux-amd64/netferry-tunnel-linux-amd64 release-final/netferry-tunnel-linux-amd64
+          cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-final/netferry-tunnel-linux-arm64
+          cp "$(find release-artifacts/netferry-android -name '*.apk' -type f | head -1)" release-final/NetFerry_android_arm64.apk
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
@@ -440,7 +408,7 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: release-artifacts/**/*
+          files: release-final/*
 
   notarize:
     needs: publish

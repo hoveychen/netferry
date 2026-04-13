@@ -11,8 +11,9 @@ android {
         applicationId = "com.netferry.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // Version is injected by CI via env vars; defaults below apply to local dev builds.
+        versionCode = System.getenv("NETFERRY_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("NETFERRY_VERSION_NAME") ?: "0.0.0-dev"
 
         ndk {
             abiFilters += "arm64-v8a"

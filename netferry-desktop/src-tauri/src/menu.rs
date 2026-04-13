@@ -1,7 +1,7 @@
 use crate::models::ConnectionStatus;
 use crate::profiles;
 use crate::sidecar::AppState;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -103,8 +103,13 @@ pub fn setup_menu(app: &AppHandle) -> Result<(), tauri::Error> {
 
 fn build_app_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     // ── NetFerry (app) menu ──
+    let engine_version = app.state::<AppState>().tunnel_version().to_string();
+    let about_metadata = AboutMetadataBuilder::new()
+        .credits(Some(format!("Engine Version: {engine_version}")))
+        .build();
+
     let app_menu = SubmenuBuilder::new(app, "NetFerry")
-        .about(None)
+        .about(Some(about_metadata))
         .separator()
         .item(
             &MenuItemBuilder::with_id("check_updates", "Check for Updates\u{2026}")

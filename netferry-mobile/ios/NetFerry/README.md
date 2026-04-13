@@ -128,6 +128,31 @@ The Network Extension entitlement requires explicit approval from Apple. You may
 2. Select the `NetFerry` scheme
 3. Build and run (Cmd+R)
 
+## Syncing the Bundle Version
+
+Both `Info.plist` files hold `CFBundleShortVersionString` and `CFBundleVersion`
+as literal strings — Xcode does not re-derive them from `MARKETING_VERSION` /
+`CURRENT_PROJECT_VERSION` build settings. Before archiving for distribution,
+run:
+
+```bash
+./scripts/sync-ios-version.sh
+```
+
+from the repo root. It rewrites both plists with:
+
+- `CFBundleShortVersionString` = latest git tag (leading `v` stripped)
+- `CFBundleVersion` = total commit count on `HEAD` (monotonic, required by
+  App Store / TestFlight for upgrade detection)
+
+To run it automatically on every Xcode build, add a Run Script build phase to
+the `NetFerry` target (Build Phases → + → New Run Script Phase, drag it above
+"Copy Bundle Resources") with:
+
+```bash
+"$SRCROOT/../../../scripts/sync-ios-version.sh"
+```
+
 ## Architecture
 
 ```

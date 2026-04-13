@@ -5,19 +5,17 @@
 
   [![GitHub Release](https://img.shields.io/github/v/release/hoveychen/netferry?style=flat-square&color=F5B932)](https://github.com/hoveychen/netferry/releases/latest)
   [![Build](https://img.shields.io/github/actions/workflow/status/hoveychen/netferry/release.yml?style=flat-square&label=build)](https://github.com/hoveychen/netferry/actions/workflows/release.yml)
-  [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-2CC4D4?style=flat-square)](https://github.com/hoveychen/netferry/releases/latest)
+  [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android-2CC4D4?style=flat-square)](https://github.com/hoveychen/netferry/releases/latest)
   [![License](https://img.shields.io/badge/license-Proprietary-slate?style=flat-square)](LICENSE)
 
-  **Secure tunneling for everyone — desktop GUI or CLI.**
+  **Personal tunneling client for secure remote access to your own SSH server — desktop, mobile, or CLI.**
 </div>
 
-NetFerry is a transparent tunneling tool that routes traffic through any SSH server. It includes a desktop GUI (Tauri + React) and a standalone CLI binary — no Python, no `sshuttle`, no dependencies.
+NetFerry is a client-side tunneling tool that lets you establish a secure connection to an SSH server **you own and operate**. It does not provide, host, or operate any intermediate servers, and it does not collect, inspect, log, or relay any user traffic. One polished desktop app (macOS, Windows), one Android app, and one single-binary CLI for headless Linux — all driven by the same Go engine. No Python, no `sshuttle`, no extra dependencies on either end.
 
 ## What is NetFerry?
 
-![NetFerry in 4 panels](docs/assets/netferry_comic.png)
-
-> **In short:** Got blocked websites at work or abroad? NetFerry creates a secure tunnel through any SSH server you have access to — no technical knowledge needed. Use the desktop app for a point-and-click experience, or the CLI for headless / server use.
+> **In short:** NetFerry is a personal tunneling client for users who already have their own SSH server. It establishes a secure connection from your device to **your own server** so you can reach private resources, work remotely, or access your home/office network from anywhere — point-and-click on desktop and Android, or one command on the CLI. The server binary is auto-deployed over SSH to **your** host on first connect; NetFerry never runs any infrastructure of its own and never sees your traffic.
 
 ## Architecture
 
@@ -34,31 +32,37 @@ NetFerry is a transparent tunneling tool that routes traffic through any SSH ser
 └───────────────────────────┘                      └──────────────────┘
 ```
 
-- **`netferry-tunnel`** — Go binary that handles SSH connection, firewall rule setup, transparent TCP/DNS/UDP proxying. Works standalone or as the desktop app's sidecar.
-- **`netferry-server`** — Go binary auto-deployed to the remote SSH host. Communicates with the tunnel client over a multiplexed protocol via stdin/stdout.
-- **`netferry-desktop`** — Tauri + React GUI that manages profiles and launches the tunnel with privilege elevation.
+- **`netferry-tunnel`** — Go binary that handles the SSH connection, firewall rule setup, and transparent TCP/DNS/UDP proxying. Works standalone or as the desktop app's sidecar.
+- **`netferry-server`** — Go binary auto-deployed to the remote SSH host on first connect. Communicates with the tunnel client over a multiplexed protocol via stdin/stdout.
+- **`netferry-desktop`** — Tauri + React GUI that manages profiles and launches the tunnel with privilege elevation (LaunchDaemon helper on macOS, UAC on Windows).
+- **`netferry-mobile`** — Android app (Kotlin Compose) that embeds the same Go engine via gomobile, then plugs it into `VpnService` + tun2socks to capture device traffic. iOS support is in progress.
 
 ## Download
 
-### Desktop App
+### Desktop
 
 | Platform | Download |
 |----------|----------|
 | **macOS (Apple Silicon)** | [NetFerry_macos_silicon.pkg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_silicon.pkg) |
 | **macOS (Intel)** | [NetFerry_macos_intel.pkg](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_macos_intel.pkg) |
-| **Linux (x64)** | [.deb](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.deb) · [AppImage](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_linux_x64.AppImage) |
-| **Windows (x64)** | [.msi](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.msi) · [.exe](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.exe) |
+| **Windows (x64)** | [NetFerry_windows_x64.msi](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_windows_x64.msi) |
 
-### CLI Only (Linux)
+### Mobile
 
-For headless servers or CLI-only usage — no desktop environment required.
+| Platform | Download |
+|----------|----------|
+| **Android (arm64)** | [NetFerry_android_arm64.apk](https://github.com/hoveychen/netferry/releases/latest/download/NetFerry_android_arm64.apk) |
+
+### CLI (Linux, headless)
+
+For servers or any environment without a desktop — a single static Go binary, no dependencies.
 
 | Architecture | Download |
 |--------------|----------|
 | **x86_64** | [netferry-tunnel-linux-amd64](https://github.com/hoveychen/netferry/releases/latest/download/netferry-tunnel-linux-amd64) |
 | **arm64** | [netferry-tunnel-linux-arm64](https://github.com/hoveychen/netferry/releases/latest/download/netferry-tunnel-linux-arm64) |
 
-All links point to the **latest** release; older versions are on the [Releases](https://github.com/hoveychen/netferry/releases) page.
+All links resolve to the **latest** release; older versions are on the [Releases](https://github.com/hoveychen/netferry/releases) page.
 
 ## CLI Usage
 
@@ -100,14 +104,18 @@ Root/sudo is required for all methods except `socks5`, which sets up a local SOC
 ## Repository Layout
 
 ```
-netferry-relay/          Go module — tunnel client, server, and proxy logic
+netferry-relay/          Go module — tunnel client, server, proxy, and mobile bindings
   cmd/tunnel/            CLI entry point (netferry-tunnel)
   cmd/server/            Remote server binary (auto-deployed via SSH)
   cmd/probe/             Platform capability probe tool
   internal/              Firewall, mux protocol, proxy, SSH, stats
+  mobile/                gomobile bindings shared by Android / iOS
 netferry-desktop/        Tauri + React desktop application
   src/                   React frontend
   src-tauri/             Rust backend (sidecar management, privilege elevation)
+netferry-mobile/         Mobile apps sharing the Go engine
+  android/               Kotlin Compose app + VpnService + tun2socks
+  ios/                   SwiftUI app + NEPacketTunnelProvider (in progress)
 ```
 
 ## Quick Start (Development)

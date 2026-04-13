@@ -255,8 +255,8 @@ pub fn get_app_version(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-pub fn get_tunnel_version() -> String {
-    sidecar::query_tunnel_version().unwrap_or_else(|_| "unknown".into())
+pub fn get_tunnel_version(state: State<'_, sidecar::AppState>) -> String {
+    state.tunnel_version().to_string()
 }
 
 #[derive(serde::Serialize)]

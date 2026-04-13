@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::net::ToSocketAddrs;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
@@ -163,6 +163,9 @@ pub struct AppState {
     pub status: Mutex<ConnectionStatus>,
     pub stats_port: Mutex<Option<u16>>,
 
+    /// Cached tunnel/engine version string, populated on first read.
+    pub tunnel_version: OnceLock<String>,
+
     /// macOS 13+: live socket to the privileged helper daemon.
     /// Dropping it signals the helper to kill the tunnel process.
     #[cfg(target_os = "macos")]
@@ -192,6 +195,7 @@ impl AppState {
                 message: None,
             }),
             stats_port: Mutex::new(None),
+            tunnel_version: OnceLock::new(),
             #[cfg(target_os = "macos")]
             helper_stream: Mutex::new(None),
             #[cfg(unix)]
@@ -200,6 +204,14 @@ impl AppState {
             reconnect_cancel: Mutex::new(None),
             resolved_remote_addr: Mutex::new(None),
         }
+    }
+
+    /// Returns the tunnel/engine version, querying `netferry-tunnel --version`
+    /// once on first call and caching the result for the rest of the process
+    /// lifetime. Falls back to `"unknown"` on query failure.
+    pub fn tunnel_version(&self) -> &str {
+        self.tunnel_version
+            .get_or_init(|| query_tunnel_version().unwrap_or_else(|_| "unknown".into()))
     }
 }
 
