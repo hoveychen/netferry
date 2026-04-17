@@ -68,6 +68,7 @@ func main() {
 		tcpBalance    = flag.String("tcp-balance", "least-loaded", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
+		noNetmon      = flag.Bool("no-netmon", false, "disable network-change monitor (use on stable servers that never switch networks)")
 	)
 	flag.Parse()
 	subnets := flag.Args()
@@ -497,9 +498,11 @@ func main() {
 	netmonDone := make(chan struct{})
 	defer close(netmonDone)
 	netChangeCh := make(chan error, 1)
-	go func() {
-		netChangeCh <- netmon.Watch(netmonDone)
-	}()
+	if !*noNetmon {
+		go func() {
+			netChangeCh <- netmon.Watch(netmonDone)
+		}()
+	}
 
 	select {
 	case err := <-muxErrCh:

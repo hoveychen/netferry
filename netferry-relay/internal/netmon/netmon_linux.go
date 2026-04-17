@@ -82,7 +82,13 @@ func Watch(done <-chan struct{}) error {
 			}
 			payload := data[syscall.SizeofNlMsghdr:msgLen]
 			if isRelevantChange(hdr.Type, payload) {
-				log.Printf("netmon: network change detected (type=%d), signalling reconnect", hdr.Type)
+				if len(payload) >= syscall.SizeofIfInfomsg {
+					info := (*syscall.IfInfomsg)(unsafe.Pointer(&payload[0]))
+					log.Printf("netmon: network change detected (type=%d ifindex=%d flags=0x%x change=0x%x), signalling reconnect",
+						hdr.Type, info.Index, info.Flags, info.Change)
+				} else {
+					log.Printf("netmon: network change detected (type=%d), signalling reconnect", hdr.Type)
+				}
 				return nil
 			}
 			// Advance past this message, honouring NLMSG_ALIGN (4-byte boundary).
