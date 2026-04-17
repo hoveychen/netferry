@@ -74,11 +74,9 @@ func (t *tproxyMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort,
 	return nil
 }
 
-func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
-	// Remove any leftover table first.
-	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
-	exec.Command("nft", "delete", "table", "ip", "netferry").Run()
-
+// buildTProxyNftScript generates the nftables script for TPROXY mode.
+// Extracted for unit testing without requiring a live nft binary.
+func (t *tproxyMethod) buildTProxyNftScript(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) string {
 	v4Subnets, v6Subnets := SplitByFamily(subnets)
 	v4Excludes, v6Excludes := SplitExcludesByFamily(excludes)
 	v4DNS, v6DNS := SplitDNSByFamily(dnsServers)
@@ -108,13 +106,16 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 		fmt.Fprintf(&b, "    ip6 daddr %s return\n", excl)
 	}
 	// IPv4 subnets.
+	// "tproxy ip to" requires the explicit "ip" family qualifier inside an inet
+	// table; omitting it causes "conflicting protocols: ip vs. unknown" on
+	// nftables >= 0.9.4 (Linux 5.4+).
 	for _, subnet := range v4Subnets {
 		portExpr := subnet.NftPortExpr()
 		if portExpr != "" {
-			fmt.Fprintf(&b, "    ip daddr %s %s tproxy to 127.0.0.1:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip daddr %s %s tproxy ip to 127.0.0.1:%d meta mark set %s accept\n",
 				subnet.CIDR, portExpr, proxyPort, markHex)
 		} else {
-			fmt.Fprintf(&b, "    ip daddr %s tcp dport != %d tproxy to 127.0.0.1:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip daddr %s tcp dport != %d tproxy ip to 127.0.0.1:%d meta mark set %s accept\n",
 				subnet.CIDR, proxyPort, proxyPort, markHex)
 		}
 	}
@@ -122,19 +123,19 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	for _, subnet := range v6Subnets {
 		portExpr := subnet.NftPortExpr()
 		if portExpr != "" {
-			fmt.Fprintf(&b, "    ip6 daddr %s %s tproxy to [::1]:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip6 daddr %s %s tproxy ip6 to [::1]:%d meta mark set %s accept\n",
 				subnet.CIDR, portExpr, proxyPort, markHex)
 		} else {
-			fmt.Fprintf(&b, "    ip6 daddr %s tcp dport != %d tproxy to [::1]:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip6 daddr %s tcp dport != %d tproxy ip6 to [::1]:%d meta mark set %s accept\n",
 				subnet.CIDR, proxyPort, proxyPort, markHex)
 		}
 	}
 	// DNS TPROXY.
 	if dnsPort > 0 && len(v4DNS) > 0 {
-		fmt.Fprintf(&b, "    ip daddr @dns_servers udp dport 53 tproxy to 127.0.0.1:%d meta mark set %s accept\n", dnsPort, markHex)
+		fmt.Fprintf(&b, "    ip daddr @dns_servers udp dport 53 tproxy ip to 127.0.0.1:%d meta mark set %s accept\n", dnsPort, markHex)
 	}
 	if dnsPort > 0 && len(v6DNS) > 0 {
-		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 tproxy to [::1]:%d meta mark set %s accept\n", dnsPort, markHex)
+		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 tproxy ip6 to [::1]:%d meta mark set %s accept\n", dnsPort, markHex)
 	}
 	fmt.Fprintf(&b, "  }\n")
 
@@ -143,6 +144,10 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	fmt.Fprintf(&b, "  chain output {\n    type route hook output priority mangle;\n")
 	// Local traffic protection first.
 	fmt.Fprintf(&b, "    fib daddr type local return\n")
+	// Skip connections from root (uid 0) so the tunnel's own "direct" dials
+	// are not marked and re-intercepted by the TPROXY prerouting chain,
+	// which would create an infinite routing loop.
+	fmt.Fprintf(&b, "    meta skuid 0 return\n")
 	// Excludes.
 	for _, excl := range v4Excludes {
 		fmt.Fprintf(&b, "    ip daddr %s return\n", excl)
@@ -181,8 +186,18 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	}
 	fmt.Fprintf(&b, "  }\n}\n")
 
+	return b.String()
+}
+
+func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
+	// Remove any leftover table first.
+	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
+	exec.Command("nft", "delete", "table", "ip", "netferry").Run()
+
+	script := t.buildTProxyNftScript(subnets, excludes, proxyPort, dnsPort, dnsServers)
+
 	cmd := exec.Command("nft", "-f", "/dev/stdin")
-	cmd.Stdin = &b
+	cmd.Stdin = bytes.NewBufferString(script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft: %w\n%s", err, out)

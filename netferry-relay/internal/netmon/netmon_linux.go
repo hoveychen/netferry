@@ -8,6 +8,10 @@ import (
 	"unsafe"
 )
 
+// iffLowerUp is IFF_LOWER_UP (0x10000): physical carrier is present.
+// Not defined in all Go versions' syscall package, so we define it locally.
+const iffLowerUp = uint32(0x10000)
+
 // Watch opens a netlink routing socket and blocks until a network change is
 // detected (interface up/down, address add/remove, route change).
 // Returns nil on the first relevant change, or an error if the socket fails.
@@ -66,20 +70,63 @@ func Watch(done <-chan struct{}) error {
 			continue
 		}
 
-		// Parse netlink message header.
-		hdr := (*syscall.NlMsghdr)(unsafe.Pointer(&buf[0]))
-		if isRelevantChange(hdr.Type) {
-			log.Printf("netmon: network change detected (type=%d), signalling reconnect", hdr.Type)
-			return nil
+		// Iterate over all netlink messages in this datagram.
+		// A single recvfrom may return multiple messages concatenated;
+		// we must inspect each one before deciding to ignore the batch.
+		data := buf[:n]
+		for len(data) >= syscall.SizeofNlMsghdr {
+			hdr := (*syscall.NlMsghdr)(unsafe.Pointer(&data[0]))
+			msgLen := int(hdr.Len)
+			if msgLen < syscall.SizeofNlMsghdr || msgLen > len(data) {
+				break // truncated or malformed
+			}
+			payload := data[syscall.SizeofNlMsghdr:msgLen]
+			if isRelevantChange(hdr.Type, payload) {
+				if len(payload) >= syscall.SizeofIfInfomsg {
+					info := (*syscall.IfInfomsg)(unsafe.Pointer(&payload[0]))
+					log.Printf("netmon: network change detected (type=%d ifindex=%d flags=0x%x change=0x%x), signalling reconnect",
+						hdr.Type, info.Index, info.Flags, info.Change)
+				} else {
+					log.Printf("netmon: network change detected (type=%d), signalling reconnect", hdr.Type)
+				}
+				return nil
+			}
+			// Advance past this message, honouring NLMSG_ALIGN (4-byte boundary).
+			aligned := (msgLen + 3) &^ 3
+			if aligned >= len(data) {
+				break
+			}
+			data = data[aligned:]
 		}
 	}
 }
 
-func isRelevantChange(msgType uint16) bool {
+// isRelevantChange returns true when a netlink message represents a real
+// network-connectivity change that warrants a tunnel reconnect.
+//
+// RTM_NEWLINK is filtered carefully: cloud hypervisors (e.g. AWS ENA) call
+// rtmsg_ifinfo(RTM_NEWLINK, dev, 0) periodically to re-broadcast link state
+// with ifi_change=0 — no flags actually changed.  Without filtering, these
+// keepalives cause spurious reconnects roughly every 30 s on EC2 instances.
+//
+// We reconnect only when IFF_UP, IFF_RUNNING, or IFF_LOWER_UP changes,
+// which covers administrative state changes and physical carrier events.
+// IFF_PROMISC / IFF_ALLMULTI etc. change when Docker starts/stops containers
+// and must NOT trigger a reconnect.
+func isRelevantChange(msgType uint16, payload []byte) bool {
 	switch msgType {
-	case syscall.RTM_NEWLINK, syscall.RTM_DELLINK,
-		syscall.RTM_NEWADDR, syscall.RTM_DELADDR:
+	case syscall.RTM_DELLINK, syscall.RTM_NEWADDR, syscall.RTM_DELADDR:
 		return true
+	case syscall.RTM_NEWLINK:
+		if len(payload) < syscall.SizeofIfInfomsg {
+			// Too short to parse — conservative: treat as relevant.
+			return true
+		}
+		info := (*syscall.IfInfomsg)(unsafe.Pointer(&payload[0]))
+		// ifi_change is the bitmask of IFF_* flags that changed.
+		// By convention, ifi_change=0 means re-announcement with no change.
+		const connectivity = uint32(syscall.IFF_UP) | uint32(syscall.IFF_RUNNING) | iffLowerUp
+		return info.Change&connectivity != 0
 	}
 	return false
 }
