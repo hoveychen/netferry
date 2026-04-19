@@ -422,11 +422,17 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 	// Whitelist link-local (fe80::/10) for NDP/DHCPv6 and loopback (::1) for
 	// local services first — pf evaluates "quick" rules in order, so the
 	// pass-quick lines must precede the block.
+	//
+	// `block return` (not bare `block`, which means `block drop`) so TCP SYNs
+	// get an immediate RST and UDP gets ICMPv6 unreachable. Silent drop leaves
+	// apps stuck waiting for connect timeout (~75s) before Happy Eyeballs can
+	// fall back to IPv4 — visible as "Google hangs forever" in browsers and
+	// total wedges in non-HE clients like curl.
 	if p.blockIPv6 {
 		fmt.Fprintf(&b, "pass out quick inet6 to ::1/128\n")
 		fmt.Fprintf(&b, "pass out quick inet6 to fe80::/10\n")
 		fmt.Fprintf(&b, "pass out quick inet6 to ff00::/8\n")
-		fmt.Fprintf(&b, "block out quick inet6 all\n")
+		fmt.Fprintf(&b, "block return out quick inet6 all\n")
 	}
 
 	return b.Bytes()
