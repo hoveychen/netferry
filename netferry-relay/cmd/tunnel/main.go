@@ -55,6 +55,7 @@ func main() {
 		dnsTarget    = flag.String("dns-target", "", "remote DNS server IP[@port]")
 		method       = flag.String("method", "auto", "firewall method: auto|pf|nft|ipt|tproxy|windivert|socks5")
 		noIPv6       = flag.Bool("no-ipv6", false, "disable IPv6 handling")
+		noIPv6Lockdown = flag.Bool("no-ipv6-lockdown", false, "with --no-ipv6, skip interface-level IPv6 disable (only firewall block); leaves apps able to read the local GUA and leak it via WebRTC/P2P payloads")
 		noBlockUDP   = flag.Bool("no-block-udp", false, "allow non-DNS UDP (disables QUIC leak prevention)")
 		udpProxy     = flag.Bool("udp", false, "enable generic UDP proxy (tproxy only)")
 		tproxyMark   = flag.Int("tproxy-mark", 1, "TPROXY fwmark value")
@@ -336,6 +337,12 @@ func main() {
 
 	// ── Firewall setup ───────────────────────────────────────────────────────
 	firewall.CleanStaleAnchors()
+	// Also clean up any stale IPv6-disable state from a prior crashed run, so
+	// the user's interfaces aren't left with IPv6 turned off if we got killed
+	// before our Restore ran.
+	if err := firewall.RestoreSystemIPv6(); err != nil {
+		log.Printf("iface_ipv6 stale restore: %v", err)
+	}
 
 	var fw firewall.Method
 	if *method == "auto" {
@@ -445,6 +452,20 @@ func main() {
 		fatalf("firewall setup: %v", err)
 	}
 
+	// Interface-level IPv6 disable (layer above firewall block). Required to
+	// prevent application-layer leaks: even with the firewall dropping IPv6
+	// packets, apps can still read the local GUA from net interfaces and
+	// embed it in payloads (WebRTC ICE, P2P DHT, SDP, STUN bindings). The
+	// only way to stop that is to remove the GUA from interfaces.
+	// Opt-out via --no-ipv6-lockdown for users who only want the firewall
+	// layer (e.g. to avoid disturbing other IPv6-using apps on the system).
+	lockdownIPv6 := *noIPv6 && !*noIPv6Lockdown
+	if lockdownIPv6 {
+		if err := firewall.DisableSystemIPv6(); err != nil {
+			log.Printf("iface_ipv6: disable failed: %v (app-layer IPv6 leaks not prevented)", err)
+		}
+	}
+
 	// Ensure firewall cleanup on any exit path — unless we are exiting for
 	// reconnect, in which case we deliberately keep the rules in place so
 	// traffic is blocked (redirected to the dead proxy port) rather than
@@ -453,6 +474,9 @@ func main() {
 	defer func() {
 		if !skipFWRestore {
 			fw.Restore()
+			if lockdownIPv6 {
+				firewall.RestoreSystemIPv6()
+			}
 		}
 	}()
 	sig := make(chan os.Signal, 1)
@@ -461,6 +485,9 @@ func main() {
 		s := <-sig
 		log.Printf("received signal %v, cleaning up", s)
 		fw.Restore()
+		if lockdownIPv6 {
+			firewall.RestoreSystemIPv6()
+		}
 		os.Exit(0)
 	}()
 
