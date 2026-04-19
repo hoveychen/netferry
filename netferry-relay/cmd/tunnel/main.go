@@ -348,11 +348,18 @@ func main() {
 	}
 	// Apply UDP blocking (default on; prevents QUIC leaks on pf).
 	firewall.SetUDPBlock(fw, !*noBlockUDP)
+	// Apply IPv6 blocking. Without this the firewall only stops *redirecting*
+	// IPv6 — apps still reach AAAA destinations directly and bypass the tunnel.
+	firewall.SetIPv6Block(fw, *noIPv6)
 	// Apply TPROXY configuration if applicable.
 	firewall.SetTProxyConfig(fw, firewall.TProxyConfig{
 		FWMark:     *tproxyMark,
 		RouteTable: *tproxyTable,
 	})
+	// When IPv6 is disabled, also drop AAAA queries at the DNS interceptor so
+	// resolvers never hand out IPv6 addresses (avoids the Happy Eyeballs
+	// connect-timeout pause that the firewall block would otherwise trigger).
+	proxy.FilterAAAA = *noIPv6
 	log.Printf("firewall: using %s (features: %v)", fw.Name(), fw.SupportedFeatures())
 
 	// Validate feature requirements.

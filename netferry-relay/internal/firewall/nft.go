@@ -158,6 +158,11 @@ func CleanStaleAnchors() {
 	exec.Command("ip6tables", "-t", "nat", "-F", "NETFERRY6").Run()
 	exec.Command("ip6tables", "-t", "nat", "-X", "NETFERRY6").Run()
 
+	// ip6tables filter cleanup (used by iptMethod's IPv6 blanket block).
+	exec.Command("ip6tables", "-D", "OUTPUT", "-j", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-F", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-X", "NETFERRY6_BLOCK").Run()
+
 	// iptables mangle cleanup (used by tproxyMethod with iptables).
 	exec.Command("iptables", "-t", "mangle", "-D", "OUTPUT", "-j", "NETFERRY_OUTPUT").Run()
 	exec.Command("iptables", "-t", "mangle", "-F", "NETFERRY_OUTPUT").Run()
@@ -185,6 +190,8 @@ func CleanStaleAnchors() {
 
 // nftMethod implements firewall.Method using nftables.
 type nftMethod struct {
+	blockIPv6 bool
+
 	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
 	subnets   []SubnetRule
 	excludes  []string
@@ -192,6 +199,8 @@ type nftMethod struct {
 }
 
 func (n *nftMethod) Name() string { return "nft" }
+
+func (n *nftMethod) SetBlockIPv6(block bool) { n.blockIPv6 = block }
 
 func (n *nftMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6}
@@ -306,7 +315,22 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	if dnsPort > 0 && len(v6DNS) > 0 {
 		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 redirect to :%d\n", dnsPort)
 	}
-	fmt.Fprintf(&b, "  }\n}\n")
+	fmt.Fprintf(&b, "  }\n")
+
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// nat hooks can't drop, so add a separate filter chain at output priority
+	// 0 (runs after nat priority -100). Whitelist link-local / multicast /
+	// loopback so NDP / DHCPv6 / local services keep working.
+	if n.blockIPv6 {
+		fmt.Fprintf(&b, "  chain block_ipv6 {\n    type filter hook output priority 0;\n")
+		fmt.Fprintf(&b, "    ip6 daddr ::1/128 return\n")
+		fmt.Fprintf(&b, "    ip6 daddr fe80::/10 return\n")
+		fmt.Fprintf(&b, "    ip6 daddr ff00::/8 return\n")
+		fmt.Fprintf(&b, "    meta nfproto ipv6 reject with icmpv6 type addr-unreachable\n")
+		fmt.Fprintf(&b, "  }\n")
+	}
+
+	fmt.Fprintf(&b, "}\n")
 
 	cmd := exec.Command("nft", "-f", "/dev/stdin")
 	cmd.Stdin = &b
@@ -360,6 +384,8 @@ func joinQuoted(ss []string) string {
 
 // iptMethod implements firewall.Method using iptables.
 type iptMethod struct {
+	blockIPv6 bool
+
 	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
 	subnets   []SubnetRule
 	excludes  []string
@@ -367,6 +393,8 @@ type iptMethod struct {
 }
 
 func (p *iptMethod) Name() string { return "iptables" }
+
+func (p *iptMethod) SetBlockIPv6(block bool) { p.blockIPv6 = block }
 
 func (p *iptMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6}
@@ -484,6 +512,20 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		}
 	}
 
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// nat REDIRECT alone is not enough; without an explicit block on the
+	// filter table, applications still reach destinations over native IPv6.
+	// Whitelist link-local / multicast / loopback so NDP / DHCPv6 / local
+	// services remain functional.
+	if p.blockIPv6 {
+		ip6t("-N", "NETFERRY6_BLOCK")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "::1/128", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "fe80::/10", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "ff00::/8", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-j", "REJECT", "--reject-with", "icmp6-adm-prohibited")
+		ip6t("-I", "OUTPUT", "-j", "NETFERRY6_BLOCK")
+	}
+
 	return nil
 }
 
@@ -499,6 +541,11 @@ func (p *iptMethod) Restore() error {
 	exec.Command("ip6tables", "-t", "nat", "-D", "PREROUTING", "-j", "NETFERRY6").Run()
 	exec.Command("ip6tables", "-t", "nat", "-F", "NETFERRY6").Run()
 	exec.Command("ip6tables", "-t", "nat", "-X", "NETFERRY6").Run()
+
+	// IPv6 blanket-block cleanup (no-op if rule was never installed).
+	exec.Command("ip6tables", "-D", "OUTPUT", "-j", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-F", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-X", "NETFERRY6_BLOCK").Run()
 	return nil
 }
 

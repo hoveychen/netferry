@@ -35,6 +35,7 @@ type winDivertMethod struct {
 	proxyIPv6 net.IP // non-loopback IPv6 address for the proxy (may be nil)
 	subnets   []net.IPNet
 	excludes  []net.IPNet
+	blockIPv6 bool
 
 	// portRanges maps subnet index to port range. If the entry exists and
 	// has non-zero values, only traffic within [low, high] is intercepted.
@@ -61,6 +62,8 @@ type connEntry struct {
 }
 
 func (w *winDivertMethod) Name() string { return "windivert" }
+
+func (w *winDivertMethod) SetBlockIPv6(block bool) { w.blockIPv6 = block }
 
 func (w *winDivertMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6}
@@ -289,6 +292,18 @@ func (w *winDivertMethod) processPacket(pkt []byte, addr *divert.Address) {
 	// WinDivert classifies ALL local-process traffic as "outbound", so we
 	// cannot rely on addr.Outbound() to distinguish directions. Instead we
 	// detect proxy responses by matching src IP/port against the proxy.
+
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// Removing IPv6 redirect rules alone leaves apps free to reach AAAA
+	// destinations over native IPv6 (Happy Eyeballs prefers IPv6), bypassing
+	// the tunnel. Drop all outbound IPv6 except loopback / link-local /
+	// multicast so NDP / DHCPv6 / local services keep working.
+	if w.blockIPv6 && ipVer == 6 {
+		if !dstIP.IsLoopback() && !dstIP.IsLinkLocalUnicast() && !dstIP.IsLinkLocalMulticast() && !dstIP.IsMulticast() {
+			// Drop by not re-injecting the packet.
+			return
+		}
+	}
 
 	// ── Proxy response (reverse NAT) ─────────────────────────────────────
 	// Packets FROM our proxy back to the application need their source

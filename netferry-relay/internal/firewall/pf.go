@@ -180,9 +180,10 @@ func ntohs(v uint16) uint16 { return htons(v) }
 
 // pfMethod implements firewall.Method using macOS pf.
 type pfMethod struct {
-	anchor   string
-	token    string
-	blockUDP bool
+	anchor    string
+	token     string
+	blockUDP  bool
+	blockIPv6 bool
 
 	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
 	subnets   []SubnetRule
@@ -196,7 +197,8 @@ func (p *pfMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6, FeatureBlockUDP}
 }
 
-func (p *pfMethod) SetBlockUDP(block bool) { p.blockUDP = block }
+func (p *pfMethod) SetBlockUDP(block bool)   { p.blockUDP = block }
+func (p *pfMethod) SetBlockIPv6(block bool)  { p.blockIPv6 = block }
 
 func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
 	p.anchor = fmt.Sprintf("netferry-%d", proxyPort)
@@ -412,6 +414,19 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 			fmt.Fprintf(&b, "pass out quick inet6 proto udp to any port 53\n")
 		}
 		fmt.Fprintf(&b, "block out quick inet6 proto udp all\n")
+	}
+
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// Without this, applications happily reach destinations over native IPv6
+	// (Happy Eyeballs prefers AAAA), bypassing every redirect rule above.
+	// Whitelist link-local (fe80::/10) for NDP/DHCPv6 and loopback (::1) for
+	// local services first — pf evaluates "quick" rules in order, so the
+	// pass-quick lines must precede the block.
+	if p.blockIPv6 {
+		fmt.Fprintf(&b, "pass out quick inet6 to ::1/128\n")
+		fmt.Fprintf(&b, "pass out quick inet6 to fe80::/10\n")
+		fmt.Fprintf(&b, "pass out quick inet6 to ff00::/8\n")
+		fmt.Fprintf(&b, "block out quick inet6 all\n")
 	}
 
 	return b.Bytes()

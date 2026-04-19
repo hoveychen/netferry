@@ -10,13 +10,23 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
+// FilterAAAA, when true, makes ServeDNS short-circuit AAAA (IPv6 address)
+// queries with an empty NoError response instead of forwarding them. This
+// pairs with the firewall's IPv6 block: stopping AAAA at the resolver keeps
+// applications from even attempting IPv6, which avoids the connect-timeout
+// pause that Happy Eyeballs would otherwise hit when the block kicks in.
+var FilterAAAA bool
+
+// dnsTypeAAAA is the QTYPE for IPv6 address records (RFC 3596).
+const dnsTypeAAAA = 28
+
 // ServeDNS runs the DNS interceptor on a pre-bound PacketConn.
 // Use this instead of ListenDNS to avoid the gap between firewall setup and
 // socket binding (which causes ICMP port-unreachable → "DNS probe failed").
 func ServeDNS(conn net.PacketConn, client mux.TunnelClient, counters *stats.Counters) error {
 	defer conn.Close()
 
-	log.Printf("proxy: DNS serving on %s", conn.LocalAddr())
+	log.Printf("proxy: DNS serving on %s (filterAAAA=%v)", conn.LocalAddr(), FilterAAAA)
 	buf := make([]byte, 65535)
 	for {
 		n, src, err := conn.ReadFrom(buf)
@@ -27,6 +37,15 @@ func ServeDNS(conn net.PacketConn, client mux.TunnelClient, counters *stats.Coun
 		copy(query, buf[:n])
 		if counters != nil {
 			counters.AddDNS()
+		}
+		// Short-circuit AAAA queries when IPv6 is disabled. The reply is an
+		// empty NoError answer — semantically "this name has no IPv6 address"
+		// — which makes the resolver fall back to A immediately.
+		if FilterAAAA && isAAAAQuery(query) {
+			if reply := buildEmptyNoError(query); reply != nil {
+				conn.WriteTo(reply, src)
+			}
+			continue
 		}
 		go func(q []byte, srcAddr net.Addr) {
 			resp, err := client.DNSRequest(q)
@@ -42,6 +61,79 @@ func ServeDNS(conn net.PacketConn, client mux.TunnelClient, counters *stats.Coun
 			conn.WriteTo(resp, srcAddr)
 		}(query, src)
 	}
+}
+
+// isAAAAQuery returns true if the DNS message contains exactly one question
+// with QTYPE=AAAA. Accepts only well-formed single-question queries — anything
+// unusual is forwarded unchanged.
+func isAAAAQuery(msg []byte) bool {
+	if len(msg) < 12 {
+		return false
+	}
+	flags := binary.BigEndian.Uint16(msg[2:4])
+	if flags&0x8000 != 0 {
+		return false // response, not query
+	}
+	if binary.BigEndian.Uint16(msg[4:6]) != 1 {
+		return false // QDCOUNT must be 1
+	}
+	// Skip QNAME: sequence of length-prefixed labels terminated by 0.
+	pos := 12
+	for pos < len(msg) {
+		l := int(msg[pos])
+		if l == 0 {
+			pos++
+			break
+		}
+		if l&0xc0 != 0 {
+			return false // pointer compression in query QNAME — bail out
+		}
+		pos += 1 + l
+	}
+	if pos+4 > len(msg) {
+		return false
+	}
+	qtype := binary.BigEndian.Uint16(msg[pos : pos+2])
+	return qtype == dnsTypeAAAA
+}
+
+// buildEmptyNoError constructs a DNS response that echoes the question with
+// zero answer/authority/additional records and RCODE=0 (NoError). Returns nil
+// if the query is too short to read the question section.
+func buildEmptyNoError(query []byte) []byte {
+	if len(query) < 12 {
+		return nil
+	}
+	// Find end of question section (header + QNAME + QTYPE/QCLASS).
+	pos := 12
+	for pos < len(query) {
+		l := int(query[pos])
+		if l == 0 {
+			pos++
+			break
+		}
+		if l&0xc0 != 0 {
+			return nil
+		}
+		pos += 1 + l
+	}
+	if pos+4 > len(query) {
+		return nil
+	}
+	qend := pos + 4
+
+	resp := make([]byte, qend)
+	copy(resp, query[:qend])
+	// Flags: QR=1, Opcode preserved, AA=0, TC=0, RD preserved, RA=1, RCODE=0.
+	flags := binary.BigEndian.Uint16(query[2:4])
+	opcode := flags & 0x7800
+	rd := flags & 0x0100
+	binary.BigEndian.PutUint16(resp[2:4], 0x8080|opcode|rd)
+	// QDCOUNT preserved (=1); ANCOUNT/NSCOUNT/ARCOUNT zero.
+	binary.BigEndian.PutUint16(resp[6:8], 0)
+	binary.BigEndian.PutUint16(resp[8:10], 0)
+	binary.BigEndian.PutUint16(resp[10:12], 0)
+	return resp
 }
 
 // ListenDNS starts a UDP DNS interceptor on the given port.

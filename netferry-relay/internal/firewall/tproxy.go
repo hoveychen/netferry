@@ -13,8 +13,9 @@ import (
 // Unlike NAT-based REDIRECT, TPROXY preserves the original destination address
 // in the socket so the proxy can read it directly from conn.LocalAddr().
 type tproxyMethod struct {
-	useNft bool
-	cfg    TProxyConfig
+	useNft    bool
+	cfg       TProxyConfig
+	blockIPv6 bool
 
 	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
 	subnets   []SubnetRule
@@ -25,6 +26,8 @@ type tproxyMethod struct {
 func (t *tproxyMethod) Name() string { return "tproxy" }
 
 func (t *tproxyMethod) SetConfig(cfg TProxyConfig) { t.cfg = cfg }
+
+func (t *tproxyMethod) SetBlockIPv6(block bool) { t.blockIPv6 = block }
 
 func (t *tproxyMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeatureUDP, FeaturePortRange, FeatureIPv6}
@@ -79,6 +82,18 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
 	exec.Command("nft", "delete", "table", "ip", "netferry").Run()
 
+	rules := t.buildNftRules(subnets, excludes, proxyPort, dnsPort, dnsServers)
+
+	cmd := exec.Command("nft", "-f", "/dev/stdin")
+	cmd.Stdin = bytes.NewReader(rules)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func (t *tproxyMethod) buildNftRules(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) []byte {
 	v4Subnets, v6Subnets := SplitByFamily(subnets)
 	v4Excludes, v6Excludes := SplitExcludesByFamily(excludes)
 	v4DNS, v6DNS := SplitDNSByFamily(dnsServers)
@@ -107,14 +122,15 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	for _, excl := range v6Excludes {
 		fmt.Fprintf(&b, "    ip6 daddr %s return\n", excl)
 	}
-	// IPv4 subnets.
+	// IPv4 subnets. In `inet` tables, tproxy requires the `ip`/`ip6` family
+	// qualifier — bare `tproxy to` is rejected as "conflicting protocols".
 	for _, subnet := range v4Subnets {
 		portExpr := subnet.NftPortExpr()
 		if portExpr != "" {
-			fmt.Fprintf(&b, "    ip daddr %s %s tproxy to 127.0.0.1:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip daddr %s %s tproxy ip to 127.0.0.1:%d meta mark set %s accept\n",
 				subnet.CIDR, portExpr, proxyPort, markHex)
 		} else {
-			fmt.Fprintf(&b, "    ip daddr %s tcp dport != %d tproxy to 127.0.0.1:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip daddr %s tcp dport != %d tproxy ip to 127.0.0.1:%d meta mark set %s accept\n",
 				subnet.CIDR, proxyPort, proxyPort, markHex)
 		}
 	}
@@ -122,19 +138,19 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	for _, subnet := range v6Subnets {
 		portExpr := subnet.NftPortExpr()
 		if portExpr != "" {
-			fmt.Fprintf(&b, "    ip6 daddr %s %s tproxy to [::1]:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip6 daddr %s %s tproxy ip6 to [::1]:%d meta mark set %s accept\n",
 				subnet.CIDR, portExpr, proxyPort, markHex)
 		} else {
-			fmt.Fprintf(&b, "    ip6 daddr %s tcp dport != %d tproxy to [::1]:%d meta mark set %s accept\n",
+			fmt.Fprintf(&b, "    ip6 daddr %s tcp dport != %d tproxy ip6 to [::1]:%d meta mark set %s accept\n",
 				subnet.CIDR, proxyPort, proxyPort, markHex)
 		}
 	}
 	// DNS TPROXY.
 	if dnsPort > 0 && len(v4DNS) > 0 {
-		fmt.Fprintf(&b, "    ip daddr @dns_servers udp dport 53 tproxy to 127.0.0.1:%d meta mark set %s accept\n", dnsPort, markHex)
+		fmt.Fprintf(&b, "    ip daddr @dns_servers udp dport 53 tproxy ip to 127.0.0.1:%d meta mark set %s accept\n", dnsPort, markHex)
 	}
 	if dnsPort > 0 && len(v6DNS) > 0 {
-		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 tproxy to [::1]:%d meta mark set %s accept\n", dnsPort, markHex)
+		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 tproxy ip6 to [::1]:%d meta mark set %s accept\n", dnsPort, markHex)
 	}
 	fmt.Fprintf(&b, "  }\n")
 
@@ -179,15 +195,24 @@ func (t *tproxyMethod) setupNft(subnets []SubnetRule, excludes []string, proxyPo
 	if dnsPort > 0 && len(v6DNS) > 0 {
 		fmt.Fprintf(&b, "    ip6 daddr @dns6_servers udp dport 53 meta mark set %s\n", markHex)
 	}
-	fmt.Fprintf(&b, "  }\n}\n")
+	fmt.Fprintf(&b, "  }\n")
 
-	cmd := exec.Command("nft", "-f", "/dev/stdin")
-	cmd.Stdin = &b
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nft: %w\n%s", err, out)
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// Mangle/route hooks don't drop, so add a filter chain at output priority
+	// 0. Whitelist link-local / multicast / loopback to keep NDP / DHCPv6 /
+	// local services functional.
+	if t.blockIPv6 {
+		fmt.Fprintf(&b, "  chain block_ipv6 {\n    type filter hook output priority 0;\n")
+		fmt.Fprintf(&b, "    ip6 daddr ::1/128 return\n")
+		fmt.Fprintf(&b, "    ip6 daddr fe80::/10 return\n")
+		fmt.Fprintf(&b, "    ip6 daddr ff00::/8 return\n")
+		fmt.Fprintf(&b, "    meta nfproto ipv6 reject with icmpv6 type addr-unreachable\n")
+		fmt.Fprintf(&b, "  }\n")
 	}
-	return nil
+
+	fmt.Fprintf(&b, "}\n")
+
+	return b.Bytes()
 }
 
 func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
@@ -341,6 +366,19 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 		}
 	}
 
+	// --- IPv6 blanket block (when --no-ipv6) ---
+	// Mangle TPROXY alone leaves untouched IPv6 traffic to flow normally;
+	// install a filter-table block so apps fall back to IPv4 (which traverses
+	// the tunnel). Whitelist link-local / multicast / loopback first.
+	if t.blockIPv6 {
+		ip6t("-N", "NETFERRY6_BLOCK")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "::1/128", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "fe80::/10", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-d", "ff00::/8", "-j", "RETURN")
+		ip6t("-A", "NETFERRY6_BLOCK", "-j", "REJECT", "--reject-with", "icmp6-adm-prohibited")
+		ip6t("-I", "OUTPUT", "-j", "NETFERRY6_BLOCK")
+	}
+
 	return nil
 }
 
@@ -375,6 +413,12 @@ func (t *tproxyMethod) Restore() error {
 		exec.Command("ip6tables", "-t", "mangle", "-F", "NETFERRY").Run()
 		exec.Command("ip6tables", "-t", "mangle", "-X", "NETFERRY").Run()
 	}
+
+	// IPv6 blanket-block cleanup (no-op if not installed). Same chain name as
+	// iptMethod so CleanStaleAnchors handles both.
+	exec.Command("ip6tables", "-D", "OUTPUT", "-j", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-F", "NETFERRY6_BLOCK").Run()
+	exec.Command("ip6tables", "-X", "NETFERRY6_BLOCK").Run()
 	return nil
 }
 

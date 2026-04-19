@@ -75,6 +75,23 @@ func SetUDPBlock(m Method, block bool) {
 	}
 }
 
+// IPv6Blocker is optionally implemented by Methods that support blocking all
+// IPv6 outbound traffic. Used to enforce --no-ipv6: removing IPv6 redirect
+// rules alone is not enough — without an explicit block, applications happily
+// connect over native IPv6 (Happy Eyeballs prefers AAAA), bypassing the
+// tunnel entirely. Implementations must keep IPv6 link-local (fe80::/10) and
+// loopback (::1/128) functional so NDP / DHCPv6 / local services still work.
+type IPv6Blocker interface {
+	SetBlockIPv6(block bool)
+}
+
+// SetIPv6Block calls SetBlockIPv6 on the method if it implements IPv6Blocker.
+func SetIPv6Block(m Method, block bool) {
+	if b, ok := m.(IPv6Blocker); ok {
+		b.SetBlockIPv6(block)
+	}
+}
+
 // DNSDisabler is optionally implemented by Methods that can selectively
 // remove DNS redirect rules while keeping TCP redirect rules in place.
 // Used when the tunnel exits for reconnect: TCP rules must stay to prevent
