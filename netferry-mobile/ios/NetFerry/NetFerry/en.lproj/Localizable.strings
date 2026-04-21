@@ -61,9 +61,8 @@
 "profile.extraSsh.hint" = "e.g. -J jump@host";
 "profile.notes" = "Notes";
 
-"profile.imported" = "Imported";
-"profile.imported.notice" = "This profile was imported. Only the name can be changed.";
-"profile.imported.title" = "Imported Profile";
+"profile.locked.server" = "Server Connection Locked";
+"profile.locked.serverHint" = "This profile was imported. Connection details are protected; other settings below remain editable.";
 
 "profile.delete.title" = "Delete Profile";
 "profile.delete.message" = "Are you sure you want to delete \"%@\"?";

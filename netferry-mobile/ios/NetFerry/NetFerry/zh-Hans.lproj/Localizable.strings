@@ -61,9 +61,8 @@
 "profile.extraSsh.hint" = "例如：-J jump@host";
 "profile.notes" = "备注";
 
-"profile.imported" = "已导入";
-"profile.imported.notice" = "此配置为导入配置，仅可修改名称。";
-"profile.imported.title" = "已导入的配置";
+"profile.locked.server" = "服务器连接已锁定";
+"profile.locked.serverHint" = "此配置为导入配置，连接信息已被保护。下方其他参数仍可修改。";
 
 "profile.delete.title" = "删除配置";
 "profile.delete.message" = "确定要删除「%@」吗？";

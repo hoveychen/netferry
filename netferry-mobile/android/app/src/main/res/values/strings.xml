@@ -74,9 +74,8 @@
     <string name="profile_extra_ssh_hint">e.g. -J jump@host</string>
     <string name="profile_notes">Notes</string>
 
-    <string name="profile_imported">Imported</string>
-    <string name="profile_imported_notice">This profile was imported. Only the name can be changed.</string>
-    <string name="profile_imported_title">Imported Profile</string>
+    <string name="profile_locked_server">Server Connection Locked</string>
+    <string name="profile_locked_server_hint">This profile was imported. Connection details are protected; other settings below remain editable.</string>
 
     <string name="profile_delete_title">Delete Profile</string>
     <string name="profile_delete_message">Are you sure you want to delete \"%s\"?</string>

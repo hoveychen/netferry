@@ -201,16 +201,9 @@ private struct ProfileRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(profile.displayName)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                        if profile.imported {
-                            Text(L("profile.imported"))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Text(profile.displayName)
+                        .font(.body)
+                        .foregroundStyle(.primary)
                     Text(profile.remote)
                         .font(.caption)
                         .foregroundStyle(.secondary)

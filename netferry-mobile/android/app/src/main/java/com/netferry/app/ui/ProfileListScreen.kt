@@ -399,15 +399,6 @@ private fun ProfileCard(
                             fontWeight = FontWeight.Medium
                         )
                     }
-                    if (profile.imported) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.profile_imported),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(

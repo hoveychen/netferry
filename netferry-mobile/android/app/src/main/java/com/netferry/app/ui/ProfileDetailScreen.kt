@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -117,17 +118,19 @@ fun ProfileDetailScreen(
         } else {
             nameError = null
         }
-        if (remote.isBlank()) {
-            remoteError = errorRemoteRequired
-            valid = false
-        } else {
-            remoteError = null
-        }
-        if (identityKey.isBlank()) {
-            keyError = errorKeyRequired
-            valid = false
-        } else {
-            keyError = null
+        if (!initialProfile.imported) {
+            if (remote.isBlank()) {
+                remoteError = errorRemoteRequired
+                valid = false
+            } else {
+                remoteError = null
+            }
+            if (identityKey.isBlank()) {
+                keyError = errorKeyRequired
+                valid = false
+            } else {
+                keyError = null
+            }
         }
         return valid
     }
@@ -158,110 +161,7 @@ fun ProfileDetailScreen(
         )
     }
 
-    // Imported profiles: only allow renaming and deleting.
-    if (initialProfile.imported) {
-        Scaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            name.ifBlank { stringResource(R.string.profile_imported_title) },
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(R.string.action_back)
-                            )
-                        }
-                    },
-                    actions = {
-                        if (onDelete != null) {
-                            IconButton(onClick = { showDeleteDialog = true }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = stringResource(R.string.action_delete),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    },
-                    windowInsets = WindowInsets(0, 0, 0, 0),
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background,
-                        titleContentColor = MaterialTheme.colorScheme.onBackground
-                    )
-                )
-            },
-            containerColor = MaterialTheme.colorScheme.background
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-            ) {
-                // Notice banner
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        stringResource(R.string.profile_imported_notice),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                SectionCard {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it; nameError = null },
-                        label = { Text(stringResource(R.string.profile_name)) },
-                        placeholder = { Text(stringResource(R.string.profile_name_placeholder)) },
-                        isError = nameError != null,
-                        supportingText = nameError?.let { { Text(it) } },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = {
-                        if (name.isNotBlank()) {
-                            onSave(initialProfile.copy(name = name.trim()))
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text(
-                        stringResource(R.string.action_save),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-            }
-        }
-        return
-    }
+    val isImported = initialProfile.imported
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -323,6 +223,15 @@ fun ProfileDetailScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (isImported) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    LockedPanel(
+                        title = stringResource(R.string.profile_locked_server),
+                        description = stringResource(R.string.profile_locked_server_hint)
+                    )
+                } else {
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -486,6 +395,7 @@ fun ProfileDetailScreen(
                         stringResource(R.string.profile_jump_host_add),
                         color = MaterialTheme.colorScheme.primary
                     )
+                }
                 }
             }
 
@@ -660,16 +570,18 @@ fun ProfileDetailScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    if (!isImported) {
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedTextField(
-                        value = extraSshOptions,
-                        onValueChange = { extraSshOptions = it },
-                        label = { Text(stringResource(R.string.profile_extra_ssh)) },
-                        placeholder = { Text(stringResource(R.string.profile_extra_ssh_hint)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        OutlinedTextField(
+                            value = extraSshOptions,
+                            onValueChange = { extraSshOptions = it },
+                            label = { Text(stringResource(R.string.profile_extra_ssh)) },
+                            placeholder = { Text(stringResource(R.string.profile_extra_ssh_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
 
@@ -752,6 +664,40 @@ private fun SectionHeader(title: String) {
         letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing,
         modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
     )
+}
+
+@Composable
+private fun LockedPanel(title: String, description: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            Icons.Default.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable

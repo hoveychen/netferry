@@ -318,7 +318,7 @@ export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, on
                       e.stopPropagation();
                       onEdit(profile.id);
                     }}
-                    title={profile.imported ? t("profileList.renameProfile") : t("profileList.editProfile")}
+                    title={t("profileList.editProfile")}
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -352,11 +352,6 @@ export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, on
                   {profile.autoExcludeLan && (
                     <span className="rounded-md bg-ov-6 px-2 py-0.5 text-[11px] text-t3">
                       {t("profileList.lanExcl")}
-                    </span>
-                  )}
-                  {profile.imported && (
-                    <span className="rounded-md bg-accent/15 px-2 py-0.5 text-[11px] text-accent/70">
-                      {t("profileList.imported")}
                     </span>
                   )}
                   <span className={`ml-auto text-[11px] transition-colors ${

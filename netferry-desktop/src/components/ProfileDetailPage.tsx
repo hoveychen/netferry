@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, FolderOpen, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, FolderOpen, Lock, Plus, Trash2, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { JumpHost, MethodFeatures, Profile } from "@/types";
 import { listMethodFeatures } from "@/api";
@@ -59,13 +59,15 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
     return new Set(methodFeatures[draft.method] ?? []);
   }, [methodFeatures, draft.method]);
 
+  const isImported = !!profile.imported;
+
   const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
   const remoteRegex = /^[^@\s]+@[^:\s]+(:\d{1,5})?$/;
 
   const validation = useMemo(() => {
     const errors: string[] = [];
     if (!draft.name.trim()) errors.push(t("profileDetail.validation.nameRequired"));
-    if (!remoteRegex.test(draft.remote.trim()))
+    if (!isImported && !remoteRegex.test(draft.remote.trim()))
       errors.push(t("profileDetail.validation.invalidRemote"));
     if (draft.subnets.length === 0) errors.push(t("profileDetail.validation.subnetRequired"));
     const badInclude = draft.subnets.find((s) => !cidrRegex.test(s));
@@ -75,7 +77,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
     if (draft.dns === "specific" && !draft.dnsTarget?.trim())
       errors.push(t("profileDetail.validation.dnsTargetRequired"));
     return { valid: errors.length === 0, errors };
-  }, [draft, t]);
+  }, [draft, t, isImported]);
 
   const setField = <K extends keyof Profile>(key: K, value: Profile[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -97,79 +99,6 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
       setSaving(false);
     }
   };
-
-  // Imported profiles: only allow renaming and deleting.
-  if (profile.imported) {
-    return (
-      <div className="flex h-screen flex-col bg-surface pt-[38px]">
-        <div className="flex items-center gap-3 border-b border-sep px-6 py-3">
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-sm text-t3 transition-colors hover:text-t1"
-            onClick={onBack}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {t("nav.back")}
-          </button>
-          <span className="text-t5">/</span>
-          <h1 className="text-[15px] font-semibold text-t1">
-            {draft.name || t("profileDetail.importedProfile")}
-          </h1>
-          <div className="ml-auto flex items-center gap-2">
-            {!confirmDelete && (
-              <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                {t("nav.delete")}
-              </Button>
-            )}
-            {confirmDelete && (
-              <>
-                <span className="text-sm text-danger/80">{t("profileDetail.confirmDelete")}</span>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={async () => {
-                    await onDelete(draft.id);
-                    onBack();
-                  }}
-                >
-                  {t("profileDetail.yesDelete")}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-                  {t("nav.cancel")}
-                </Button>
-              </>
-            )}
-            <Button
-              size="sm"
-              onClick={save}
-              disabled={saving || !draft.name.trim()}
-            >
-              {saving ? t("nav.saving") : t("nav.save")}
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-2xl space-y-4">
-            <div className="rounded-xl border border-accent/20 bg-accent/[0.06] px-4 py-3 text-sm text-accent/80">
-              {t("profileDetail.importedNotice")}
-            </div>
-            <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.name")}</label>
-                <Input
-                  value={draft.name}
-                  onChange={(e) => setField("name", e.target.value)}
-                  placeholder={t("profileDetail.namePlaceholder")}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-screen flex-col bg-surface pt-[38px]">
@@ -243,6 +172,15 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                 />
               </div>
 
+              {isImported ? (
+                <div className="col-span-2 flex items-start gap-3 rounded-xl border border-sep bg-ov-2 px-4 py-3 text-sm text-t3">
+                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-t4" />
+                  <div>
+                    <p className="font-medium text-t2">{t("profileDetail.lockedServer")}</p>
+                    <p className="mt-0.5 text-xs text-t4">{t("profileDetail.lockedServerHint")}</p>
+                  </div>
+                </div>
+              ) : (<>
               <div className="col-span-2">
                 <label className="mb-1.5 block text-sm font-medium text-t2">
                   {t("profileDetail.sshRemote")}{" "}
@@ -432,6 +370,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   </div>
                 )}
               </div>
+              </>)}
 
               <div className="col-span-2">
                 <label className="mb-1.5 block text-sm font-medium text-t2">
@@ -659,16 +598,18 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   </label>
                 </div>
 
-                <div className="col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-t2">
-                    {t("profileDetail.extraSshOptions")}
-                  </label>
-                  <Input
-                    value={draft.extraSshOptions ?? ""}
-                    onChange={(e) => setField("extraSshOptions", e.target.value || undefined)}
-                    placeholder={t("profileDetail.extraSshPlaceholder")}
-                  />
-                </div>
+                {!isImported && (
+                  <div className="col-span-2">
+                    <label className="mb-1.5 block text-sm font-medium text-t2">
+                      {t("profileDetail.extraSshOptions")}
+                    </label>
+                    <Input
+                      value={draft.extraSshOptions ?? ""}
+                      onChange={(e) => setField("extraSshOptions", e.target.value || undefined)}
+                      placeholder={t("profileDetail.extraSshPlaceholder")}
+                    />
+                  </div>
+                )}
 
                 <div className="col-span-2">
                   <label className="mb-1.5 block text-sm font-medium text-t2">{t("profileDetail.notes")}</label>

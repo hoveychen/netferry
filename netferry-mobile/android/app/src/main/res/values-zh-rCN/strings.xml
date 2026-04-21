@@ -70,9 +70,8 @@
     <string name="profile_extra_ssh_hint">例如：-J jump@host</string>
     <string name="profile_notes">备注</string>
 
-    <string name="profile_imported">已导入</string>
-    <string name="profile_imported_notice">此配置为导入配置，仅可修改名称。</string>
-    <string name="profile_imported_title">已导入的配置</string>
+    <string name="profile_locked_server">服务器连接已锁定</string>
+    <string name="profile_locked_server_hint">此配置为导入配置，连接信息已被保护。下方其他参数仍可修改。</string>
 
     <string name="profile_delete_title">删除配置</string>
     <string name="profile_delete_message">确定要删除「%s」吗？</string>

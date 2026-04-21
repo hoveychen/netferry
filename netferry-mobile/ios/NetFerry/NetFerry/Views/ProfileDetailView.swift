@@ -19,60 +19,11 @@ struct ProfileDetailView: View {
     }
 
     var body: some View {
-        if profile.imported {
-            importedBody
-        } else {
-            editableBody
-        }
-    }
-
-    // MARK: - Imported (restricted view)
-
-    private var importedBody: some View {
-        Form {
-            Section {
-                Text(L("profile.imported.notice"))
-                    .font(.callout)
-                    .foregroundStyle(Color.accentColor)
-            }
-
-            Section(L("profile.section.connection")) {
-                TextField(L("profile.name"), text: $profile.name)
-                    .textContentType(.name)
-                    .autocorrectionDisabled()
-            }
-
-            Section {
-                Button(L("profile.delete.confirm"), role: .destructive) {
-                    store.delete(profile)
-                    dismiss()
-                }
-            }
-        }
-        .navigationTitle(profile.name.isEmpty
-            ? L("profile.imported.title")
-            : profile.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(L("cancel")) { dismiss() }
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(L("save")) {
-                    store.save(profile)
-                    dismiss()
-                }
-                .disabled(profile.name.isEmpty)
-            }
-        }
-    }
-
-    // MARK: - Editable (full view)
-
-    private var editableBody: some View {
         Form {
             connectionSection
-            jumpHostsSection
+            if !profile.imported {
+                jumpHostsSection
+            }
             routingSection
             dnsSection
             advancedSection
@@ -97,7 +48,8 @@ struct ProfileDetailView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button(L("save")) { saveProfile() }
-                    .disabled(profile.remote.isEmpty)
+                    .disabled(profile.name.isEmpty
+                        || (!profile.imported && profile.remote.isEmpty))
             }
         }
     }
@@ -110,21 +62,38 @@ struct ProfileDetailView: View {
                 .textContentType(.name)
                 .autocorrectionDisabled()
 
-            TextField(L("profile.remote.hint"), text: $profile.remote)
-                .textContentType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-
-            VStack(alignment: .leading) {
-                Text(l10n: "profile.identityKey")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $profile.identityKey)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(minHeight: 120)
+            if profile.imported {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "lock.fill")
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(l10n: "profile.locked.server")
+                            .font(.callout)
+                            .fontWeight(.medium)
+                        Text(l10n: "profile.locked.serverHint")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                TextField(L("profile.remote.hint"), text: $profile.remote)
+                    .textContentType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .keyboardType(.URL)
+
+                VStack(alignment: .leading) {
+                    Text(l10n: "profile.identityKey")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $profile.identityKey)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 120)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
             }
         }
     }
@@ -219,9 +188,11 @@ struct ProfileDetailView: View {
             Toggle(L("profile.blockUdp"), isOn: $profile.blockUdp)
             Toggle(L("profile.disableIpv6"), isOn: $profile.disableIpv6)
             Stepper("MTU: \(profile.mtu)", value: $profile.mtu, in: 1280...9000, step: 100)
-            TextField(L("profile.extraSsh.hint"), text: $profile.extraSshOptions)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            if !profile.imported {
+                TextField(L("profile.extraSsh.hint"), text: $profile.extraSshOptions)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
         }
     }
 
