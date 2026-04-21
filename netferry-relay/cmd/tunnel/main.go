@@ -31,6 +31,7 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/logfile"
 	"github.com/hoveychen/netferry/relay/internal/mux"
 	"github.com/hoveychen/netferry/relay/internal/netmon"
+	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/proxy"
 	"github.com/hoveychen/netferry/relay/internal/sshconn"
 	"github.com/hoveychen/netferry/relay/internal/stats"
@@ -69,6 +70,7 @@ func main() {
 		tcpBalance    = flag.String("tcp-balance", "least-loaded", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
+		profilePath   = flag.String("profile", "", "path to encrypted .nfprofile file (all values are used unless overridden by explicit flags)")
 	)
 	flag.Parse()
 	subnets := flag.Args()
@@ -83,6 +85,86 @@ func main() {
 		enc.SetIndent("", "  ")
 		enc.Encode(features)
 		os.Exit(0)
+	}
+
+	// Track which flags were explicitly set on the command line so that
+	// values loaded from --profile only fill in the gaps.
+	setFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+
+	// ── Profile loading (optional) ───────────────────────────────────────────
+	var loadedProfile *profile.Profile
+	if *profilePath != "" {
+		p, err := profile.LoadFile(*profilePath)
+		if err != nil {
+			fatalf("profile: %v", err)
+		}
+		loadedProfile = p
+
+		applyStrDefault := func(flagName string, dst *string, src string) {
+			if !setFlags[flagName] && src != "" {
+				*dst = src
+			}
+		}
+		applyBoolDefault := func(flagName string, dst *bool, src bool) {
+			if !setFlags[flagName] {
+				*dst = src
+			}
+		}
+
+		applyStrDefault("remote", remote, p.Remote)
+		// identity-file is only useful when there is no inline PEM key.
+		if p.IdentityKey == "" {
+			applyStrDefault("identity", identity, p.IdentityFile)
+		}
+		applyStrDefault("method", method, p.Method)
+		applyStrDefault("dns-target", dnsTarget, p.DnsTarget)
+		applyStrDefault("extra-ssh-opts", extraSSHOpts, p.ExtraSSHOpts)
+		applyStrDefault("tcp-balance", tcpBalance, p.TcpBalance)
+		applyBoolDefault("auto-nets", autoNets, p.AutoNets)
+		applyBoolDefault("no-ipv6", noIPv6, p.DisableIPv6)
+		applyBoolDefault("udp", udpProxy, p.EnableUDP)
+		// Desktop profile defaults block_udp=true; tunnel flag is --no-block-udp
+		// (inverse). Only flip the flag when profile explicitly opts out.
+		applyBoolDefault("no-block-udp", noBlockUDP, !p.BlockUDPOrDefault())
+		applyBoolDefault("split", splitConn, p.SplitConn)
+		// pool: mirror desktop default_pool_size (4) when the profile either
+		// predates the field or was saved with 0/1.
+		if !setFlags["pool"] {
+			ps := p.PoolSize
+			if ps <= 0 {
+				ps = 4
+			}
+			*poolSize = ps
+		}
+		// DNS mode: off → --dns=false; all|specific → --dns=true.
+		if !setFlags["dns"] && p.Dns != "" {
+			*dns = p.Dns != profile.DnsOff
+		}
+
+		// Positional subnets: only fall back to profile when CLI gave none.
+		if len(subnets) == 0 && len(p.Subnets) > 0 {
+			subnets = append([]string(nil), p.Subnets...)
+		}
+
+		// Jump hosts: CLI --jump JSON, if given, wins; otherwise use profile.
+		if !setFlags["jump"] && *jumpHostsJSON == "" && len(p.JumpHosts) > 0 {
+			encoded := make([]sshconn.JumpHostSpec, 0, len(p.JumpHosts))
+			for _, jh := range p.JumpHosts {
+				spec := sshconn.JumpHostSpec{Remote: jh.Remote}
+				if jh.IdentityKey == "" {
+					spec.IdentityFile = jh.IdentityFile
+				}
+				encoded = append(encoded, spec)
+			}
+			if raw, err := json.Marshal(encoded); err == nil {
+				*jumpHostsJSON = string(raw)
+			}
+		}
+	}
+
+	if *remote == "" && *profilePath != "" {
+		fatalf("profile %q did not supply a remote", *profilePath)
 	}
 
 	// Extract embedded WinDivert DLL on Windows (no-op on other platforms).
@@ -126,6 +208,11 @@ func main() {
 		IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
 		ExtraOptions: *extraSSHOpts,
 	}
+	// Inline PEM from the loaded profile trumps the env var path only when
+	// the caller did not already provide a PEM via NETFERRY_IDENTITY_PEM.
+	if ac.IdentityPEM == "" && loadedProfile != nil && loadedProfile.IdentityKey != "" {
+		ac.IdentityPEM = loadedProfile.IdentityKey
+	}
 
 	// Parse explicit jump hosts (overrides ProxyJump from SSH config).
 	var jumpHosts []sshconn.JumpHostSpec
@@ -138,6 +225,16 @@ func main() {
 	for i := range jumpHosts {
 		if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
 			jumpHosts[i].IdentityPEM = pem
+		}
+	}
+	// Fill in PEM material from the profile when env vars didn't supply it.
+	// Only meaningful when jumpHosts were themselves derived from the profile
+	// (indexes line up 1:1 with loadedProfile.JumpHosts).
+	if loadedProfile != nil && len(jumpHosts) == len(loadedProfile.JumpHosts) {
+		for i, jh := range loadedProfile.JumpHosts {
+			if jumpHosts[i].IdentityPEM == "" && jh.IdentityKey != "" {
+				jumpHosts[i].IdentityPEM = jh.IdentityKey
+			}
 		}
 	}
 
@@ -166,6 +263,29 @@ func main() {
 			if cidr != "" {
 				excludes = append(excludes, cidr)
 			}
+		}
+	}
+	// Profile-supplied excludes and auto-LAN detection mirror what the desktop
+	// sidecar appends to --exclude before spawning the tunnel.
+	if loadedProfile != nil {
+		seen := map[string]bool{}
+		for _, e := range excludes {
+			seen[e] = true
+		}
+		addCIDR := func(c string) {
+			c = strings.TrimSpace(c)
+			if c != "" && !seen[c] {
+				excludes = append(excludes, c)
+				seen[c] = true
+			}
+		}
+		if loadedProfile.AutoExcludeLANOrDefault() {
+			for _, c := range profile.AutoExcludeLANCIDRs() {
+				addCIDR(c)
+			}
+		}
+		for _, c := range loadedProfile.ExcludeSubnets {
+			addCIDR(c)
 		}
 	}
 

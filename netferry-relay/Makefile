@@ -1,6 +1,14 @@
 VERSION := $(shell date +'%y.%-m.%-d-%s')
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) -s -w"
 
+# Tunnel binary additionally bakes in NETFERRY_EXPORT_KEY (when set) so it can
+# decrypt .nfprofile files produced by the desktop/mobile apps.
+TUNNEL_LDFLAGS_X := -X main.Version=$(VERSION)
+ifdef NETFERRY_EXPORT_KEY
+TUNNEL_LDFLAGS_X += -X github.com/hoveychen/netferry/relay/internal/profile.ExportKey=$(NETFERRY_EXPORT_KEY)
+endif
+TUNNEL_LDFLAGS := -ldflags "$(TUNNEL_LDFLAGS_X) -s -w"
+
 # Server cross-compilation targets (remote side, zero CGO)
 SERVER_TARGETS := \
     linux/amd64 \
@@ -28,7 +36,7 @@ build-servers:
 build-tunnel: build-servers
 	@mkdir -p dist
 	GOOS=$(HOST_GOOS) GOARCH=$(HOST_GOARCH) CGO_ENABLED=0 \
-	    go build $(LDFLAGS) -o dist/netferry-tunnel ./cmd/tunnel
+	    go build $(TUNNEL_LDFLAGS) -o dist/netferry-tunnel ./cmd/tunnel
 	@echo "  built dist/netferry-tunnel"
 
 # Copy built tunnel binary into Tauri binaries dir with the right triple name.

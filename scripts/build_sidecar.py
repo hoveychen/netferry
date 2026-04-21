@@ -74,6 +74,32 @@ def main() -> int:
     version = args.version if args.version else get_version(relay_dir)
     ldflags = f"-X main.Version={version} -s -w"
 
+    # Mirror netferry-desktop/src-tauri/build.rs: fall back to reading
+    # netferry-desktop/.env when NETFERRY_EXPORT_KEY is not already exported.
+    export_key = os.environ.get("NETFERRY_EXPORT_KEY", "").strip()
+    if not export_key:
+        env_path = project / ".env"
+        if env_path.is_file():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip() == "NETFERRY_EXPORT_KEY":
+                    export_key = v.strip()
+                    break
+
+    tunnel_ldflags = ldflags
+    if export_key:
+        tunnel_ldflags = (
+            f"-X main.Version={version} "
+            f"-X github.com/hoveychen/netferry/relay/internal/profile.ExportKey={export_key} "
+            f"-s -w"
+        )
+        print("  NETFERRY_EXPORT_KEY detected — tunnel binary will support .nfprofile files")
+    else:
+        print("  NETFERRY_EXPORT_KEY not set — tunnel --profile will be disabled")
+
     base_env = {**os.environ, "CGO_ENABLED": "0"}
 
     # Step 1: Build all remote server binaries (embedded into the tunnel binary).
@@ -97,7 +123,7 @@ def main() -> int:
     tunnel_out = binaries_dir / tunnel_name
     env = {**base_env, "GOOS": goos_target, "GOARCH": goarch_target}
     run(
-        ["go", "build", f"-ldflags={ldflags}", "-o", str(tunnel_out), "./cmd/tunnel"],
+        ["go", "build", f"-ldflags={tunnel_ldflags}", "-o", str(tunnel_out), "./cmd/tunnel"],
         cwd=relay_dir,
         env=env,
     )
