@@ -622,20 +622,9 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
         }
     }
 
-    // Push routes.
-    if let Ok(routes) = priorities::load_routes(app) {
-        if !routes.is_empty() {
-            if let Ok(body) = serde_json::to_string(&routes) {
-                if let Err(e) = post("/routes", &body) {
-                    log::warn!("push routes to sidecar: {}", e);
-                }
-            }
-        }
-    }
-
-    // Push active group snapshot. The relay uses this to tag connection
-    // events with profile ids and to validate route-rule profile refs.
-    // Mirrors stats.ActiveGroup on the Go side.
+    // Push routes and active group snapshot. Routes live inside the active
+    // group's `rules` map as V2 tagged unions — the Go tunnel's
+    // `RouteMode.UnmarshalJSON` accepts this object form natively.
     #[derive(serde::Serialize)]
     struct ActiveGroupPayload<'a> {
         id: &'a str,
@@ -649,6 +638,13 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
     if let Ok(settings) = crate::settings::load_settings(app) {
         if let Some(group_id) = settings.active_group_id.as_deref() {
             if let Ok(Some(group)) = crate::groups::load_group(app, group_id) {
+                if !group.rules.is_empty() {
+                    if let Ok(body) = serde_json::to_string(&group.rules) {
+                        if let Err(e) = post("/routes", &body) {
+                            log::warn!("push routes to sidecar: {}", e);
+                        }
+                    }
+                }
                 let default_id = group
                     .children
                     .iter()

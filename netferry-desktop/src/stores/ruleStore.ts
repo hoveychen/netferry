@@ -14,13 +14,9 @@ import type {
 } from "@/types";
 
 /**
- * P3: routes are persisted inside the active ProfileGroup's `rules` map as
- * `RouteModeV2` tagged unions. Priorities remain in the legacy priorities.json
- * for now (separate scope).
- *
- * TODO(migration): one-shot migration from legacy `routes.json`
- * (`Record<string, "tunnel"|"direct"|"blocked">`) into the active group's
- * `rules` map on first launch. Left out to keep this change compile-focused.
+ * Routes are persisted inside the active ProfileGroup's `rules` map as
+ * `RouteModeV2` tagged unions and pushed to the sidecar in the same shape.
+ * Priorities remain in the legacy priorities.json for now (separate scope).
  */
 interface RuleStore {
   priorities: DestinationPriorities;
@@ -59,42 +55,14 @@ async function syncPrioritiesToSidecar(priorities: DestinationPriorities) {
   }
 }
 
-/**
- * Convert `RouteModeV2` map to the legacy `Record<string, RouteMode>` shape
- * that the Go sidecar currently understands. "default" collapses to "tunnel"
- * (the group's default child is what "default" means at runtime).
- *
- * TODO: once the sidecar grows native awareness of RouteModeV2, replace this
- * with a direct push of the tagged shape.
- */
-function toLegacyRoutes(rules: Record<string, RouteModeV2>): Record<string, RouteMode> {
-  const out: Record<string, RouteMode> = {};
-  for (const [host, mode] of Object.entries(rules)) {
-    switch (mode.kind) {
-      case "tunnel":
-      case "default":
-        // both resolve to "tunnel through some child profile" at runtime
-        out[host] = "tunnel";
-        break;
-      case "direct":
-        out[host] = "direct";
-        break;
-      case "blocked":
-        out[host] = "blocked";
-        break;
-    }
-  }
-  return out;
-}
-
-/** Push all route modes to the Go sidecar via its HTTP API. */
+/** Push all route modes to the Go sidecar via its HTTP API as V2 tagged unions. */
 async function syncRoutesToSidecar(rules: Record<string, RouteModeV2>) {
   if (!currentStatsUrl) return;
   try {
     await fetch(`${currentStatsUrl}/routes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(toLegacyRoutes(rules)),
+      body: JSON.stringify(rules),
     });
   } catch {
     // Sidecar may not be ready yet; ignore.
