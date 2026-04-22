@@ -19,6 +19,12 @@ export interface ActiveConnection {
   dstAddr: string;
   host?: string;
   tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
+  /**
+   * Profile that dispatched this connection in multi-profile mode; undefined
+   * in legacy single-profile mode or when the relay has not yet started
+   * emitting the field on SSE events (see ConnectionEvent.activeProfileId).
+   */
+  activeProfileId?: string;
   openedAt: number;
 }
 
@@ -150,6 +156,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           dstAddr: event.dstAddr,
           host: event.host,
           tunnelIndex: event.tunnelIndex,
+          // TODO(P2b-followup): currently undefined for most events until the
+          // relay adds activeProfileId to ConnEvent; UI groups unknowns under
+          // the active group's default profile.
+          activeProfileId: event.activeProfileId,
           openedAt: event.timestampMs,
         });
       } else {
@@ -174,6 +184,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             dstAddr: event.dstAddr,
             host: event.host,
             tunnelIndex: event.tunnelIndex,
+            activeProfileId: event.activeProfileId,
             openedAt: event.timestampMs,
           });
         } else {
@@ -194,6 +205,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           dstAddr: ev.dstAddr,
           host: ev.host,
           tunnelIndex: ev.tunnelIndex,
+          activeProfileId: ev.activeProfileId,
           openedAt: ev.timestampMs,
         });
       }

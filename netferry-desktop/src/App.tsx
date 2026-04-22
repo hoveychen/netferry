@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
+import { Activity, Globe, Layers, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { DestinationsPage } from "@/components/DestinationsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
+import { GroupEditorPage } from "@/components/GroupEditorPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { NewProfileDialog } from "@/components/NewProfileDialog";
@@ -22,7 +23,8 @@ import dragStyles from "@/drag.module.css";
 // Sub-page state for profile detail (pushed on top of nav).
 type SubPage =
   | null
-  | { kind: "detail"; profile: Profile; isNew: boolean };
+  | { kind: "detail"; profile: Profile; isNew: boolean }
+  | { kind: "groups" };
 
 type NavTab = "profiles" | "destinations" | "settings" | "connection";
 
@@ -73,7 +75,7 @@ function App() {
     stopSSE,
   } = useConnectionStore();
 
-  const { loadRules } = useRuleStore();
+  const { loadRules, activeGroup } = useRuleStore();
 
   // Initial load
   useEffect(() => {
@@ -249,6 +251,16 @@ function App() {
     );
   }
 
+  // Group editor page (pushed on top).
+  if (subPage?.kind === "groups") {
+    return (
+      <>
+        {dragBar}
+        <GroupEditorPage onBack={() => setSubPage(null)} />
+      </>
+    );
+  }
+
   // Main layout: macOS sidebar + content.
   const navItems: { id: NavTab; label: string; icon: typeof Globe }[] = [
     ...(isConnected ? [{ id: "connection" as NavTab, label: t("nav.connection"), icon: Activity }] : []),
@@ -310,11 +322,12 @@ function App() {
       </aside>
 
       {/* ── Content area ── */}
-      <main className="min-w-0 flex-1 overflow-hidden bg-sf-content">
+      <main className="relative min-w-0 flex-1 overflow-hidden bg-sf-content">
         {activeTab === "connection" && isConnected && (
           <ConnectionPage
             status={status}
             activeProfile={activeProfile}
+            activeGroup={activeGroup}
             logs={logs}
             tunnelStats={tunnelStats}
             activeConnections={activeConnections}
@@ -329,6 +342,15 @@ function App() {
 
         {activeTab === "profiles" && (
           <>
+            <button
+              type="button"
+              onClick={() => setSubPage({ kind: "groups" })}
+              className="absolute right-6 top-[14px] z-10 flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-t3 transition-colors hover:bg-ov-8 hover:text-t1"
+              title="Manage profile groups"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Groups
+            </button>
             <ProfileList
               profiles={profiles}
               connectedProfileId={isConnected ? status.profileId : undefined}

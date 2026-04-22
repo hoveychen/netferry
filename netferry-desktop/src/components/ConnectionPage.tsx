@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Shield, Zap, Ban, Gauge } from "lucide-react";
 import type { ActiveConnection } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
-import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, RouteMode, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
+import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, ProfileGroup, RouteMode, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
@@ -11,6 +11,12 @@ import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 interface Props {
   status: ConnectionStatus;
   activeProfile: Profile | null;
+  /**
+   * Currently active profile group, if any. When present with 2+ children we
+   * render a per-profile summary row. When null/single-child we fall back to
+   * the legacy single-profile layout.
+   */
+  activeGroup?: ProfileGroup | null;
   logs: string[];
   tunnelStats: TunnelStats | null;
   activeConnections: Map<number, ActiveConnection>;
@@ -478,9 +484,110 @@ function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port
   return { host: resolvedHost || addrHost, port, scheme };
 }
 
+/**
+ * Per-profile summary rendered above the per-tunnel breakdown when the active
+ * group has multiple profiles. Each card shows the profile name plus whatever
+ * tunnel-level stats the relay happens to have emitted for that profile.
+ *
+ * TODO(P2b-followup): the relay currently only calls registerTunnelStats(true)
+ * for the primary SessionManager backend (index 0), so TunnelSnapshot entries
+ * are only present for that one profile. For every other profile we show
+ * placeholders ("—") rather than fabricating zeros, so the UI degrades
+ * honestly while the backend gap is closed.
+ */
+function PerProfileBreakdown({
+  group,
+  tunnels,
+  perProfileActiveConns,
+}: {
+  group: ProfileGroup;
+  tunnels: TunnelSnapshot[];
+  perProfileActiveConns: Map<string, number>;
+}) {
+  const { t } = useTranslation();
+
+  // Best-effort profile-id → TunnelSnapshot mapping. The relay does not yet
+  // stamp profileId on TunnelSnapshot (see types.ts), so we fall back to
+  // positional alignment: children[i] ↔ tunnels[i] when counts match.
+  // If counts don't match we match by explicit profileId only; everything
+  // else gets "pending per-profile stats".
+  const snapshotByProfileId = new Map<string, TunnelSnapshot>();
+  for (const tun of tunnels) {
+    if (tun.profileId) snapshotByProfileId.set(tun.profileId, tun);
+  }
+  const positional = tunnels.length === group.children.length;
+
+  const cols = Math.min(group.children.length, 4);
+
+  return (
+    <div
+      className="grid gap-2"
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+    >
+      {group.children.map((profile, idx) => {
+        const tun =
+          snapshotByProfileId.get(profile.id) ??
+          (positional ? tunnels[idx] : undefined);
+        const c = tunnelColor(idx + 1);
+        const activeConns = perProfileActiveConns.get(profile.id) ?? 0;
+        const isDefault = idx === 0;
+        const hasTunStats = !!tun;
+        return (
+          <div
+            key={profile.id}
+            className="rounded-xl border border-sep bg-ov-4 px-3 py-2.5 shadow-[inset_0_1px_0_var(--inset-highlight)]"
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
+              <span className={`truncate text-[11px] font-semibold uppercase tracking-wider ${c.text}`}>
+                {profile.name}
+              </span>
+              {isDefault && (
+                <span className="ml-auto text-[10px] text-t5">
+                  {t("connection.groupDefault", { defaultValue: "default" })}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-t4">↓</span>
+                <span className={`font-mono text-xs font-semibold ${c.text}`}>
+                  {hasTunStats ? `${formatBytes(tun!.rxBytesPerSec)}/s` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-t4">↑</span>
+                <span className="font-mono text-xs text-t3">
+                  {hasTunStats ? `${formatBytes(tun!.txBytesPerSec)}/s` : "—"}
+                </span>
+              </div>
+              <div className="flex justify-between items-baseline mt-0.5">
+                <span className="text-[10px] text-t4">{t("connection.conns")}</span>
+                <span className="font-mono text-xs text-t3">{activeConns}</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-[10px] text-t4">{t("connection.rtt")}</span>
+                <span className={`font-mono text-xs ${hasTunStats ? rttColor(tun!.lastRttUs) : "text-t5"}`}>
+                  {hasTunStats ? formatRtt(tun!.lastRttUs) : "—"}
+                </span>
+              </div>
+              {!hasTunStats && (
+                <p className="mt-1 text-[10px] leading-tight text-t5">
+                  {t("connection.perProfilePending", { defaultValue: "(pending per-profile stats)" })}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ConnectionPage({
   status,
   activeProfile,
+  activeGroup,
   logs,
   tunnelStats,
   activeConnections,
@@ -583,6 +690,39 @@ export function ConnectionPage({
     { id: "logs", label: t("connection.logs") },
     { id: "errors", label: t("connection.errors"), badge: tunnelErrors.length || undefined },
   ];
+
+  // Multi-profile view is only engaged when the caller passed an active group
+  // with 2+ children. Everything else (no group, 1-child group, legacy single-
+  // profile mode) uses the original single-profile layout.
+  const isMultiProfile = !!activeGroup && activeGroup.children.length > 1;
+
+  // Count active connections per profile. Connections that arrive without an
+  // activeProfileId (current relay behaviour) are attributed to the group's
+  // default profile (children[0]) so the UI still shows non-zero counts.
+  //
+  // TODO(P2b-followup): once the relay stamps activeProfileId on every
+  // ConnEvent we can drop the "default bucket" fallback below.
+  const perProfileActiveConns = new Map<string, number>();
+  if (isMultiProfile) {
+    const defaultId = activeGroup!.children[0]?.id ?? "";
+    for (const conn of activeConnections.values()) {
+      const key = conn.activeProfileId ?? defaultId;
+      perProfileActiveConns.set(key, (perProfileActiveConns.get(key) ?? 0) + 1);
+    }
+  }
+
+  // Pre-group active connections by profile id so the Connections tab can
+  // render one section per profile when we are in multi-profile mode.
+  const connsByProfile = new Map<string, ActiveConnection[]>();
+  if (isMultiProfile) {
+    const defaultId = activeGroup!.children[0]?.id ?? "";
+    for (const conn of activeConnections.values()) {
+      const key = conn.activeProfileId ?? defaultId;
+      const list = connsByProfile.get(key);
+      if (list) list.push(conn);
+      else connsByProfile.set(key, [conn]);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -756,6 +896,18 @@ export function ConnectionPage({
                   </div>
                   <span className="ml-auto text-xs text-t5">{t("connection.lastNSeconds", { count: speedHistory.length })}</span>
                 </div>
+                {isMultiProfile && (
+                  <>
+                    <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-t4">
+                      {t("connection.perProfile", { defaultValue: "per profile" })}
+                    </p>
+                    <PerProfileBreakdown
+                      group={activeGroup!}
+                      tunnels={tunnelStats?.tunnels ?? []}
+                      perProfileActiveConns={perProfileActiveConns}
+                    />
+                  </>
+                )}
                 {tunnelStats?.tunnels && tunnelStats.tunnels.length > 1 && (
                   <>
                     <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-t4">
