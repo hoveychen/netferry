@@ -632,6 +632,43 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
             }
         }
     }
+
+    // Push active group snapshot. The relay uses this to tag connection
+    // events with profile ids and to validate route-rule profile refs.
+    // Mirrors stats.ActiveGroup on the Go side.
+    #[derive(serde::Serialize)]
+    struct ActiveGroupPayload<'a> {
+        id: &'a str,
+        #[serde(skip_serializing_if = "str::is_empty")]
+        name: &'a str,
+        #[serde(rename = "defaultProfileId")]
+        default_profile_id: &'a str,
+        #[serde(rename = "profileIds")]
+        profile_ids: Vec<&'a str>,
+    }
+    if let Ok(settings) = crate::settings::load_settings(app) {
+        if let Some(group_id) = settings.active_group_id.as_deref() {
+            if let Ok(Some(group)) = crate::groups::load_group(app, group_id) {
+                let default_id = group
+                    .children
+                    .iter()
+                    .find(|c| !c.id.is_empty())
+                    .map(|c| c.id.as_str())
+                    .unwrap_or("");
+                let payload = ActiveGroupPayload {
+                    id: &group.id,
+                    name: &group.name,
+                    default_profile_id: default_id,
+                    profile_ids: group.children.iter().map(|c| c.id.as_str()).collect(),
+                };
+                if let Ok(body) = serde_json::to_string(&payload) {
+                    if let Err(e) = post("/group", &body) {
+                        log::warn!("push group to sidecar: {}", e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Returns true if the line looks like an error or warning from the tunnel/SSH.

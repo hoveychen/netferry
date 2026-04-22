@@ -97,7 +97,16 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 		return
 	}
 
-	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
+	dispatchClient := client
+	var profileID string
+	if sm, ok := client.(*mux.SessionManager); ok {
+		if id, pool := sm.PoolFor(dstAddr, host); pool != nil {
+			dispatchClient = pool
+			profileID = id
+		}
+	}
+
+	muxConn, err := dispatchClient.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("socks5: open channel to %s:%d: %v", dstIP, dstPort, err)
 		return
@@ -106,7 +115,7 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 
 	var connID uint64
 	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex)
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex, profileID)
 	}
 
 	touch := func() {

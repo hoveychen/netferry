@@ -26,7 +26,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/hoveychen/netferry/relay/internal/deploy"
 	"github.com/hoveychen/netferry/relay/internal/firewall"
 	"github.com/hoveychen/netferry/relay/internal/logfile"
 	"github.com/hoveychen/netferry/relay/internal/mux"
@@ -71,6 +70,7 @@ func main() {
 		showVersion   = flag.Bool("version", false, "print version and exit")
 		listFeatures  = flag.Bool("list-features", false, "print method features as JSON and exit")
 		profilePath   = flag.String("profile", "", "path to encrypted .nfprofile file (all values are used unless overridden by explicit flags)")
+		groupPath     = flag.String("group", "", "path to plaintext JSON profile-group file (supersedes --profile; engages multi-backend SessionManager)")
 	)
 	flag.Parse()
 	subnets := flag.Args()
@@ -167,6 +167,76 @@ func main() {
 		fatalf("profile %q did not supply a remote", *profilePath)
 	}
 
+	// ── Group mode (optional) ────────────────────────────────────────────────
+	// When --group is given, children drive SSH bring-up; --profile and CLI
+	// SSH-level flags become inapplicable. Global-scope flags (firewall method,
+	// DNS, UDP, IPv6 lockdown, --auto-nets, --to-ns, --verbose) still apply
+	// because they configure the single shared firewall / proxy / stats layer.
+	var groupFile *GroupFile
+	if *groupPath != "" {
+		if *profilePath != "" {
+			fatalf("--group and --profile are mutually exclusive")
+		}
+		gf, err := loadGroupFile(*groupPath)
+		if err != nil {
+			fatalf("group: %v", err)
+		}
+		groupFile = gf
+		// Global settings come from the group's default child when not
+		// explicitly overridden on the CLI. This mirrors the single-profile
+		// behaviour: children[0] (or explicit defaultProfileId) supplies the
+		// process-level firewall/DNS/UDP/IPv6 knobs.
+		var defaultChild *profile.Profile
+		for i := range gf.Children {
+			if gf.Children[i].ID == gf.DefaultProfileID {
+				defaultChild = &gf.Children[i]
+				break
+			}
+		}
+		if defaultChild == nil {
+			defaultChild = &gf.Children[0]
+		}
+		if !setFlags["method"] && defaultChild.Method != "" {
+			*method = defaultChild.Method
+		}
+		if !setFlags["dns-target"] && defaultChild.DnsTarget != "" {
+			*dnsTarget = defaultChild.DnsTarget
+		}
+		if !setFlags["auto-nets"] {
+			*autoNets = defaultChild.AutoNets
+		}
+		if !setFlags["no-ipv6"] {
+			*noIPv6 = defaultChild.DisableIPv6
+		}
+		if !setFlags["udp"] {
+			*udpProxy = defaultChild.EnableUDP
+		}
+		if !setFlags["no-block-udp"] {
+			*noBlockUDP = !defaultChild.BlockUDPOrDefault()
+		}
+		if !setFlags["dns"] && defaultChild.Dns != "" {
+			*dns = defaultChild.Dns != profile.DnsOff
+		}
+		if len(subnets) == 0 {
+			// Union children subnets for the proxy scope.
+			seen := map[string]bool{}
+			for i := range gf.Children {
+				for _, s := range gf.Children[i].Subnets {
+					s = strings.TrimSpace(s)
+					if s != "" && !seen[s] {
+						subnets = append(subnets, s)
+						seen[s] = true
+					}
+				}
+			}
+		}
+		// Sanity: --remote is meaningless in group mode; suppress the later
+		// "required" check by picking any non-empty sentinel. We don't dial it.
+		if *remote == "" {
+			*remote = defaultChild.Remote
+		}
+	}
+
 	// Extract embedded WinDivert DLL on Windows (no-op on other platforms).
 	// Files are placed in a fixed, content-addressed directory and deliberately
 	// NOT cleaned up — they are reused across restarts and tolerate a locked
@@ -197,121 +267,6 @@ func main() {
 		}
 	}
 
-	// ── SSH config resolution ────────────────────────────────────────────────
-	hc, err := sshconn.ParseSSHConfig(*remote)
-	if err != nil {
-		fatalf("ssh config: %v", err)
-	}
-
-	ac := sshconn.AuthConfig{
-		IdentityFile: *identity,
-		IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
-		ExtraOptions: *extraSSHOpts,
-	}
-	// Inline PEM from the loaded profile trumps the env var path only when
-	// the caller did not already provide a PEM via NETFERRY_IDENTITY_PEM.
-	if ac.IdentityPEM == "" && loadedProfile != nil && loadedProfile.IdentityKey != "" {
-		ac.IdentityPEM = loadedProfile.IdentityKey
-	}
-
-	// Parse explicit jump hosts (overrides ProxyJump from SSH config).
-	var jumpHosts []sshconn.JumpHostSpec
-	if *jumpHostsJSON != "" {
-		if err := json.Unmarshal([]byte(*jumpHostsJSON), &jumpHosts); err != nil {
-			fatalf("--jump JSON: %v", err)
-		}
-	}
-	// Populate inline PEM keys from env vars (set by Tauri app; never on disk).
-	for i := range jumpHosts {
-		if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
-			jumpHosts[i].IdentityPEM = pem
-		}
-	}
-	// Fill in PEM material from the profile when env vars didn't supply it.
-	// Only meaningful when jumpHosts were themselves derived from the profile
-	// (indexes line up 1:1 with loadedProfile.JumpHosts).
-	if loadedProfile != nil && len(jumpHosts) == len(loadedProfile.JumpHosts) {
-		for i, jh := range loadedProfile.JumpHosts {
-			if jumpHosts[i].IdentityPEM == "" && jh.IdentityKey != "" {
-				jumpHosts[i].IdentityPEM = jh.IdentityKey
-			}
-		}
-	}
-
-	// ── SSH connection ───────────────────────────────────────────────────────
-	log.Printf("connecting to %s@%s:%d", hc.User, hc.HostName, hc.Port)
-	sshClient, err := sshconn.Dial(hc, ac, jumpHosts...)
-	if err != nil {
-		fatalf("ssh connect: %v", err)
-	}
-	defer sshClient.Close()
-
-	// SSH server IP must be excluded from firewall rules to prevent loop.
-	sshServerIP := deploy.RemoteIP(sshClient)
-	excludes := []string{
-		sshServerIP + "/32",
-		"127.0.0.0/8",
-		"169.254.0.0/16",
-	}
-	if !*noIPv6 {
-		// Exclude IPv6 loopback and link-local.
-		excludes = append(excludes, "::1/128", "fe80::/10")
-	}
-	if *excludeNets != "" {
-		for _, cidr := range strings.Split(*excludeNets, ",") {
-			cidr = strings.TrimSpace(cidr)
-			if cidr != "" {
-				excludes = append(excludes, cidr)
-			}
-		}
-	}
-	// Profile-supplied excludes and auto-LAN detection mirror what the desktop
-	// sidecar appends to --exclude before spawning the tunnel.
-	if loadedProfile != nil {
-		seen := map[string]bool{}
-		for _, e := range excludes {
-			seen[e] = true
-		}
-		addCIDR := func(c string) {
-			c = strings.TrimSpace(c)
-			if c != "" && !seen[c] {
-				excludes = append(excludes, c)
-				seen[c] = true
-			}
-		}
-		if loadedProfile.AutoExcludeLANOrDefault() {
-			for _, c := range profile.AutoExcludeLANCIDRs() {
-				addCIDR(c)
-			}
-		}
-		for _, c := range loadedProfile.ExcludeSubnets {
-			addCIDR(c)
-		}
-	}
-
-	// ── Deploy server binary ─────────────────────────────────────────────────
-	remotePath, err := deploy.EnsureServer(sshClient, Version)
-	if err != nil {
-		fatalf("deploy server: %v", err)
-	}
-	log.Printf("remote server: %s", remotePath)
-
-	// ── Build server command ─────────────────────────────────────────────────
-	var serverArgs []string
-	if *autoNets {
-		serverArgs = append(serverArgs, "--auto-nets")
-	}
-	if *dnsTarget != "" {
-		serverArgs = append(serverArgs, "--to-ns", *dnsTarget)
-	}
-	if *verbose {
-		serverArgs = append(serverArgs, "--verbose")
-	}
-	remoteCmd := remotePath
-	if len(serverArgs) > 0 {
-		remoteCmd += " " + strings.Join(serverArgs, " ")
-	}
-
 	// ── Load cached ports for stability across reconnections ────────────────
 	cachedPorts := loadPortCache()
 
@@ -324,92 +279,155 @@ func main() {
 	// Print the port on stderr so the Tauri sidecar can pick it up.
 	fmt.Fprintf(os.Stderr, "c : stats-port: %d\n", statsPort)
 
-	// ── SSH-level keepalive ───────────────────────────────────────────────────
-	// Sends keepalive@openssh.com global requests so the SSH transport detects
-	// dead TCP connections promptly (critical on Windows where the OS may not
-	// surface TCP errors without an explicit write).
-	// The first sshClient is already connected; keepalive is started after all
-	// pool connections are established so we can cover additional clients too.
-
-	// ── Start mux pool (N parallel SSH TCP connections) ───────────────────────
-	// Each pool member is a separate SSH client (separate TCP connection to the
-	// server). Multiple sessions on the same ssh.Client would share one TCP
-	// connection and provide no bonding benefit.
-	n := *poolSize
-	if n < 1 {
-		n = 1
+	// ── Build remote server command (shared across all backends) ────────────
+	var serverArgs []string
+	if *autoNets {
+		serverArgs = append(serverArgs, "--auto-nets")
 	}
-	// sshClients[0] is the already-dialed sshClient; additional ones are dialed now.
-	sshClients := make([]*ssh.Client, n)
-	sshClients[0] = sshClient
-	for i := 1; i < n; i++ {
-		extra, err := sshconn.Dial(hc, ac, jumpHosts...)
-		if err != nil {
-			fatalf("ssh connect (pool %d/%d): %v", i+1, n, err)
-		}
-		defer extra.Close()
-		sshClients[i] = extra
+	if *dnsTarget != "" {
+		serverArgs = append(serverArgs, "--to-ns", *dnsTarget)
+	}
+	if *verbose {
+		serverArgs = append(serverArgs, "--verbose")
 	}
 
-	clients := make([]*mux.MuxClient, n)
-	muxErrCh := make(chan error, 1)
-	for i, sc := range sshClients {
-		// Register per-tunnel counters before keepalive so RTT can be reported.
-		var tc *stats.TunnelCounters
-		if n > 1 {
-			tc = counters.RegisterTunnel(i + 1)
-		}
-
-		// Start SSH-level keepalive with per-tunnel RTT measurement.
-		rttCb := buildRTTCallback(counters, tc, i == 0)
-		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
-		defer stop()
-
-		var c *mux.MuxClient
-		if *splitConn {
-			c = startSplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, i+1, n)
-		} else {
-			mc, err := tryMuxClient(sc, remoteCmd, i+1, n)
-			if err != nil {
-				fatalf("%v", err)
+	// ── Build backend configs ────────────────────────────────────────────────
+	// Group mode: one backend per child, each with its own SSH + mux pool.
+	// Legacy mode: one backend synthesised from CLI flags + optional --profile.
+	var backendCfgs []*backendConfig
+	if groupFile != nil {
+		for i := range groupFile.Children {
+			child := &groupFile.Children[i]
+			if child.Remote == "" {
+				fatalf("group %q child %q missing remote", groupFile.ID, child.ID)
 			}
-			c = mc
+			bc := backendCfgFromProfile(child)
+			// Inline PEM for each child's jump hosts is pushed in via
+			// NETFERRY_JUMP_KEY_<profileID>_<i> so secrets never hit disk.
+			for j := range bc.jumpHosts {
+				if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%s_%d", child.ID, j)); pem != "" {
+					bc.jumpHosts[j].IdentityPEM = pem
+				}
+			}
+			backendCfgs = append(backendCfgs, bc)
 		}
-		c.SetCounters(counters)
-		if tc != nil {
-			c.SetTunnelIndex(i+1, tc)
+		counters.SetActiveGroup(buildActiveGroupFromFile(groupFile))
+	} else {
+		ac := sshconn.AuthConfig{
+			IdentityFile: *identity,
+			IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
+			ExtraOptions: *extraSSHOpts,
 		}
-		clients[i] = c
-	}
-	if *splitConn {
-		log.Printf("mux: split-conn enabled (data/ctrl on separate TCP connections)")
-	}
-	if n > 1 {
-		log.Printf("mux pool: %d parallel TCP connections", n)
+		if ac.IdentityPEM == "" && loadedProfile != nil && loadedProfile.IdentityKey != "" {
+			ac.IdentityPEM = loadedProfile.IdentityKey
+		}
+		var jumpHosts []sshconn.JumpHostSpec
+		if *jumpHostsJSON != "" {
+			if err := json.Unmarshal([]byte(*jumpHostsJSON), &jumpHosts); err != nil {
+				fatalf("--jump JSON: %v", err)
+			}
+		}
+		for i := range jumpHosts {
+			if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
+				jumpHosts[i].IdentityPEM = pem
+			}
+		}
+		if loadedProfile != nil && len(jumpHosts) == len(loadedProfile.JumpHosts) {
+			for i, jh := range loadedProfile.JumpHosts {
+				if jumpHosts[i].IdentityPEM == "" && jh.IdentityKey != "" {
+					jumpHosts[i].IdentityPEM = jh.IdentityKey
+				}
+			}
+		}
+		cfg := &backendConfig{
+			remote:       *remote,
+			identityFile: ac.IdentityFile,
+			identityPEM:  ac.IdentityPEM,
+			extraSSHOpts: ac.ExtraOptions,
+			jumpHosts:    jumpHosts,
+			poolSize:     *poolSize,
+			splitConn:    *splitConn,
+			tcpBalance:   *tcpBalance,
+		}
+		if loadedProfile != nil {
+			cfg.profileID = loadedProfile.ID
+			if loadedProfile.AutoExcludeLANOrDefault() {
+				cfg.extraExcludes = append(cfg.extraExcludes, profile.AutoExcludeLANCIDRs()...)
+			}
+			cfg.extraExcludes = append(cfg.extraExcludes, loadedProfile.ExcludeSubnets...)
+		}
+		backendCfgs = []*backendConfig{cfg}
 	}
 
-	// Use the first client to collect routes; all sessions connect to the same
-	// server so routes are identical across all.
-	firstClient := clients[0]
-	var tunnelClient mux.TunnelClient
-	if n == 1 {
-		// Single tunnel: its death exits the tunnel process (Tauri will reconnect).
-		go func() { muxErrCh <- firstClient.Run() }()
-		tunnelClient = firstClient
-	} else {
-		strategy := mux.LBLeastLoaded
-		if *tcpBalance == "round-robin" {
-			strategy = mux.LBRoundRobin
+	// ── Connect backends ────────────────────────────────────────────────────
+	muxErrCh := make(chan error, 1)
+	backends := make([]*backend, 0, len(backendCfgs))
+	for i, bc := range backendCfgs {
+		b, err := connectBackend(bc, serverArgs, counters, muxErrCh, i == 0)
+		if err != nil {
+			fatalf("backend %q: %v", bc.profileID, err)
 		}
-		pool := mux.NewMuxPoolWithStrategy(clients, strategy)
-		tunnelClient = pool
-		// All pool members reconnect independently on death.
-		// The process only exits if all members die at the same time (network-level failure).
-		for i := 0; i < n; i++ {
-			idx := i
-			go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, jumpHosts, remoteCmd, *splitConn, counters, muxErrCh)
+		backends = append(backends, b)
+	}
+
+	// ── Build excludes union ─────────────────────────────────────────────────
+	excludes := []string{
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+	}
+	if !*noIPv6 {
+		excludes = append(excludes, "::1/128", "fe80::/10")
+	}
+	if *excludeNets != "" {
+		for _, cidr := range strings.Split(*excludeNets, ",") {
+			cidr = strings.TrimSpace(cidr)
+			if cidr != "" {
+				excludes = append(excludes, cidr)
+			}
 		}
 	}
+	seenEx := make(map[string]bool, len(excludes))
+	for _, e := range excludes {
+		seenEx[e] = true
+	}
+	addEx := func(c string) {
+		c = strings.TrimSpace(c)
+		if c != "" && !seenEx[c] {
+			excludes = append(excludes, c)
+			seenEx[c] = true
+		}
+	}
+	for _, b := range backends {
+		addEx(b.sshServerIP + "/32")
+		for _, e := range b.cfg.extraExcludes {
+			addEx(e)
+		}
+	}
+
+	// ── Build tunnel client ──────────────────────────────────────────────────
+	// Single backend → use the mux client directly (legacy path, cheap).
+	// Multiple backends → SessionManager routes each destination to the
+	// right profile's pool based on stats.routeModes; DNS/UDP go to default.
+	var tunnelClient mux.TunnelClient
+	if len(backends) == 1 {
+		tunnelClient = backends[0].client
+	} else {
+		sm := mux.NewSessionManager(counters)
+		for _, b := range backends {
+			pool, ok := b.client.(*mux.MuxPool)
+			if !ok {
+				// n==1 child: wrap the single MuxClient into a 1-member pool
+				// so SessionManager.Register uniformly receives *MuxPool.
+				pool = mux.NewMuxPool([]*mux.MuxClient{b.firstClient})
+			}
+			sm.Register(b.cfg.profileID, pool)
+		}
+		if groupFile != nil {
+			sm.SetDefault(groupFile.DefaultProfileID)
+		}
+		tunnelClient = sm
+	}
+	firstClient := backends[0].firstClient
 
 	// Collect CMD_ROUTES if --auto-nets (arrives within ~200ms of connect).
 	var autoNetRoutes []string

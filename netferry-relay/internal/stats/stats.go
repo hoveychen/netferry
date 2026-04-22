@@ -231,6 +231,7 @@ type connStats struct {
 	dstAddr     string
 	host        string
 	tunnelIndex int
+	profileID   string // profile through which this connection is dispatched (empty = single-profile mode)
 	openedAt    time.Time
 	rxBytes     int64
 	txBytes     int64
@@ -239,14 +240,15 @@ type connStats struct {
 
 // destStats tracks per-destination aggregate metrics.
 type destStats struct {
-	host         string // display name: SNI hostname or fallback IP
-	activeConns  int32
-	totalConns   int64
-	rxBytes      int64
-	txBytes      int64
-	firstSeenAt  time.Time
-	lastSeenAt   time.Time
-	processNames map[string]struct{} // unique process names that accessed this destination
+	host          string // display name: SNI hostname or fallback IP
+	activeConns   int32
+	totalConns    int64
+	rxBytes       int64
+	txBytes       int64
+	firstSeenAt   time.Time
+	lastSeenAt    time.Time
+	lastProfileID string              // most recent profile id this destination was dispatched through
+	processNames  map[string]struct{} // unique process names that accessed this destination
 }
 
 // DestinationSnapshot is the per-destination data sent in the "destinations_snapshot" SSE event.
@@ -328,7 +330,9 @@ func destKey(dstAddr, host string) string {
 // The host parameter is the resolved hostname (from SNI, HTTP Host header, or
 // SOCKS5 domain); pass "" if unknown.
 // tunnelIndex is the 1-based pool member index; pass 0 for single-tunnel mode.
-func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint64 {
+// profileID is the profile the connection was dispatched through in multi-
+// profile mode; pass "" in single-profile mode.
+func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, profileID string) uint64 {
 	id := c.nextConnID.Add(1)
 	now := time.Now()
 	dk := destKey(dstAddr, host)
@@ -342,6 +346,7 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint
 		dstAddr:     dstAddr,
 		host:        host,
 		tunnelIndex: tunnelIndex,
+		profileID:   profileID,
 		openedAt:    now,
 		destKey:     dk,
 	}
@@ -353,6 +358,9 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint
 	ds.activeConns++
 	ds.totalConns++
 	ds.lastSeenAt = now
+	if profileID != "" {
+		ds.lastProfileID = profileID
+	}
 	c.mu.Unlock()
 	select {
 	case c.connEventCh <- ConnEvent{
@@ -395,7 +403,7 @@ func (c *Counters) ConnClose(id uint64, srcAddr, dstAddr string) {
 // PushConnEvent is a backwards-compatible helper that fires an "open" event.
 // Deprecated: prefer ConnOpen + ConnClose for full lifecycle tracking.
 func (c *Counters) PushConnEvent(srcAddr, dstAddr string) {
-	c.ConnOpen(srcAddr, dstAddr, "", 0)
+	c.ConnOpen(srcAddr, dstAddr, "", 0, "")
 }
 
 func (c *Counters) AddRx(n int64) {
@@ -896,6 +904,7 @@ func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elap
 			Priority:          prio,
 			Route:             string(rm.Kind),
 			AssignedProfileID: rm.ProfileID,
+			ActiveProfileID:   ds.lastProfileID,
 			ProcessNames:      sortedProcessNames(ds.processNames),
 		})
 	}
