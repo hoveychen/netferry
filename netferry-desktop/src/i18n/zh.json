@@ -228,6 +228,7 @@
     "namePlaceholder": "我的配置组",
     "childrenHeader": "成员（{{count}}）",
     "addProfile": "添加配置",
+    "importProfile": "导入配置",
     "pickProfile": "选择要添加的配置",
     "noMoreProfiles": "没有更多可添加的配置",
     "noChildren": "尚无成员，请至少添加一个配置。",

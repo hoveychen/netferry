@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Clipboard, Download, FileDown, Pencil, Plus, QrCode, Share2 } from "lucide-react";
-import { save as showSaveDialog, open as showOpenDialog } from "@tauri-apps/plugin-dialog";
+import { save as showSaveDialog } from "@tauri-apps/plugin-dialog";
 import type { Profile } from "@/types";
 import { exportProfile, exportProfileToFile } from "@/api";
 import { Button } from "@/components/ui/button";
+import { ImportProfileDialog } from "@/components/ImportProfileDialog";
 import { QrCodeExportDialog } from "@/components/QrCodeExportDialog";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
@@ -68,11 +68,7 @@ export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, on
   const [exportMenuId, setExportMenuId] = useState<string | null>(null);
   const [exportedId, setExportedId] = useState<string | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
   const [qrProfile, setQrProfile] = useState<Profile | null>(null);
-  const [dragging, setDragging] = useState(false);
 
   // Close export menu on outside click
   useEffect(() => {
@@ -115,61 +111,6 @@ export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, on
       setTimeout(() => setExportedId(null), 2000);
     } catch (err) {
       alert(t("profileList.exportFailed", { error: err }));
-    }
-  };
-
-  const handleImportFromFile = async () => {
-    setImportError(null);
-    try {
-      const path = await showOpenDialog({
-        title: t("importDialog.title"),
-        filters: [{ name: "NetFerry Profile", extensions: ["nfprofile"] }],
-        multiple: false,
-        directory: false,
-      });
-      if (!path) return;
-      setImporting(true);
-      await onImportFile(path);
-      setImportDialogOpen(false);
-      setImportText("");
-    } catch (err) {
-      setImportError(String(err));
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleImportFromText = async () => {
-    if (!importText.trim()) return;
-    setImporting(true);
-    setImportError(null);
-    try {
-      await onImport(importText.trim());
-      setImportDialogOpen(false);
-      setImportText("");
-    } catch (err) {
-      setImportError(String(err));
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleFileDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    setImporting(true);
-    setImportError(null);
-    try {
-      const text = await file.text();
-      await onImport(text.trim());
-      setImportDialogOpen(false);
-      setImportText("");
-    } catch (err) {
-      setImportError(String(err));
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -374,75 +315,12 @@ export function ProfileList({ profiles, connectedProfileId, onNew, onConnect, on
         <QrCodeExportDialog profile={qrProfile} onClose={() => setQrProfile(null)} />
       )}
 
-      {/* Import dialog */}
-      {importDialogOpen && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => { setImportDialogOpen(false); setImportText(""); setImportError(null); }}
-        >
-          <div
-            className="w-full max-w-lg rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-4 text-lg font-semibold text-t1">{t("importDialog.title")}</h2>
-
-            {/* Drop zone / open file */}
-            <button
-              type="button"
-              className={`mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-4 text-sm transition-colors ${
-                dragging
-                  ? "border-accent bg-accent/10 text-accent"
-                  : "border-edge bg-ov-3 text-t3 hover:border-accent/40 hover:bg-accent/[0.05] hover:text-t2"
-              }`}
-              onClick={handleImportFromFile}
-              disabled={importing}
-              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={handleFileDrop}
-            >
-              <Download className="h-4 w-4" />
-              {dragging ? t("importDialog.dropFile") : t("importDialog.openFile")}
-            </button>
-
-            <div className="mb-3 flex items-center gap-3">
-              <div className="h-px flex-1 bg-ov-8" />
-              <span className="text-[11px] text-t4">{t("importDialog.orPasteText")}</span>
-              <div className="h-px flex-1 bg-ov-8" />
-            </div>
-
-            <textarea
-              className="mb-3 w-full rounded-xl border border-bdr bg-ov-4 px-4 py-3 font-mono text-xs text-t1 placeholder-t4 focus:border-accent/50 focus:outline-none"
-              rows={5}
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              placeholder={t("importDialog.placeholder")}
-            />
-            {importError && (
-              <p className="mb-3 rounded-lg border border-danger/20 bg-danger/[0.08] px-3 py-2 text-sm text-danger">
-                {importError}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setImportDialogOpen(false);
-                  setImportText("");
-                  setImportError(null);
-                }}
-              >
-                {t("nav.cancel")}
-              </Button>
-              <Button size="sm" onClick={handleImportFromText} disabled={importing || !importText.trim()}>
-                {importing ? t("importDialog.importing") : t("nav.import")}
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ImportProfileDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        onImport={onImport}
+        onImportFile={onImportFile}
+      />
     </div>
   );
 }

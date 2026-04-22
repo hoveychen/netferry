@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Download, Plus, Trash2, X } from "lucide-react";
 import type { Profile, ProfileGroup } from "@/types";
+import { importProfile, importProfileFromFile } from "@/api";
 import { useGroupStore, newGroup } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { Button } from "@/components/ui/button";
+import { ImportProfileDialog } from "@/components/ImportProfileDialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 
@@ -23,6 +25,7 @@ export function GroupEditorPage({ onBack }: Props) {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     fetch();
@@ -121,6 +124,36 @@ export function GroupEditorPage({ onBack }: Props) {
     const [picked] = next.splice(idx, 1);
     next.unshift(picked);
     setField("children", next);
+  };
+
+  // Find the profile that wasn't in `prevIds` — that's the one we just imported.
+  const pickImportedProfile = (updated: Profile[], prevIds: Set<string>): Profile | undefined =>
+    updated.find((p) => !prevIds.has(p.id));
+
+  const handleImportData = async (data: string) => {
+    if (!draft) return;
+    const prevIds = new Set(profiles.map((p) => p.id));
+    const updated = await importProfile(data);
+    await loadProfiles();
+    const imported = pickImportedProfile(updated, prevIds);
+    if (imported) {
+      setDraft((prev) =>
+        prev ? { ...prev, children: [...prev.children, imported] } : prev,
+      );
+    }
+  };
+
+  const handleImportFile = async (path: string) => {
+    if (!draft) return;
+    const prevIds = new Set(profiles.map((p) => p.id));
+    const updated = await importProfileFromFile(path);
+    await loadProfiles();
+    const imported = pickImportedProfile(updated, prevIds);
+    if (imported) {
+      setDraft((prev) =>
+        prev ? { ...prev, children: [...prev.children, imported] } : prev,
+      );
+    }
   };
 
   const defaultChildId = draft?.children[0]?.id ?? null;
@@ -238,13 +271,22 @@ export function GroupEditorPage({ onBack }: Props) {
                   <p className="text-[11px] font-semibold uppercase tracking-widest text-t4">
                     {t("groups.childrenHeader", { count: draft.children.length })}
                   </p>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
-                    onClick={() => setAddPickerOpen((v) => !v)}
-                  >
-                    <Plus className="h-3.5 w-3.5" /> {t("groups.addProfile")}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
+                      onClick={() => setImportOpen(true)}
+                    >
+                      <Download className="h-3.5 w-3.5" /> {t("groups.importProfile")}
+                    </button>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
+                      onClick={() => setAddPickerOpen((v) => !v)}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> {t("groups.addProfile")}
+                    </button>
+                  </div>
                 </div>
 
                 {addPickerOpen && (
@@ -359,6 +401,13 @@ export function GroupEditorPage({ onBack }: Props) {
           )}
         </main>
       </div>
+
+      <ImportProfileDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImport={handleImportData}
+        onImportFile={handleImportFile}
+      />
     </div>
   );
 }

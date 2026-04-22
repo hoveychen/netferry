@@ -228,6 +228,7 @@
     "namePlaceholder": "My group",
     "childrenHeader": "Children ({{count}})",
     "addProfile": "Add profile",
+    "importProfile": "Import profile",
     "pickProfile": "Pick a profile to add",
     "noMoreProfiles": "No more profiles to add",
     "noChildren": "No children. Add at least one profile.",
