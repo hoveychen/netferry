@@ -69,12 +69,38 @@ async function syncRoutesToSidecar(rules: Record<string, RouteModeV2>) {
   }
 }
 
+/**
+ * Push the active group payload to the Go sidecar's `/group` endpoint. Matches
+ * `stats.ActiveGroup` on the relay side. Pass `null` to clear (legacy mode).
+ */
+async function syncActiveGroupToSidecar(group: ProfileGroup | null) {
+  if (!currentStatsUrl) return;
+  try {
+    const body = group
+      ? JSON.stringify({
+          id: group.id,
+          name: group.name,
+          defaultProfileId: group.children[0]?.id ?? "",
+          profileIds: group.children.map((c) => c.id),
+        })
+      : "null";
+    await fetch(`${currentStatsUrl}/group`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+  } catch {
+    // Sidecar may not be ready yet; ignore.
+  }
+}
+
 /** Called by connectionStore when SSE connects to set the sidecar URL and push current rules. */
 export function onSidecarConnected(url: string) {
   currentStatsUrl = url;
-  const { priorities, routes } = useRuleStore.getState();
+  const { priorities, routes, activeGroup } = useRuleStore.getState();
   syncPrioritiesToSidecar(priorities);
   syncRoutesToSidecar(routes);
+  syncActiveGroupToSidecar(activeGroup);
 }
 
 /** Called by connectionStore when SSE disconnects. */
@@ -119,6 +145,11 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
       }
     }
     set({ priorities, routes, activeGroup });
+    // Re-push to the sidecar so mid-session reloads (e.g. active-group
+    // switch) propagate without reconnecting. No-op when not connected.
+    syncPrioritiesToSidecar(priorities);
+    syncRoutesToSidecar(routes);
+    syncActiveGroupToSidecar(activeGroup);
   },
 
   setPriority: (host, priority) => {
