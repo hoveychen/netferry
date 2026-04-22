@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2, X } from "lucide-react";
 import type { Profile, ProfileGroup } from "@/types";
 import { useGroupStore, newGroup } from "@/stores/groupStore";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function GroupEditorPage({ onBack }: Props) {
+  const { t } = useTranslation();
   const { groups, fetch, save, remove } = useGroupStore();
   const { profiles, loadProfiles } = useProfileStore();
 
@@ -133,10 +135,10 @@ export function GroupEditorPage({ onBack }: Props) {
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          {t("nav.back")}
         </button>
         <span className="text-t5">/</span>
-        <h1 className="text-[15px] font-semibold text-t1">Profile Groups</h1>
+        <h1 className="text-[15px] font-semibold text-t1">{t("groups.title")}</h1>
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -144,19 +146,19 @@ export function GroupEditorPage({ onBack }: Props) {
         <aside className="w-[260px] shrink-0 border-r border-sep bg-ov-2">
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-[11px] font-semibold uppercase tracking-widest text-t4">
-              Groups
+              {t("groups.listHeader")}
             </span>
             <button
               type="button"
               className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
               onClick={handleNew}
             >
-              <Plus className="h-3.5 w-3.5" /> New
+              <Plus className="h-3.5 w-3.5" /> {t("groups.new")}
             </button>
           </div>
           <div className="flex flex-col gap-0.5 px-2">
             {groups.length === 0 && !isNew && (
-              <p className="px-3 py-6 text-center text-xs text-t4">No groups yet</p>
+              <p className="px-3 py-6 text-center text-xs text-t4">{t("groups.noGroups")}</p>
             )}
             {groups.map((g) => (
               <button
@@ -169,13 +171,13 @@ export function GroupEditorPage({ onBack }: Props) {
                     : "text-t2 hover:bg-ov-6 hover:text-t1"
                 }`}
               >
-                <span className="truncate">{g.name || "(unnamed)"}</span>
+                <span className="truncate">{g.name || t("groups.unnamed")}</span>
                 <span className="ml-2 text-[11px] text-t4">{g.children.length}</span>
               </button>
             ))}
             {isNew && draft && (
               <div className="rounded-lg bg-ov-10 px-3 py-2 text-sm text-accent">
-                {draft.name || "(new)"}
+                {draft.name || t("groups.newDraft")}
               </div>
             )}
           </div>
@@ -185,7 +187,7 @@ export function GroupEditorPage({ onBack }: Props) {
         <main className="min-w-0 flex-1 overflow-y-auto p-6">
           {!draft ? (
             <div className="flex h-full items-center justify-center text-sm text-t4">
-              Select a group or create a new one.
+              {t("groups.selectPrompt")}
             </div>
           ) : (
             <div className="mx-auto max-w-2xl space-y-4">
@@ -193,40 +195,40 @@ export function GroupEditorPage({ onBack }: Props) {
                 {!isNew && !confirmDelete && (
                   <Button variant="danger" size="sm" onClick={() => setConfirmDelete(true)}>
                     <Trash2 className="mr-1 h-3.5 w-3.5" />
-                    Delete
+                    {t("groups.delete")}
                   </Button>
                 )}
                 {!isNew && confirmDelete && (
                   <>
-                    <span className="text-sm text-danger/80">Delete this group?</span>
+                    <span className="text-sm text-danger/80">{t("groups.confirmDelete")}</span>
                     <Button variant="danger" size="sm" onClick={handleDelete}>
-                      Yes, delete
+                      {t("groups.yesDelete")}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-                      Cancel
+                      {t("groups.cancel")}
                     </Button>
                   </>
                 )}
                 {isNew && (
                   <Button variant="ghost" size="sm" onClick={handleDelete}>
-                    Discard
+                    {t("groups.discard")}
                   </Button>
                 )}
                 <Button size="sm" onClick={handleSave} disabled={saving || !draft.name.trim()}>
-                  {saving ? "Saving..." : isNew ? "Create" : "Save"}
+                  {saving ? t("groups.saving") : isNew ? t("groups.create") : t("groups.save")}
                 </Button>
               </div>
 
               <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
                 <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
-                  Group
+                  {t("groups.sectionGroup")}
                 </p>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-t2">Name</label>
+                  <label className="mb-1.5 block text-sm font-medium text-t2">{t("groups.name")}</label>
                   <Input
                     value={draft.name}
                     onChange={(e) => setField("name", e.target.value)}
-                    placeholder="My group"
+                    placeholder={t("groups.namePlaceholder")}
                   />
                 </div>
               </div>
@@ -234,21 +236,21 @@ export function GroupEditorPage({ onBack }: Props) {
               <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
                 <div className="mb-4 flex items-center justify-between">
                   <p className="text-[11px] font-semibold uppercase tracking-widest text-t4">
-                    Children ({draft.children.length})
+                    {t("groups.childrenHeader", { count: draft.children.length })}
                   </p>
                   <button
                     type="button"
                     className="flex items-center gap-1 text-xs text-accent/80 transition-colors hover:text-accent"
                     onClick={() => setAddPickerOpen((v) => !v)}
                   >
-                    <Plus className="h-3.5 w-3.5" /> Add profile
+                    <Plus className="h-3.5 w-3.5" /> {t("groups.addProfile")}
                   </button>
                 </div>
 
                 {addPickerOpen && (
                   <div className="mb-4 rounded-xl border border-sep bg-ov-2 p-3">
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs text-t3">Pick a profile to add</span>
+                      <span className="text-xs text-t3">{t("groups.pickProfile")}</span>
                       <button
                         type="button"
                         className="text-t4 transition-colors hover:text-t1"
@@ -259,7 +261,7 @@ export function GroupEditorPage({ onBack }: Props) {
                     </div>
                     {availableProfiles.length === 0 ? (
                       <p className="py-2 text-center text-xs text-t4">
-                        No more profiles to add
+                        {t("groups.noMoreProfiles")}
                       </p>
                     ) : (
                       <div className="flex flex-col gap-1">
@@ -283,13 +285,13 @@ export function GroupEditorPage({ onBack }: Props) {
 
                 {draft.children.length === 0 ? (
                   <p className="py-6 text-center text-xs text-t4">
-                    No children. Add at least one profile.
+                    {t("groups.noChildren")}
                   </p>
                 ) : (
                   <div className="space-y-2">
                     <div className="mb-3">
                       <label className="mb-1.5 block text-sm font-medium text-t2">
-                        Default profile
+                        {t("groups.defaultProfile")}
                       </label>
                       <Select
                         value={defaultChildId ?? ""}
@@ -302,7 +304,7 @@ export function GroupEditorPage({ onBack }: Props) {
                         ))}
                       </Select>
                       <p className="mt-1 text-[11px] text-t4">
-                        The default profile is always listed first.
+                        {t("groups.defaultHint")}
                       </p>
                     </div>
 
@@ -316,7 +318,7 @@ export function GroupEditorPage({ onBack }: Props) {
                             <span className="truncate text-sm text-t1">{child.name}</span>
                             {idx === 0 && (
                               <span className="rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                                default
+                                {t("groups.defaultBadge")}
                               </span>
                             )}
                           </div>
@@ -327,7 +329,7 @@ export function GroupEditorPage({ onBack }: Props) {
                           className="rounded-md p-1 text-t3 transition-colors hover:bg-ov-6 hover:text-t1 disabled:opacity-30"
                           disabled={idx === 0}
                           onClick={() => moveChild(idx, -1)}
-                          title="Move up"
+                          title={t("groups.moveUp")}
                         >
                           <ArrowUp className="h-3.5 w-3.5" />
                         </button>
@@ -336,7 +338,7 @@ export function GroupEditorPage({ onBack }: Props) {
                           className="rounded-md p-1 text-t3 transition-colors hover:bg-ov-6 hover:text-t1 disabled:opacity-30"
                           disabled={idx === draft.children.length - 1}
                           onClick={() => moveChild(idx, 1)}
-                          title="Move down"
+                          title={t("groups.moveDown")}
                         >
                           <ArrowDown className="h-3.5 w-3.5" />
                         </button>
@@ -344,7 +346,7 @@ export function GroupEditorPage({ onBack }: Props) {
                           type="button"
                           className="rounded-md p-1 text-t3 transition-colors hover:bg-ov-6 hover:text-danger"
                           onClick={() => removeChild(child.id)}
-                          title="Remove"
+                          title={t("groups.remove")}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
