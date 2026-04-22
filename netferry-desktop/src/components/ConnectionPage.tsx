@@ -484,17 +484,8 @@ function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port
   return { host: resolvedHost || addrHost, port, scheme };
 }
 
-/**
- * Per-profile summary rendered above the per-tunnel breakdown when the active
- * group has multiple profiles. Each card shows the profile name plus whatever
- * tunnel-level stats the relay happens to have emitted for that profile.
- *
- * TODO(P2b-followup): the relay currently only calls registerTunnelStats(true)
- * for the primary SessionManager backend (index 0), so TunnelSnapshot entries
- * are only present for that one profile. For every other profile we show
- * placeholders ("—") rather than fabricating zeros, so the UI degrades
- * honestly while the backend gap is closed.
- */
+// Per-profile summary rendered above the per-tunnel breakdown when the active
+// group has multiple profiles. Each card shows profile name + its tunnel stats.
 function PerProfileBreakdown({
   group,
   tunnels,
@@ -506,11 +497,9 @@ function PerProfileBreakdown({
 }) {
   const { t } = useTranslation();
 
-  // Best-effort profile-id → TunnelSnapshot mapping. The relay does not yet
-  // stamp profileId on TunnelSnapshot (see types.ts), so we fall back to
-  // positional alignment: children[i] ↔ tunnels[i] when counts match.
-  // If counts don't match we match by explicit profileId only; everything
-  // else gets "pending per-profile stats".
+  // Profile-id → TunnelSnapshot mapping. The relay stamps profileId on every
+  // TunnelSnapshot; positional alignment is retained as a fallback for older
+  // relay builds or if profileId is ever dropped from the wire.
   const snapshotByProfileId = new Map<string, TunnelSnapshot>();
   for (const tun of tunnels) {
     if (tun.profileId) snapshotByProfileId.set(tun.profileId, tun);
@@ -696,12 +685,9 @@ export function ConnectionPage({
   // profile mode) uses the original single-profile layout.
   const isMultiProfile = !!activeGroup && activeGroup.children.length > 1;
 
-  // Count active connections per profile. Connections that arrive without an
-  // activeProfileId (current relay behaviour) are attributed to the group's
-  // default profile (children[0]) so the UI still shows non-zero counts.
-  //
-  // TODO(P2b-followup): once the relay stamps activeProfileId on every
-  // ConnEvent we can drop the "default bucket" fallback below.
+  // Count active connections per profile. Connections without an
+  // activeProfileId (e.g. direct-routed or legacy relays) are attributed to
+  // the group's default profile (children[0]) so counts still render.
   const perProfileActiveConns = new Map<string, number>();
   if (isMultiProfile) {
     const defaultId = activeGroup!.children[0]?.id ?? "";

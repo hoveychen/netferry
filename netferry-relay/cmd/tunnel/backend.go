@@ -92,16 +92,16 @@ func backendCfgFromProfile(p *profile.Profile) *backendConfig {
 // connectBackend performs the full SSH-dial → deploy → mux-pool → reconnect
 // flow for one backendConfig. The returned backend is ready to serve traffic.
 //
-// registerTunnelStats controls whether per-tunnel stats counters are attached.
-// In multi-backend mode only one backend (the primary) gets per-tunnel counters
-// because the current stats.Counters model is indexed solely by pool-member
-// position, with no profile dimension.
+// primaryRTT controls whether this backend's first tunnel feeds the global
+// keepalive RTT on stats.Counters — used for the legacy single-number display.
+// In multi-profile mode, only one backend (conventionally the first) should
+// pass true.
 func connectBackend(
 	cfg *backendConfig,
 	serverArgs []string,
 	counters *stats.Counters,
 	muxErrCh chan<- error,
-	registerTunnelStats bool,
+	primaryRTT bool,
 ) (*backend, error) {
 	hc, err := sshconn.ParseSSHConfig(cfg.remote)
 	if err != nil {
@@ -151,12 +151,11 @@ func connectBackend(
 	}
 
 	clients := make([]*mux.MuxClient, n)
+	tunnelCounters := make([]*stats.TunnelCounters, n)
 	for i, sc := range sshClients {
-		var tc *stats.TunnelCounters
-		if registerTunnelStats && n > 1 {
-			tc = counters.RegisterTunnel(i + 1)
-		}
-		rttCb := buildRTTCallback(counters, tc, registerTunnelStats && i == 0)
+		tc := counters.RegisterTunnel(cfg.profileID, i+1)
+		tunnelCounters[i] = tc
+		rttCb := buildRTTCallback(counters, tc, primaryRTT && i == 0)
 		sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
 
 		var c *mux.MuxClient
@@ -172,9 +171,7 @@ func connectBackend(
 			return nil, fmt.Errorf("mux handshake: %w", err)
 		}
 		c.SetCounters(counters)
-		if tc != nil {
-			c.SetTunnelIndex(i+1, tc)
-		}
+		c.SetTunnelIndex(i+1, tc)
 		clients[i] = c
 	}
 	if cfg.splitConn {
@@ -185,26 +182,19 @@ func connectBackend(
 	}
 
 	firstClient := clients[0]
-	var tc mux.TunnelClient
-	if n == 1 {
-		go func() { muxErrCh <- firstClient.Run() }()
-		tc = firstClient
-	} else {
-		strategy := mux.LBLeastLoaded
-		if cfg.tcpBalance == "round-robin" {
-			strategy = mux.LBRoundRobin
-		}
-		pool := mux.NewMuxPoolWithStrategy(clients, strategy)
-		tc = pool
-		for i := 0; i < n; i++ {
-			idx := i
-			go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, cfg.jumpHosts, remoteCmd, cfg.splitConn, counters, muxErrCh)
-		}
+	strategy := mux.LBLeastLoaded
+	if cfg.tcpBalance == "round-robin" {
+		strategy = mux.LBRoundRobin
+	}
+	pool := mux.NewMuxPoolWithStrategy(clients, strategy)
+	for i := 0; i < n; i++ {
+		idx := i
+		go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, cfg.jumpHosts, remoteCmd, cfg.splitConn, counters, tunnelCounters[idx], muxErrCh)
 	}
 
 	return &backend{
 		cfg:         cfg,
-		client:      tc,
+		client:      pool,
 		firstClient: firstClient,
 		sshServerIP: sshServerIP,
 	}, nil

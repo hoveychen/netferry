@@ -156,9 +156,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           dstAddr: event.dstAddr,
           host: event.host,
           tunnelIndex: event.tunnelIndex,
-          // TODO(P2b-followup): currently undefined for most events until the
-          // relay adds activeProfileId to ConnEvent; UI groups unknowns under
-          // the active group's default profile.
           activeProfileId: event.activeProfileId,
           openedAt: event.timestampMs,
         });

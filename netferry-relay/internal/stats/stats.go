@@ -130,19 +130,30 @@ func (tc *TunnelCounters) Jitter() time.Duration {
 	return time.Duration(tc.jitterNs.Load())
 }
 
-// TunnelSnapshot is the per-tunnel data embedded in Snapshot.
+// TunnelSnapshot is the per-tunnel data embedded in Snapshot. In multi-profile
+// mode, Index is only unique within a profile — consumers should group by
+// ProfileID first. ProfileID is empty in legacy single-profile mode.
 type TunnelSnapshot struct {
-	Index           int     `json:"index"`           // 1-based pool member index
-	State           string  `json:"state"`           // "alive", "reconnecting", or "dead"
-	RxBytesPerSec   int64   `json:"rxBytesPerSec"`   // download speed on this tunnel
-	TxBytesPerSec   int64   `json:"txBytesPerSec"`   // upload speed on this tunnel
-	ActiveConns     int32   `json:"activeConns"`     // currently open connections
-	TotalConns      int64   `json:"totalConns"`      // all-time connections
-	LastRttUs       int64   `json:"lastRttUs"`       // last SSH keepalive RTT in µs (0 = not yet measured)
-	MinRttUs        int64   `json:"minRttUs"`        // min RTT over recent window in µs (network floor)
-	MaxRttUs        int64   `json:"maxRttUs"`        // max RTT in µs
-	JitterUs        int64   `json:"jitterUs"`        // |last - prev| in µs
-	CongestionScore float64 `json:"congestionScore"` // streams × (1 + rtt_ms/50); lower = less loaded
+	Index           int     `json:"index"`                 // 1-based pool member index within its profile
+	ProfileID       string  `json:"profileId,omitempty"`   // owning profile; empty in single-profile mode
+	State           string  `json:"state"`                 // "alive", "reconnecting", or "dead"
+	RxBytesPerSec   int64   `json:"rxBytesPerSec"`         // download speed on this tunnel
+	TxBytesPerSec   int64   `json:"txBytesPerSec"`         // upload speed on this tunnel
+	ActiveConns     int32   `json:"activeConns"`           // currently open connections
+	TotalConns      int64   `json:"totalConns"`            // all-time connections
+	LastRttUs       int64   `json:"lastRttUs"`             // last SSH keepalive RTT in µs (0 = not yet measured)
+	MinRttUs        int64   `json:"minRttUs"`              // min RTT over recent window in µs (network floor)
+	MaxRttUs        int64   `json:"maxRttUs"`              // max RTT in µs
+	JitterUs        int64   `json:"jitterUs"`              // |last - prev| in µs
+	CongestionScore float64 `json:"congestionScore"`       // streams × (1 + rtt_ms/50); lower = less loaded
+}
+
+// tunnelEntry is one registered tunnel: its owning profile, its 1-based index
+// within that profile's pool, and the counters. Stored ordered by registration.
+type tunnelEntry struct {
+	profileID string
+	idx       int
+	counters  *TunnelCounters
 }
 
 func tunnelStateString(s TunnelState) string {
@@ -185,7 +196,7 @@ type Counters struct {
 	activeGroup *ActiveGroup          // currently-active profile group; nil = legacy single-profile mode
 
 	tunnelsMu sync.RWMutex
-	tunnels   []*TunnelCounters // per-pool-member counters; index 0 = pool member 1
+	tunnels   []tunnelEntry // per-(profile, pool-member) counters, ordered by registration
 }
 
 // ActiveGroup describes the profile group currently being served by the relay.
@@ -217,13 +228,14 @@ type Snapshot struct {
 
 // ConnEvent is the JSON payload sent in each "connection" SSE event.
 type ConnEvent struct {
-	ID          uint64 `json:"id"`
-	Action      string `json:"action"` // "open" or "close"
-	SrcAddr     string `json:"srcAddr"`
-	DstAddr     string `json:"dstAddr"`
-	Host        string `json:"host,omitempty"`        // resolved hostname (from SNI / HTTP Host / SOCKS5 domain)
-	TunnelIndex int    `json:"tunnelIndex,omitempty"` // 1-based pool member; 0 = single tunnel or unknown
-	TimestampMs int64  `json:"timestampMs"`
+	ID              uint64 `json:"id"`
+	Action          string `json:"action"` // "open" or "close"
+	SrcAddr         string `json:"srcAddr"`
+	DstAddr         string `json:"dstAddr"`
+	Host            string `json:"host,omitempty"`            // resolved hostname (from SNI / HTTP Host / SOCKS5 domain)
+	TunnelIndex     int    `json:"tunnelIndex,omitempty"`     // 1-based pool member; 0 = single tunnel or unknown
+	ActiveProfileID string `json:"activeProfileId,omitempty"` // profile this connection was dispatched through; empty in single-profile mode
+	TimestampMs     int64  `json:"timestampMs"`
 }
 
 type connStats struct {
@@ -286,28 +298,21 @@ func NewCounters() *Counters {
 	return c
 }
 
-// TunnelCounterAt returns the TunnelCounters for the given 1-based pool member
-// index, or nil if not registered.
-func (c *Counters) TunnelCounterAt(idx int) *TunnelCounters {
-	c.tunnelsMu.RLock()
-	defer c.tunnelsMu.RUnlock()
-	if idx > 0 && idx <= len(c.tunnels) {
-		return c.tunnels[idx-1]
-	}
-	return nil
-}
-
-// RegisterTunnel registers per-tunnel counters for the given 1-based pool
-// member index. Must be called before the tunnel starts accepting connections.
-// Returns the TunnelCounters that the MuxClient should use.
-func (c *Counters) RegisterTunnel(idx int) *TunnelCounters {
-	tc := &TunnelCounters{}
+// RegisterTunnel registers per-tunnel counters for the given profile + 1-based
+// pool member index. Must be called before the tunnel starts accepting
+// connections. Re-registering the same (profileID, idx) pair is idempotent:
+// the existing TunnelCounters pointer is returned so cumulative counts survive
+// reconnects. Pass "" for profileID in legacy single-profile mode.
+func (c *Counters) RegisterTunnel(profileID string, idx int) *TunnelCounters {
 	c.tunnelsMu.Lock()
-	for len(c.tunnels) < idx {
-		c.tunnels = append(c.tunnels, nil)
+	defer c.tunnelsMu.Unlock()
+	for i := range c.tunnels {
+		if c.tunnels[i].profileID == profileID && c.tunnels[i].idx == idx {
+			return c.tunnels[i].counters
+		}
 	}
-	c.tunnels[idx-1] = tc
-	c.tunnelsMu.Unlock()
+	tc := &TunnelCounters{}
+	c.tunnels = append(c.tunnels, tunnelEntry{profileID: profileID, idx: idx, counters: tc})
 	return tc
 }
 
@@ -364,13 +369,14 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, prof
 	c.mu.Unlock()
 	select {
 	case c.connEventCh <- ConnEvent{
-		ID:          id,
-		Action:      "open",
-		SrcAddr:     srcAddr,
-		DstAddr:     dstAddr,
-		Host:        host,
-		TunnelIndex: tunnelIndex,
-		TimestampMs: now.UnixMilli(),
+		ID:              id,
+		Action:          "open",
+		SrcAddr:         srcAddr,
+		DstAddr:         dstAddr,
+		Host:            host,
+		TunnelIndex:     tunnelIndex,
+		ActiveProfileID: profileID,
+		TimestampMs:     now.UnixMilli(),
 	}:
 	default:
 	}
@@ -739,7 +745,8 @@ func (c *Counters) broadcaster() {
 			// Build per-tunnel snapshot.
 			c.tunnelsMu.RLock()
 			var tunnelSnaps []TunnelSnapshot
-			for i, tc := range c.tunnels {
+			for i, entry := range c.tunnels {
+				tc := entry.counters
 				if tc == nil {
 					continue
 				}
@@ -750,7 +757,8 @@ func (c *Counters) broadcaster() {
 				activeConns := tc.ActiveTCP.Load()
 				congestion := float64(activeConns) * (1.0 + rttMs/50.0)
 				tunnelSnaps = append(tunnelSnaps, TunnelSnapshot{
-					Index:           i + 1,
+					Index:           entry.idx,
+					ProfileID:       entry.profileID,
 					State:           tunnelStateString(tc.State()),
 					RxBytesPerSec:   curTRx - tunnelPrevRx[i],
 					TxBytesPerSec:   curTTx - tunnelPrevTx[i],

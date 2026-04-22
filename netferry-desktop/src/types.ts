@@ -100,16 +100,9 @@ export interface TunnelSnapshot {
   maxRttUs: number;        // max RTT in µs
   jitterUs: number;        // |last - prev| in µs
   congestionScore: number; // streams × (1 + rtt_ms/50); lower = less loaded
-  /**
-   * Profile id this tunnel belongs to in multi-profile mode.
-   *
-   * TODO(P2b-followup): per-profile TunnelCounters on relay. Today the
-   * relay only calls registerTunnelStats(true) for the primary backend
-   * (SessionManager index 0), so this field is effectively missing for
-   * secondary profiles and their TunnelSnapshot is absent entirely.
-   * When the gap is closed the relay should populate this so the UI can
-   * key tunnels to profiles without guessing.
-   */
+  // Profile id this tunnel belongs to in multi-profile mode. Empty in legacy
+  // single-profile mode. In multi-profile mode, `index` is only unique within
+  // a profile — group tunnels by `profileId` first, then order by `index`.
   profileId?: string;
 }
 
@@ -131,14 +124,8 @@ export interface ConnectionEvent {
   dstAddr: string;
   host?: string;
   tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
-  /**
-   * Profile the connection was dispatched through in multi-profile mode.
-   * Empty/undefined in legacy single-profile mode.
-   *
-   * TODO(P2b-followup): the relay currently writes this into connStats but
-   * does not yet include it on the "connection" / "connections_snapshot"
-   * SSE payloads. UI treats missing values as "unknown profile".
-   */
+  // Profile the connection was dispatched through in multi-profile mode.
+  // Empty/undefined in legacy single-profile mode.
   activeProfileId?: string;
   timestampMs: number;
 }

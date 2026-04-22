@@ -414,13 +414,7 @@ func main() {
 	} else {
 		sm := mux.NewSessionManager(counters)
 		for _, b := range backends {
-			pool, ok := b.client.(*mux.MuxPool)
-			if !ok {
-				// n==1 child: wrap the single MuxClient into a 1-member pool
-				// so SessionManager.Register uniformly receives *MuxPool.
-				pool = mux.NewMuxPool([]*mux.MuxClient{b.firstClient})
-			}
-			sm.Register(b.cfg.profileID, pool)
+			sm.Register(b.cfg.profileID, b.client.(*mux.MuxPool))
 		}
 		if groupFile != nil {
 			sm.SetDefault(groupFile.DefaultProfileID)
@@ -939,7 +933,8 @@ func trySplitMuxClient(
 }
 
 // connectPoolMember dials a fresh SSH connection and creates a MuxClient.
-// Used by reconnectPoolMember for reconnecting dead secondary pool members.
+// Used by reconnectPoolMember for reconnecting dead pool members. The existing
+// TunnelCounters pointer is passed in so cumulative counts survive the reconnect.
 func connectPoolMember(
 	hc *sshconn.HostConfig,
 	ac sshconn.AuthConfig,
@@ -947,13 +942,13 @@ func connectPoolMember(
 	remoteCmd string,
 	split bool,
 	counters *stats.Counters,
+	tc *stats.TunnelCounters,
 	member, total int,
 ) (*mux.MuxClient, error) {
 	sc, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
-	tc := counters.TunnelCounterAt(member)
 	sshconn.StartSSHKeepalive(sc, 30*time.Second, buildRTTCallback(counters, tc, false))
 
 	var c *mux.MuxClient
@@ -992,14 +987,14 @@ func reconnectPoolMember(
 	remoteCmd string,
 	split bool,
 	counters *stats.Counters,
+	tc *stats.TunnelCounters,
 	fatalCh chan<- error,
 ) {
 	c := initial
 	backoff := 5 * time.Second
 	const maxBackoff = 60 * time.Second
 
-	// Update tunnel state.
-	if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+	if tc != nil {
 		tc.SetState(stats.TunnelAlive)
 	}
 
@@ -1008,7 +1003,7 @@ func reconnectPoolMember(
 			log.Printf("mux pool member %d/%d closed: %v", idx+1, total, err)
 		}
 
-		if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+		if tc != nil {
 			tc.SetState(stats.TunnelReconnecting)
 		}
 
@@ -1018,7 +1013,7 @@ func reconnectPoolMember(
 			attempts++
 			if attempts > maxReconnectAttempts {
 				log.Printf("mux pool member %d/%d: giving up after %d failed reconnect attempts", idx+1, total, maxReconnectAttempts)
-				if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+				if tc != nil {
 					tc.SetState(stats.TunnelDead)
 				}
 				select {
@@ -1031,7 +1026,7 @@ func reconnectPoolMember(
 			log.Printf("mux pool member %d/%d: reconnecting in %v (attempt %d/%d)", idx+1, total, backoff, attempts, maxReconnectAttempts)
 			time.Sleep(backoff)
 
-			newClient, err := connectPoolMember(hc, ac, jumpHosts, remoteCmd, split, counters, idx+1, total)
+			newClient, err := connectPoolMember(hc, ac, jumpHosts, remoteCmd, split, counters, tc, idx+1, total)
 			if err != nil {
 				log.Printf("mux pool member %d/%d reconnect failed: %v", idx+1, total, err)
 				backoff = min(backoff*2, maxBackoff)
@@ -1041,7 +1036,7 @@ func reconnectPoolMember(
 			pool.ReplaceClient(idx, newClient)
 			c = newClient
 			backoff = 5 * time.Second
-			if tc := counters.TunnelCounterAt(idx + 1); tc != nil {
+			if tc != nil {
 				tc.SetState(stats.TunnelAlive)
 			}
 			log.Printf("mux pool member %d/%d: reconnected successfully", idx+1, total)
