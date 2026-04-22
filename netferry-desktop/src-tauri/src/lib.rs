@@ -1,9 +1,11 @@
 mod commands;
 mod crypto;
+mod groups;
 #[cfg(target_os = "macos")]
 mod helper_ipc;
 pub mod logging;
 mod menu;
+mod migrate_v2;
 mod models;
 mod priorities;
 mod profiles;
@@ -82,6 +84,14 @@ pub fn run() {
             // force-quit (the PID file records the PGID written at connect time).
             sidecar::kill_stale_tunnel();
 
+            // P1: one-shot migration of legacy profiles/routes/priorities into
+            // groups/default.json. Idempotent — no-op once the sentinel exists.
+            // Runtime behaviour is unchanged; this just populates the new layout
+            // so later phases have data to read.
+            if let Err(e) = migrate_v2::run(app.handle()) {
+                log::warn!("migrate_v2 failed (non-fatal): {e}");
+            }
+
             tray::setup_tray(app.handle())?;
             menu::setup_menu(app.handle())?;
 
@@ -154,6 +164,10 @@ pub fn run() {
             commands::save_priorities,
             commands::get_routes,
             commands::save_routes,
+            commands::list_groups,
+            commands::get_group,
+            commands::save_group,
+            commands::delete_group,
             commands::lookup_geoip,
             commands::get_stats_url,
             commands::list_method_features,

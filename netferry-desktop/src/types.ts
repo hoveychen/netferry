@@ -43,6 +43,33 @@ export type TrayDisplayMode = "speed" | "connections" | "none";
 export interface GlobalSettings {
   autoConnectProfileId: string | null;
   trayDisplayMode: TrayDisplayMode;
+  /** P1: set by migrate_v2 on first launch. Runtime still single-profile until P2/P3. */
+  activeGroupId?: string | null;
+}
+
+// ── ProfileGroup (P1 data layer only; UI continues to use flat Profile list) ──
+
+/**
+ * Tagged-union route decision persisted inside a ProfileGroup's `rules` map.
+ * Distinct from the legacy `RouteMode = "tunnel" | "direct" | "blocked"`
+ * string used by the current DestinationsPage — that legacy shape stays
+ * authoritative until P2/P3 switches over.
+ */
+export type RouteModeV2 =
+  | { kind: "tunnel"; profileId: string }
+  | { kind: "default" }
+  | { kind: "direct" }
+  | { kind: "blocked" };
+
+export interface ProfileGroup {
+  id: string;
+  name: string;
+  /** Ordered; children[0] is the group's default profile. */
+  children: Profile[];
+  /** Destination host → route decision. */
+  rules: Record<string, RouteModeV2>;
+  /** Destination host → priority (1–5). */
+  priorities: Record<string, number>;
 }
 
 export interface SshHostEntry {

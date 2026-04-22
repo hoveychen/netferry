@@ -1,5 +1,5 @@
-use crate::models::{ConnectionStatus, GlobalSettings, Profile, SshHostEntry};
-use crate::{crypto, menu, priorities, profiles, settings, sidecar, ssh_config, tray};
+use crate::models::{ConnectionStatus, GlobalSettings, Profile, ProfileGroup, SshHostEntry};
+use crate::{crypto, groups, menu, priorities, profiles, settings, sidecar, ssh_config, tray};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -103,6 +103,28 @@ pub fn save_routes(
     routes: HashMap<String, String>,
 ) -> Result<(), String> {
     priorities::save_routes(&app, &routes)
+}
+
+// ── Profile groups (P1: data-layer only; runtime still uses flat profile list) ──
+
+#[tauri::command]
+pub fn list_groups(app: AppHandle) -> Result<Vec<ProfileGroup>, String> {
+    groups::list_groups(&app)
+}
+
+#[tauri::command]
+pub fn get_group(app: AppHandle, group_id: String) -> Result<Option<ProfileGroup>, String> {
+    groups::load_group(&app, &group_id)
+}
+
+#[tauri::command]
+pub fn save_group(app: AppHandle, group: ProfileGroup) -> Result<(), String> {
+    groups::save_group(&app, &group)
+}
+
+#[tauri::command]
+pub fn delete_group(app: AppHandle, group_id: String) -> Result<(), String> {
+    groups::delete_group(&app, &group_id)
 }
 
 #[tauri::command]

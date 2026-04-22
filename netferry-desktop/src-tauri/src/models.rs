@@ -86,6 +86,41 @@ pub struct GlobalSettings {
     pub auto_connect_profile_id: Option<String>,
     #[serde(default = "default_tray_display_mode")]
     pub tray_display_mode: String,
+    // P1: id of the currently active ProfileGroup. Populated by migrate_v2 on
+    // first launch after upgrade. Runtime still operates in single-profile mode.
+    #[serde(default)]
+    pub active_group_id: Option<String>,
+}
+
+/// RouteMode as persisted inside a ProfileGroup's `rules` map.
+///
+/// `kind`:
+///   - "tunnel"  : route through `profile_id`'s child tunnel
+///   - "default" : route through `children[0]` of the owning group
+///   - "direct"  : bypass the tunnel, direct-dial
+///   - "blocked" : reject the connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteMode {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+}
+
+/// A ProfileGroup bundles an ordered list of child profiles with a set of
+/// destination rules. `children[0]` is the group's default profile. One group
+/// is active at a time (see `GlobalSettings.active_group_id`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub children: Vec<Profile>,
+    #[serde(default)]
+    pub rules: std::collections::HashMap<String, RouteMode>,
+    #[serde(default)]
+    pub priorities: std::collections::HashMap<String, i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
