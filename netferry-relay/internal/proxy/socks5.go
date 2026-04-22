@@ -82,13 +82,13 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 	log.Printf("c : Accept TCP: %s -> %s.", srcAddr, dstAddr)
 
 	priority := stats.DefaultPriority
-	routeMode := stats.RouteTunnel
+	routeKind := stats.RouteTunnel
 	if counters != nil {
 		priority = counters.LookupPriority(dstAddr, host)
-		routeMode = counters.LookupRouteMode(dstAddr, host)
+		routeKind = counters.LookupRouteMode(dstAddr, host).Kind
 	}
 
-	switch routeMode {
+	switch routeKind {
 	case stats.RouteBlocked:
 		log.Printf("socks5: blocked %s -> %s", srcAddr, dstAddr)
 		return

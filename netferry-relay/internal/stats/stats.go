@@ -5,6 +5,7 @@ package stats
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -175,15 +176,27 @@ type Counters struct {
 
 	connEventCh chan ConnEvent // connection open/close notifications for SSE
 
-	mu         sync.Mutex
-	sseClients map[chan string]struct{}
-	conns      map[uint64]*connStats
-	dests      map[string]*destStats // per-destination aggregates keyed by normalised host/IP
-	priorities map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
-	routeModes map[string]RouteMode  // per-destination route mode (tunnel/direct/blocked)
+	mu          sync.Mutex
+	sseClients  map[chan string]struct{}
+	conns       map[uint64]*connStats
+	dests       map[string]*destStats // per-destination aggregates keyed by normalised host/IP
+	priorities  map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
+	routeModes  map[string]RouteMode  // per-destination route mode (tunnel/direct/blocked/default)
+	activeGroup *ActiveGroup          // currently-active profile group; nil = legacy single-profile mode
 
 	tunnelsMu sync.RWMutex
 	tunnels   []*TunnelCounters // per-pool-member counters; index 0 = pool member 1
+}
+
+// ActiveGroup describes the profile group currently being served by the relay.
+// The sidecar pushes this via POST /group on startup and whenever the group
+// membership or default changes. Consumed in P2b by the listener to dispatch
+// connections across multiple SSH backends; P2a only stores it.
+type ActiveGroup struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name,omitempty"`
+	DefaultProfileID string   `json:"defaultProfileId"`
+	ProfileIDs       []string `json:"profileIds"` // ordered; [0] is the group's default
 }
 
 // Snapshot is the JSON payload sent in each "stats" SSE event.
@@ -247,9 +260,11 @@ type DestinationSnapshot struct {
 	TxBytesPerSec int64  `json:"txBytesPerSec"` // upload speed (calculated by broadcaster)
 	FirstSeenMs   int64  `json:"firstSeenMs"`   // timestamp of first connection
 	LastSeenMs    int64  `json:"lastSeenMs"`    // timestamp of last activity
-	Priority      int       `json:"priority"`                // 1=low, 3=normal (default), 5=high
-	Route         RouteMode `json:"route"`                   // tunnel, direct, or blocked
-	ProcessNames  []string  `json:"processNames,omitempty"`  // local processes that connected to this destination
+	Priority          int      `json:"priority"`                    // 1=low, 3=normal (default), 5=high
+	Route             string   `json:"route"`                       // "tunnel" | "direct" | "blocked" | "default"
+	AssignedProfileID string   `json:"assignedProfileId,omitempty"` // profile pinned via rule; empty = no pin / use group default
+	ActiveProfileID   string   `json:"activeProfileId,omitempty"`   // profile actually dispatched through (populated in P2b)
+	ProcessNames      []string `json:"processNames,omitempty"`      // local processes that connected to this destination
 }
 
 // NewCounters allocates a ready-to-use Counters instance.
@@ -432,14 +447,48 @@ func (c *Counters) ConnAddTx(id uint64, n int64) {
 	c.mu.Unlock()
 }
 
-// RouteMode controls how a destination's traffic is handled.
-type RouteMode string
+// RouteKind is the coarse category of a per-destination route decision.
+type RouteKind string
 
 const (
-	RouteTunnel  RouteMode = "tunnel"  // default: proxy through tunnel
-	RouteDirect  RouteMode = "direct"  // bypass tunnel, connect directly
-	RouteBlocked RouteMode = "blocked" // reject connection
+	RouteTunnel  RouteKind = "tunnel"  // proxy through tunnel (legacy single-pool or explicitly pinned profile)
+	RouteDirect  RouteKind = "direct"  // bypass tunnel, connect directly
+	RouteBlocked RouteKind = "blocked" // reject connection
+	RouteDefault RouteKind = "default" // route through the active group's default profile (children[0])
 )
+
+// RouteMode is the full route decision for a destination: category plus, for
+// `tunnel` kind, the profile id the destination is pinned to.
+//
+// JSON: a legacy string (e.g. `"tunnel"`) is accepted on the wire for
+// backward compatibility; new writers should emit the object form
+// `{"kind":"tunnel","profileId":"..."}`.
+type RouteMode struct {
+	Kind      RouteKind `json:"kind"`
+	ProfileID string    `json:"profileId,omitempty"`
+}
+
+// UnmarshalJSON accepts either the legacy string form (`"tunnel"`) or the
+// new object form (`{"kind":"tunnel","profileId":"..."}`).
+func (r *RouteMode) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		r.Kind = RouteKind(s)
+		r.ProfileID = ""
+		return nil
+	}
+	type raw struct {
+		Kind      RouteKind `json:"kind"`
+		ProfileID string    `json:"profileId"`
+	}
+	var x raw
+	if err := json.Unmarshal(b, &x); err != nil {
+		return err
+	}
+	r.Kind = x.Kind
+	r.ProfileID = x.ProfileID
+	return nil
+}
 
 // DefaultPriority is used when no explicit priority has been set for a destination.
 const DefaultPriority = 3
@@ -493,14 +542,14 @@ func (c *Counters) Priorities() map[string]int {
 }
 
 // LookupRouteMode returns the route mode for a destination key.
-// Returns RouteTunnel if not explicitly set.
+// Returns {Kind: RouteTunnel} if not explicitly set.
 func (c *Counters) LookupRouteMode(dstAddr, host string) RouteMode {
 	dk := destKey(dstAddr, host)
 	c.mu.Lock()
 	m := c.routeModes[dk]
 	c.mu.Unlock()
-	if m == "" {
-		return RouteTunnel
+	if m.Kind == "" {
+		return RouteMode{Kind: RouteTunnel}
 	}
 	return m
 }
@@ -508,8 +557,8 @@ func (c *Counters) LookupRouteMode(dstAddr, host string) RouteMode {
 // lookupRouteModeLocked returns the route mode; caller must hold c.mu.
 func (c *Counters) lookupRouteModeLocked(key string) RouteMode {
 	m := c.routeModes[key]
-	if m == "" {
-		return RouteTunnel
+	if m.Kind == "" {
+		return RouteMode{Kind: RouteTunnel}
 	}
 	return m
 }
@@ -519,6 +568,26 @@ func (c *Counters) SetRouteModes(m map[string]RouteMode) {
 	c.mu.Lock()
 	c.routeModes = m
 	c.mu.Unlock()
+}
+
+// SetActiveGroup stores the currently-active profile group. Pass nil to
+// clear (legacy single-profile mode).
+func (c *Counters) SetActiveGroup(g *ActiveGroup) {
+	c.mu.Lock()
+	c.activeGroup = g
+	c.mu.Unlock()
+}
+
+// ActiveGroup returns a copy of the currently-active group, or nil if none.
+func (c *Counters) ActiveGroup() *ActiveGroup {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.activeGroup == nil {
+		return nil
+	}
+	cp := *c.activeGroup
+	cp.ProfileIDs = append([]string(nil), c.activeGroup.ProfileIDs...)
+	return &cp
 }
 
 // RouteModes returns a copy of the current route mode map.
@@ -610,6 +679,7 @@ func (c *Counters) ListenAndServe(preferredPort int) (int, error) {
 	mux.HandleFunc("/snapshot", c.handleSnapshot)
 	mux.HandleFunc("/priorities", c.handlePriorities)
 	mux.HandleFunc("/routes", c.handleRoutes)
+	mux.HandleFunc("/group", c.handleGroup)
 
 	go c.broadcaster()
 	go func() {
@@ -812,19 +882,21 @@ func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elap
 		if prio == 0 {
 			prio = DefaultPriority
 		}
+		rm := c.lookupRouteModeLocked(key)
 		snaps = append(snaps, DestinationSnapshot{
-			Host:          ds.host,
-			ActiveConns:   ds.activeConns,
-			TotalConns:    ds.totalConns,
-			RxBytes:       ds.rxBytes,
-			TxBytes:       ds.txBytes,
-			RxBytesPerSec: rxPerSec,
-			TxBytesPerSec: txPerSec,
-			FirstSeenMs:   ds.firstSeenAt.UnixMilli(),
-			LastSeenMs:    ds.lastSeenAt.UnixMilli(),
-			Priority:      prio,
-		Route:         c.lookupRouteModeLocked(key),
-		ProcessNames:  sortedProcessNames(ds.processNames),
+			Host:              ds.host,
+			ActiveConns:       ds.activeConns,
+			TotalConns:        ds.totalConns,
+			RxBytes:           ds.rxBytes,
+			TxBytes:           ds.txBytes,
+			RxBytesPerSec:     rxPerSec,
+			TxBytesPerSec:     txPerSec,
+			FirstSeenMs:       ds.firstSeenAt.UnixMilli(),
+			LastSeenMs:        ds.lastSeenAt.UnixMilli(),
+			Priority:          prio,
+			Route:             string(rm.Kind),
+			AssignedProfileID: rm.ProfileID,
+			ProcessNames:      sortedProcessNames(ds.processNames),
 		})
 	}
 	sort.Slice(snaps, func(i, j int) bool {
@@ -988,6 +1060,57 @@ func (c *Counters) handleRoutes(w http.ResponseWriter, r *http.Request) {
 		c.SetRouteModes(m)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(c.RouteModes())
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleGroup serves GET (read current active group) and POST (update) for
+// the relay's active profile group. POST body is an ActiveGroup JSON object;
+// POST with an empty body (or `null`) clears it (legacy mode).
+func (c *Counters) handleGroup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		g := c.ActiveGroup()
+		if g == nil {
+			w.Write([]byte("null"))
+			return
+		}
+		json.NewEncoder(w).Encode(g)
+	case http.MethodPost:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "" || trimmed == "null" {
+			c.SetActiveGroup(nil)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var g ActiveGroup
+		if err := json.Unmarshal(body, &g); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if g.ID == "" {
+			http.Error(w, "missing group id", http.StatusBadRequest)
+			return
+		}
+		c.SetActiveGroup(&g)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(c.ActiveGroup())
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

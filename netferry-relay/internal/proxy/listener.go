@@ -134,14 +134,14 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 
 	// Look up destination priority and route mode.
 	priority := stats.DefaultPriority
-	routeMode := stats.RouteTunnel
+	routeKind := stats.RouteTunnel
 	if counters != nil {
 		priority = counters.LookupPriority(dstAddr, host)
-		routeMode = counters.LookupRouteMode(dstAddr, host)
+		routeKind = counters.LookupRouteMode(dstAddr, host).Kind
 	}
 
 	// Apply route mode: blocked → reject, direct → bypass tunnel.
-	switch routeMode {
+	switch routeKind {
 	case stats.RouteBlocked:
 		log.Printf("proxy: blocked %s -> %s (%s)", srcAddr, dstAddr, host)
 		return
