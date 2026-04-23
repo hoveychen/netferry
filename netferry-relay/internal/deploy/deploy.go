@@ -46,11 +46,16 @@ func EnsureServer(client *ssh.Client, version string) (string, error) {
 
 	// Step 4: check if this version already exists on remote.
 	remoteSize := remoteFileSize(client, remotePath)
-	if remoteSize >= 0 {
+	localSize := int64(len(localData))
+	if shouldReuseRemote(remoteSize, localSize) {
 		log.Printf("deploy-reason: up-to-date")
 		return remotePath, nil
 	}
-	log.Printf("deploy-reason: first-deploy")
+	if remoteSize < 0 {
+		log.Printf("deploy-reason: first-deploy")
+	} else {
+		log.Printf("deploy-reason: size-mismatch remote=%d local=%d", remoteSize, localSize)
+	}
 
 	// Step 5: upload binary.
 	if err := uploadData(client, localData, remotePath); err != nil {
@@ -130,6 +135,15 @@ func remoteCachePath(client *ssh.Client, version, arch string) (string, error) {
 		return "", fmt.Errorf("cannot create cache dir: %w", err)
 	}
 	return dir + binaryName, nil
+}
+
+// shouldReuseRemote reports whether the remote cached binary can be executed
+// as-is instead of being re-uploaded. remoteSize < 0 means the file does not
+// exist. A size match is required because the path alone (which includes the
+// version string) does not catch truncated uploads or stale files left behind
+// by earlier builds that reused the same version identifier.
+func shouldReuseRemote(remoteSize, localSize int64) bool {
+	return remoteSize == localSize
 }
 
 // remoteFileSize returns the size of a remote file, or -1 if it doesn't exist.

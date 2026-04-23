@@ -35,6 +35,34 @@ func TestParseUname(t *testing.T) {
 	}
 }
 
+// ---- shouldReuseRemote tests ------------------------------------------------
+
+func TestShouldReuseRemote(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteSize int64
+		localSize  int64
+		want       bool
+	}{
+		{"missing remote", -1, 100, false},
+		{"size match", 100, 100, true},
+		{"size mismatch smaller", 50, 100, false},
+		{"size mismatch larger", 150, 100, false},
+		{"zero-byte remote", 0, 100, false},
+		{"both zero", 0, 0, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldReuseRemote(tc.remoteSize, tc.localSize)
+			if got != tc.want {
+				t.Errorf("shouldReuseRemote(remote=%d, local=%d) = %v, want %v",
+					tc.remoteSize, tc.localSize, got, tc.want)
+			}
+		})
+	}
+}
+
 // ---- shellQuote tests -------------------------------------------------------
 
 func TestShellQuote(t *testing.T) {

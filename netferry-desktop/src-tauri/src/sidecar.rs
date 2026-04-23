@@ -612,13 +612,17 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
 }
 
 /// Parse `c : deploy-reason: <reason>` and emit a reason event.
+/// Only the first whitespace-delimited token is emitted so the frontend sees a
+/// clean tag (e.g. "size-mismatch") regardless of any diagnostic detail that
+/// follows in the log line. Detail remains visible in the raw log stream.
 fn handle_deploy_reason_line(app: &AppHandle, line: &str) -> bool {
     let marker = "deploy-reason: ";
     let pos = match line.find(marker) {
         Some(p) => p,
         None => return false,
     };
-    let reason = line[pos + marker.len()..].trim();
+    let tail = line[pos + marker.len()..].trim();
+    let reason = tail.split_whitespace().next().unwrap_or("");
     if !reason.is_empty() {
         let _ = app.emit(DEPLOY_REASON_EVENT, reason.to_string());
         return true;

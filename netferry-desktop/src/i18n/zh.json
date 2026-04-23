@@ -187,7 +187,7 @@
     "lastNSeconds": "最近 {{count}} 秒",
     "firewallActive": "防火墙规则已生效 — 流量受保护",
     "deployFirstDeploy": "上传中继服务器（首次部署）…",
-    "deployUpdate": "上传中继服务器（新版本）…",
+    "deploySizeMismatch": "重新上传中继服务器（本地与远端大小不一致）…",
     "deployGeneric": "上传中继服务器…",
     "percentComplete": "{{percent}}% 已完成",
     "sortBy": "排序",

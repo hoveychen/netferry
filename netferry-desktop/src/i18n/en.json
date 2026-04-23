@@ -187,7 +187,7 @@
     "lastNSeconds": "Last {{count}}s",
     "firewallActive": "Firewall rules active — traffic is protected",
     "deployFirstDeploy": "Uploading relay server (first deploy)…",
-    "deployUpdate": "Uploading relay server (new version)…",
+    "deploySizeMismatch": "Re-uploading relay server (local/remote size mismatch)…",
     "deployGeneric": "Uploading relay server…",
     "percentComplete": "{{percent}}% complete",
     "sortBy": "Sort by",

@@ -688,8 +688,8 @@ export function ConnectionPage({
             <span className="text-sm text-t2">
               {deployReason === "first-deploy"
                 ? t("connection.deployFirstDeploy")
-                : deployReason === "update"
-                  ? t("connection.deployUpdate")
+                : deployReason === "size-mismatch"
+                  ? t("connection.deploySizeMismatch")
                   : t("connection.deployGeneric")}
             </span>
             <span className="font-mono text-xs text-t3">
