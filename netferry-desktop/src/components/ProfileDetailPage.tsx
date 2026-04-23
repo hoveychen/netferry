@@ -17,12 +17,26 @@ interface Props {
   onDelete: (id: string) => Promise<void>;
 }
 
+// Empty/whitespace identityKey must collapse to undefined: the tab picker
+// distinguishes File Path vs PEM Text by `=== undefined`, so a stored "" would
+// open in PEM mode even for profiles that only use a key file.
+function normalizeProfile(p: Profile): Profile {
+  return {
+    ...p,
+    identityKey: p.identityKey?.trim() ? p.identityKey : undefined,
+    jumpHosts: p.jumpHosts?.map((jh) => ({
+      ...jh,
+      identityKey: jh.identityKey?.trim() ? jh.identityKey : undefined,
+    })),
+  };
+}
+
 export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: Props) {
   const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [draft, setDraft] = useState<Profile>(profile);
+  const [draft, setDraft] = useState<Profile>(() => normalizeProfile(profile));
   const [subnetsText, setSubnetsText] = useState(profile.subnets.join(","));
   const [excludeSubnetsText, setExcludeSubnetsText] = useState(
     profile.excludeSubnets.join(","),
@@ -34,7 +48,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   }, []);
 
   useEffect(() => {
-    setDraft(profile);
+    setDraft(normalizeProfile(profile));
     setSubnetsText(profile.subnets.join(","));
     setExcludeSubnetsText(profile.excludeSubnets.join(","));
   }, [profile.id]);
@@ -202,7 +216,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                   <button
                     type="button"
                     className={`flex-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                      !draft.identityKey
+                      draft.identityKey === undefined
                         ? "bg-ov-10 text-t1"
                         : "text-t3 hover:text-t2"
                     }`}
