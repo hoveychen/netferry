@@ -93,6 +93,7 @@ class NetFerryVpnService : VpnService() {
             AppLog.d(TAG, "Calling builder.establish()...")
             vpnInterface = builder.establish() ?: run {
                 AppLog.e(TAG, "builder.establish() returned null")
+                _lastError.value = "VpnService.builder.establish() returned null (revoked or permission lost)"
                 _vpnState.value = VpnState.ERROR
                 stopSelf()
                 return START_NOT_STICKY
@@ -193,6 +194,7 @@ class NetFerryVpnService : VpnService() {
                     // Only handle if we haven't been disconnected already
                     if (engine != null) {
                         AppLog.e(TAG, "Engine startWithTUN failed", e)
+                        _lastError.value = e.message ?: e.javaClass.simpleName
                         _vpnState.value = VpnState.ERROR
                         _logMessages.value = _logMessages.value + "Error: ${e.message}"
                     }
@@ -201,6 +203,7 @@ class NetFerryVpnService : VpnService() {
 
         } catch (e: Exception) {
             AppLog.e(TAG, "Failed to start VPN setup (${e.javaClass.simpleName})", e)
+            _lastError.value = "${e.javaClass.simpleName}: ${e.message ?: "<no message>"}"
             _vpnState.value = VpnState.ERROR
             _logMessages.value = _logMessages.value + "Error: ${e.message}"
             disconnect()
@@ -366,8 +369,17 @@ class NetFerryVpnService : VpnService() {
         private val _deployProgress = MutableStateFlow<DeployProgress?>(null)
         val deployProgress: StateFlow<DeployProgress?> = _deployProgress.asStateFlow()
 
+        private val _lastError = MutableStateFlow<String?>(null)
+        val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+        fun clearLastError() {
+            _lastError.value = null
+        }
+
         fun startVpn(context: Context, profile: Profile) {
             AppLog.d(TAG, "startVpn called: profile='${profile.name}', id=${profile.id}")
+            // New attempt — wipe prior error so the banner/dialog doesn't linger.
+            _lastError.value = null
             val intent = Intent(context, NetFerryVpnService::class.java).apply {
                 putExtra(EXTRA_CONFIG_JSON, profile.toConfigJson())
                 putExtra(EXTRA_PROFILE_NAME, profile.name)

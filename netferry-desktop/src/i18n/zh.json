@@ -58,6 +58,13 @@
     "placeholder": "在此粘贴加密的配置数据...",
     "importing": "导入中..."
   },
+  "connectionError": {
+    "title": "连接失败",
+    "profileLabel": "Profile：{{name}}",
+    "detailsTitle": "错误详情",
+    "noDetails": "没有捕获到详细错误输出。请检查系统日志或重试。",
+    "dismiss": "知道了"
+  },
   "exportDialog": {
     "title": "导出配置"
   },

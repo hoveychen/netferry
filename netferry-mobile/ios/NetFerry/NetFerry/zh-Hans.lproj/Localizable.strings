@@ -4,6 +4,13 @@
 "cancel" = "取消";
 "delete" = "删除";
 "done" = "完成";
+"ok" = "好";
+
+/* Common errors */
+"error.unknown" = "未知错误";
+
+/* VPN errors */
+"vpn.error.invalidConfiguration" = "VPN 配置无效";
 
 /* Profile List */
 "profiles.title" = "配置";
@@ -135,3 +142,7 @@
 "import.file" = "导入文件";
 "import.success" = "配置已导入！";
 "import.failed" = "导入失败：%@";
+"import.error.title" = "导入错误";
+"import.error.fileAccess" = "无法访问文件";
+"import.error.invalidText" = "文件不是有效文本";
+"import.error.invalidProfile" = "配置数据无效";

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
+import { ConnectionErrorDialog } from "@/components/ConnectionErrorDialog";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { DestinationsPage } from "@/components/DestinationsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
@@ -41,6 +42,13 @@ function App() {
   const [showHelperSetup, setShowHelperSetup] = useState<boolean | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const prevConnected = useRef(false);
+  const prevStatusState = useRef<ConnectionStatus["state"]>("disconnected");
+  const lastAttemptedProfileId = useRef<string | null>(null);
+  const [errorDialog, setErrorDialog] = useState<{
+    message?: string;
+    errors: TunnelError[];
+    profileName?: string;
+  } | null>(null);
 
   const {
     profiles,
@@ -252,6 +260,26 @@ function App() {
     prevConnected.current = isConnected;
   }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Surface connection failures: when status.state transitions INTO "error",
+  // snapshot the status message + accumulated tunnelErrors into a modal.
+  // The sidecar clears profileId on error, so we track the last connecting
+  // profile id to resolve the profile name for the dialog header.
+  useEffect(() => {
+    if (status.state === "connecting" && status.profileId) {
+      lastAttemptedProfileId.current = status.profileId;
+    }
+    if (status.state === "error" && prevStatusState.current !== "error") {
+      const id = status.profileId ?? lastAttemptedProfileId.current;
+      const profile = id ? profiles.find((p) => p.id === id) : null;
+      setErrorDialog({
+        message: status.message,
+        errors: tunnelErrors,
+        profileName: profile?.name,
+      });
+    }
+    prevStatusState.current = status.state;
+  }, [status.state, status.message, status.profileId, tunnelErrors, profiles]);
+
   // Drag bar for macOS overlay title bar — always present
   // Empty div that receives mousedown → Tauri's drag.js detects data-tauri-drag-region → starts window drag.
   // CSS Module preserves -webkit-app-region (Tailwind strips it).
@@ -442,6 +470,14 @@ function App() {
         )}
       </main>
       </div>
+
+      <ConnectionErrorDialog
+        open={errorDialog !== null}
+        message={errorDialog?.message}
+        errors={errorDialog?.errors ?? []}
+        profileName={errorDialog?.profileName}
+        onClose={() => setErrorDialog(null)}
+      />
     </div>
   );
 }

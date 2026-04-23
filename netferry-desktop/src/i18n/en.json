@@ -58,6 +58,13 @@
     "placeholder": "Paste encrypted profile data here...",
     "importing": "Importing..."
   },
+  "connectionError": {
+    "title": "Connection failed",
+    "profileLabel": "Profile: {{name}}",
+    "detailsTitle": "Error details",
+    "noDetails": "No detailed error output was captured. Check system logs or retry.",
+    "dismiss": "Dismiss"
+  },
   "exportDialog": {
     "title": "Export Profile"
   },

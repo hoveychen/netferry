@@ -1,6 +1,22 @@
 import NetworkExtension
 import NetFerryEngine
 
+// Shared App Group suite for cross-process error delivery back to the main app.
+// Key stores the most recent connection failure message; the main app reads and
+// clears it on disconnect transitions to surface details that would otherwise
+// stay trapped in the extension process.
+private let kSharedAppGroup = "group.com.netferry.app"
+private let kLastErrorKey = "lastConnectionError"
+
+private func recordTunnelError(_ message: String) {
+    NSLog("PacketTunnel: recording error: \(message)")
+    UserDefaults(suiteName: kSharedAppGroup)?.set(message, forKey: kLastErrorKey)
+}
+
+private func clearTunnelError() {
+    UserDefaults(suiteName: kSharedAppGroup)?.removeObject(forKey: kLastErrorKey)
+}
+
 class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: MobileEngine?
     private var tunnelCallback: TunnelCallback?
@@ -14,6 +30,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
               let providerConfig = proto.providerConfiguration,
               let configJSON = providerConfig["configJSON"] as? String else {
+            recordTunnelError(TunnelError.missingConfiguration.errorDescription ?? "Missing tunnel configuration")
             completionHandler(TunnelError.missingConfiguration)
             return
         }
@@ -23,6 +40,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let callback = TunnelCallback(provider: self)
         self.tunnelCallback = callback
         guard let eng = MobileNewEngine(callback) else {
+            recordTunnelError(TunnelError.engineCreationFailed.errorDescription ?? "Failed to create NetFerry engine")
             completionHandler(TunnelError.engineCreationFailed)
             return
         }
@@ -38,6 +56,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 try self.engine?.start(configJSON)
             } catch {
                 NSLog("PacketTunnel: engine start error: \(error)")
+                recordTunnelError(error.localizedDescription)
                 completionHandler(error)
                 return
             }
@@ -54,10 +73,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self.setTunnelNetworkSettings(settings) { error in
                 if let error {
                     NSLog("PacketTunnel: setTunnelNetworkSettings error: \(error)")
+                    recordTunnelError("Tunnel settings rejected: \(error.localizedDescription)")
                     self.engine?.stop()
                     completionHandler(error)
                 } else {
                     NSLog("PacketTunnel: tunnel started successfully, SOCKS=%d DNS=%d", socksPort, dnsPort)
+                    clearTunnelError()
                     completionHandler(nil)
                 }
             }

@@ -4,6 +4,13 @@
 "cancel" = "Cancel";
 "delete" = "Delete";
 "done" = "Done";
+"ok" = "OK";
+
+/* Common errors */
+"error.unknown" = "Unknown error";
+
+/* VPN errors */
+"vpn.error.invalidConfiguration" = "Invalid VPN configuration";
 
 /* Profile List */
 "profiles.title" = "Profiles";
@@ -135,3 +142,7 @@
 "import.file" = "Import File";
 "import.success" = "Profile imported!";
 "import.failed" = "Import failed: %@";
+"import.error.title" = "Import Error";
+"import.error.fileAccess" = "Cannot access file";
+"import.error.invalidText" = "File is not valid text";
+"import.error.invalidProfile" = "Invalid profile data";

@@ -2,6 +2,12 @@ import Foundation
 import NetworkExtension
 import Observation
 
+// Matches the PacketTunnel extension's App Group + key. The extension writes the
+// latest engine/setup failure message here so the main app can surface it — the
+// regular `startVPNTunnel()` throw path only covers NE-level errors.
+private let kSharedAppGroup = "group.com.netferry.app"
+private let kLastErrorKey = "lastConnectionError"
+
 @Observable
 @MainActor
 final class VPNManager {
@@ -9,6 +15,9 @@ final class VPNManager {
     private(set) var connectedProfileID: UUID?
     private(set) var stats: TunnelStats = TunnelStats()
     private(set) var deployProgress: DeployProgress?
+    /// Most recent tunnel-extension failure message read from the App Group.
+    /// Consumers show an alert, then call `dismissLastError()` to clear.
+    private(set) var lastError: String?
 
     private var manager: NETunnelProviderManager?
     // nonisolated(unsafe) allows deinit to access these for cleanup.
@@ -83,6 +92,11 @@ final class VPNManager {
     }
 
     func connect(profile: Profile) async throws {
+        // Wipe stale extension error so a fresh attempt's alert doesn't
+        // display leftovers from a previous failed session.
+        UserDefaults(suiteName: kSharedAppGroup)?.removeObject(forKey: kLastErrorKey)
+        lastError = nil
+
         let mgr = try await loadOrCreateManager()
 
         guard let proto = mgr.protocolConfiguration as? NETunnelProviderProtocol else {
@@ -104,6 +118,11 @@ final class VPNManager {
 
         try mgr.connection.startVPNTunnel()
         connectedProfileID = profile.id
+    }
+
+    func dismissLastError() {
+        lastError = nil
+        UserDefaults(suiteName: kSharedAppGroup)?.removeObject(forKey: kLastErrorKey)
     }
 
     func disconnect() {
@@ -136,6 +155,14 @@ final class VPNManager {
                     self.stopStatsPolling()
                     self.stats = TunnelStats()
                     self.deployProgress = nil
+                    // Extension writes failure details to the shared App Group
+                    // when startTunnel/engine.start fails. Pick them up here so
+                    // the UI can surface a specific message instead of a blank
+                    // bounce back to the profile list.
+                    if let message = UserDefaults(suiteName: kSharedAppGroup)?.string(forKey: kLastErrorKey),
+                       !message.isEmpty {
+                        self.lastError = message
+                    }
                 }
             }
         }
@@ -207,7 +234,7 @@ final class VPNManager {
         var errorDescription: String? {
             switch self {
             case .invalidConfiguration:
-                return "Invalid VPN configuration"
+                return L("vpn.error.invalidConfiguration")
             }
         }
     }

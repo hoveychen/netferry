@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
                 val speedHistory by connectionViewModel.speedHistory.collectAsState()
                 val logMessages by connectionViewModel.logMessages.collectAsState()
                 val deployProgress by connectionViewModel.deployProgress.collectAsState()
+                val lastError by connectionViewModel.lastError.collectAsState()
 
                 // Bottom navigation tabs
                 data class TabItem(val route: String, val titleResId: Int, val icon: ImageVector)
@@ -173,6 +174,7 @@ class MainActivity : AppCompatActivity() {
                                 speedHistory = speedHistory,
                                 logMessages = logMessages,
                                 deployProgress = deployProgress,
+                                lastError = lastError,
                                 onConnect = { profile -> requestVpnAndConnect(profile) },
                                 onDisconnect = { connectionViewModel.disconnect() }
                             )

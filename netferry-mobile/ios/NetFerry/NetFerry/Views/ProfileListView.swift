@@ -68,15 +68,27 @@ struct ProfileListView: View {
             ) { result in
                 handleFileImport(result)
             }
-            .alert("Connection Error", isPresented: $showingError) {
-                Button("OK", role: .cancel) {}
+            .alert(L("connection.error"), isPresented: $showingError) {
+                Button(L("ok"), role: .cancel) {}
             } message: {
-                Text(connectError ?? "Unknown error")
+                Text(connectError ?? L("error.unknown"))
             }
-            .alert("Import Error", isPresented: $showingImportError) {
-                Button("OK", role: .cancel) {}
+            .alert(L("import.error.title"), isPresented: $showingImportError) {
+                Button(L("ok"), role: .cancel) {}
             } message: {
                 Text(importError ?? "")
+            }
+            .alert(
+                L("connection.error"),
+                isPresented: Binding(
+                    get: { vpnManager.lastError != nil },
+                    set: { if !$0 { vpnManager.dismissLastError() } }
+                ),
+                presenting: vpnManager.lastError
+            ) { _ in
+                Button(L("ok"), role: .cancel) { vpnManager.dismissLastError() }
+            } message: { message in
+                Text(message)
             }
         }
     }
@@ -138,7 +150,7 @@ struct ProfileListView: View {
         case .success(let urls):
             guard let url = urls.first else { return }
             guard url.startAccessingSecurityScopedResource() else {
-                importError = "Cannot access file"
+                importError = L("import.error.fileAccess")
                 showingImportError = true
                 return
             }
@@ -147,7 +159,7 @@ struct ProfileListView: View {
             do {
                 let data = try Data(contentsOf: url)
                 guard let encrypted = String(data: data, encoding: .utf8) else {
-                    importError = "File is not valid text"
+                    importError = L("import.error.invalidText")
                     showingImportError = true
                     return
                 }
@@ -162,7 +174,7 @@ struct ProfileListView: View {
 
                 guard let jsonData = json.data(using: .utf8),
                       var profile = try? JSONDecoder().decode(Profile.self, from: jsonData) else {
-                    importError = "Invalid profile data"
+                    importError = L("import.error.invalidProfile")
                     showingImportError = true
                     return
                 }

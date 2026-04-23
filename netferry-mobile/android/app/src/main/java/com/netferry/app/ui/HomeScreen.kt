@@ -78,6 +78,7 @@ fun HomeScreen(
     speedHistory: List<NetFerryVpnService.SpeedSample>,
     logMessages: List<String>,
     deployProgress: NetFerryVpnService.DeployProgress? = null,
+    lastError: String? = null,
     onConnect: (Profile) -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -87,6 +88,7 @@ fun HomeScreen(
             DisconnectedHome(
                 profiles = profiles,
                 isError = vpnState == NetFerryVpnService.VpnState.ERROR,
+                errorDetail = lastError,
                 onConnect = onConnect
             )
         }
@@ -121,6 +123,7 @@ fun HomeScreen(
 private fun DisconnectedHome(
     profiles: List<Profile>,
     isError: Boolean,
+    errorDetail: String?,
     onConnect: (Profile) -> Unit
 ) {
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -167,7 +170,7 @@ private fun DisconnectedHome(
 
         // Error banner
         if (isError) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
@@ -177,8 +180,17 @@ private fun DisconnectedHome(
                 Text(
                     text = stringResource(R.string.connection_error),
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error
                 )
+                if (!errorDetail.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = errorDetail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }

@@ -53,7 +53,18 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             null
         )
 
+    val lastError: StateFlow<String?> =
+        NetFerryVpnService.lastError.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            null
+        )
+
     fun disconnect() {
         NetFerryVpnService.stopVpn(getApplication())
+    }
+
+    fun dismissError() {
+        NetFerryVpnService.clearLastError()
     }
 }
