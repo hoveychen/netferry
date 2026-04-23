@@ -174,7 +174,7 @@ func ListenUDPTProxy(port int, client mux.TunnelClient, counters *stats.Counters
 
 			log.Printf("c : Accept UDP: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
 			if counters != nil {
-				flow.connID = counters.ConnOpen(srcStr, dstStr, "", 0)
+				flow.connID = counters.ConnOpen(srcStr, dstStr, "", 0, "")
 			}
 
 			mu.Lock()
