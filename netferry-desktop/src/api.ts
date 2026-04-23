@@ -21,8 +21,22 @@ export function getDefaultIdentityFile() {
   return invoke<string | null>("get_default_identity_file");
 }
 
-export function connectProfile(profile: Profile) {
-  return invoke<ConnectionStatus>("connect_profile", { profile });
+/**
+ * `group` + `children` are passed together for multi-tunnel (group) mode.
+ * Backend writes the children to a temp group.json and spawns the Go tunnel
+ * with `--group <path>`, which brings up one SSH connection per child.
+ * Solo mode (single tunnel) leaves both undefined.
+ */
+export function connectProfile(
+  profile: Profile,
+  group?: ProfileGroup,
+  children?: Profile[],
+) {
+  return invoke<ConnectionStatus>("connect_profile", {
+    profile,
+    group: group ?? null,
+    children: children ?? null,
+  });
 }
 
 export function disconnectProfile() {
@@ -77,6 +91,14 @@ export function saveGroup(group: ProfileGroup) {
 
 export function deleteGroup(groupId: string) {
   return invoke<void>("delete_group", { groupId });
+}
+
+export function addProfileToGroup(groupId: string, profileId: string) {
+  return invoke<ProfileGroup>("add_profile_to_group", { groupId, profileId });
+}
+
+export function removeProfileFromGroup(groupId: string, profileId: string) {
+  return invoke<ProfileGroup>("remove_profile_from_group", { groupId, profileId });
 }
 
 export function listMethodFeatures() {

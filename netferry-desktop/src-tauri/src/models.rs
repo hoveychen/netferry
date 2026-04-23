@@ -107,20 +107,48 @@ pub struct RouteMode {
     pub profile_id: Option<String>,
 }
 
-/// A ProfileGroup bundles an ordered list of child profiles with a set of
-/// destination rules. `children[0]` is the group's default profile. One group
-/// is active at a time (see `GlobalSettings.active_group_id`).
+/// A ProfileGroup bundles an ordered list of profile-id references with a set
+/// of destination rules. `children_ids[0]` is the group's default profile.
+/// Profile objects themselves live in `profiles.json`; the group only holds
+/// references. One group is active at a time (see
+/// `GlobalSettings.active_group_id`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileGroup {
     pub id: String,
     pub name: String,
     #[serde(default)]
-    pub children: Vec<Profile>,
+    pub children_ids: Vec<String>,
+    /// Legacy pre-B field: full Profile objects embedded in the group. Accepted
+    /// on read for backward compat; `normalize_legacy()` extracts ids and this
+    /// field is never written back.
+    #[serde(default, skip_serializing, rename = "children")]
+    pub legacy_children: Vec<Profile>,
     #[serde(default)]
     pub rules: std::collections::HashMap<String, RouteMode>,
     #[serde(default)]
     pub priorities: std::collections::HashMap<String, i32>,
+    /// Accumulates every destination host/IP the relay has observed for this
+    /// group across sessions. DestinationsPage unions this with live traffic
+    /// so the user can set rules on hosts they've ever seen, not just ones
+    /// currently active. Append-only; dedup happens client-side.
+    #[serde(default)]
+    pub known_hosts: Vec<String>,
+}
+
+impl ProfileGroup {
+    /// Populate `children_ids` from `legacy_children` if the group was loaded
+    /// from the pre-B on-disk format. Returns true if migration happened, so
+    /// callers can persist the normalised form.
+    pub fn normalize_legacy(&mut self) -> bool {
+        let migrated = self.children_ids.is_empty() && !self.legacy_children.is_empty();
+        if migrated {
+            self.children_ids = self.legacy_children.iter().map(|p| p.id.clone()).collect();
+        }
+        let had_legacy = !self.legacy_children.is_empty();
+        self.legacy_children.clear();
+        migrated || had_legacy
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

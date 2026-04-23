@@ -41,7 +41,14 @@
     "copyToClipboard": "复制到剪贴板",
     "saveAsNfprofile": "保存为 .nfprofile 文件",
     "showQrCode": "显示二维码",
-    "exportFailed": "导出失败：{{error}}"
+    "exportFailed": "导出失败：{{error}}",
+    "removeFromGroup": "从分组中移除",
+    "confirmRemove": "移除",
+    "noGroupTitle": "尚未选择分组",
+    "noGroupBody": "配置必须属于某个分组。先创建一个分组，然后再添加配置。",
+    "connectAll": "连接整个分组",
+    "connectAllSubtitle": "多 profile 模式 — 分组中共 {{count}} 个 profile",
+    "multiProfile": "多 profile"
   },
   "importDialog": {
     "title": "导入配置",
@@ -190,6 +197,8 @@
     "sortTotal": "总计",
     "sortRecent": "最近",
     "activeCount": "{{count}} 个活跃",
+    "routedVia": "经 {{name}}",
+    "pinnedTo": "固定到 {{name}}",
     "diagnosis": {
       "healthy": "健康",
       "congestion": "网络拥塞（高抖动 + 延迟膨胀）",
@@ -202,17 +211,27 @@
   },
   "destinationsPage": {
     "title": "目标规则",
-    "subtitle": "管理目标的路由和优先级规则。这些规则在不同配置和会话间持久保存。",
+    "subtitle": "当前分组见过的所有目标主机，可为每个主机单独设置路由和优先级。",
     "noRules": "尚未配置目标规则。连接后观察到的目标将显示在此处。",
+    "noGroup": "尚未选择分组。请先选择或创建一个分组，才能编辑规则。",
+    "noHosts": "尚未观察到任何目标。连接分组后流量会自动填充此列表。",
+    "noMatches": "没有匹配的主机。",
+    "filterPlaceholder": "筛选主机…",
+    "countLabel": "显示 {{shown}} / {{total}} 个主机",
     "route": "路由",
-    "priority": "优先级"
+    "priority": "优先级",
+    "liveVia": "实时：{{name}}"
   },
   "groups": {
     "title": "配置组",
     "listHeader": "配置组",
-    "new": "新建",
+    "new": "新建分组",
     "noGroups": "暂无配置组",
     "unnamed": "（未命名）",
+    "switcherTitle": "切换当前分组",
+    "renameGroup": "重命名当前分组",
+    "newEmptyGroup": "新建空白分组",
+    "deleteGroup": "删除当前分组",
     "newDraft": "（新建）",
     "selectPrompt": "请选择一个配置组，或创建一个新的。",
     "delete": "删除",

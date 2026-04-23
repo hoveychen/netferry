@@ -168,6 +168,8 @@ pub fn run() {
             commands::get_group,
             commands::save_group,
             commands::delete_group,
+            commands::add_profile_to_group,
+            commands::remove_profile_from_group,
             commands::lookup_geoip,
             commands::get_stats_url,
             commands::list_method_features,

@@ -48,7 +48,7 @@ pub fn setup_menu(app: &AppHandle) -> Result<(), tauri::Error> {
                         .and_then(|id| all.iter().find(|p| p.id == id).cloned())
                         .or_else(|| all.into_iter().next());
                     if let Some(p) = profile {
-                        let _ = crate::sidecar::connect(app.clone(), state, p);
+                        let _ = crate::sidecar::connect(app.clone(), state, p, None);
                     }
                 }
             }
@@ -90,7 +90,7 @@ pub fn setup_menu(app: &AppHandle) -> Result<(), tauri::Error> {
                 if let Ok(all) = profiles::load_profiles(app) {
                     if let Some(profile) = all.into_iter().find(|p| p.id == profile_id) {
                         let state = app.state::<AppState>();
-                        let _ = crate::sidecar::connect(app.clone(), state, profile);
+                        let _ = crate::sidecar::connect(app.clone(), state, profile, None);
                     }
                 }
             }

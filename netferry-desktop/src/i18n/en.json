@@ -41,7 +41,14 @@
     "copyToClipboard": "Copy to clipboard",
     "saveAsNfprofile": "Save as .nfprofile",
     "showQrCode": "Show QR Code",
-    "exportFailed": "Export failed: {{error}}"
+    "exportFailed": "Export failed: {{error}}",
+    "removeFromGroup": "Remove from group",
+    "confirmRemove": "Remove",
+    "noGroupTitle": "No active group",
+    "noGroupBody": "Profiles live inside groups. Create one to start adding profiles.",
+    "connectAll": "Connect All Profiles",
+    "connectAllSubtitle": "Multi-profile mode — {{count}} profiles in group",
+    "multiProfile": "Multi-profile"
   },
   "importDialog": {
     "title": "Import Profile",
@@ -190,6 +197,8 @@
     "sortTotal": "Total",
     "sortRecent": "Recent",
     "activeCount": "{{count}} active",
+    "routedVia": "via {{name}}",
+    "pinnedTo": "pinned: {{name}}",
     "diagnosis": {
       "healthy": "Healthy",
       "congestion": "Network congestion (high jitter + inflated RTT)",
@@ -202,17 +211,27 @@
   },
   "destinationsPage": {
     "title": "Destination Rules",
-    "subtitle": "Manage routing and priority rules for destinations. These rules persist across profiles and sessions.",
+    "subtitle": "All hosts seen by the active group. Set per-host route and priority.",
     "noRules": "No destination rules configured yet. Rules will appear here as destinations are observed during connections, or you can add them after connecting.",
+    "noGroup": "No active profile group. Rules cannot be edited until a group is selected.",
+    "noHosts": "No destinations observed yet. Connect the group and traffic will populate this list.",
+    "noMatches": "No hosts match the filter.",
+    "filterPlaceholder": "Filter hosts…",
+    "countLabel": "{{shown}} / {{total}} hosts",
     "route": "Route",
-    "priority": "Priority"
+    "priority": "Priority",
+    "liveVia": "live: {{name}}"
   },
   "groups": {
     "title": "Profile Groups",
     "listHeader": "Groups",
-    "new": "New",
+    "new": "New group",
     "noGroups": "No groups yet",
     "unnamed": "(unnamed)",
+    "switcherTitle": "Switch active group",
+    "renameGroup": "Rename current group",
+    "newEmptyGroup": "New empty group",
+    "deleteGroup": "Delete current group",
     "newDraft": "(new)",
     "selectPrompt": "Select a group or create a new one.",
     "delete": "Delete",

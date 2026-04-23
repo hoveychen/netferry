@@ -44,13 +44,16 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
         .or_else(|| profiles.first().map(|p| p.id.clone()));
 
     let rules = translate_routes(&legacy_routes, default_profile_id.as_deref());
+    let children_ids: Vec<String> = profiles.iter().map(|p| p.id.clone()).collect();
 
     let group = ProfileGroup {
         id: DEFAULT_GROUP_ID.to_string(),
         name: DEFAULT_GROUP_NAME.to_string(),
-        children: profiles,
+        children_ids,
+        legacy_children: Vec::new(),
         rules,
         priorities: legacy_priorities,
+        known_hosts: Vec::new(),
     };
     groups::save_group(app, &group)?;
 
@@ -62,8 +65,8 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
     }
 
     log::info!(
-        "migrate_v2: wrote groups/{DEFAULT_GROUP_ID}.json with {} profiles, {} rules, {} priorities",
-        group.children.len(),
+        "migrate_v2: wrote groups/{DEFAULT_GROUP_ID}.json with {} child ids, {} rules, {} priorities",
+        group.children_ids.len(),
         group.rules.len(),
         group.priorities.len(),
     );

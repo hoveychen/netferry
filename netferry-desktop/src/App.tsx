@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Activity, Globe, Layers, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
+import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { DestinationsPage } from "@/components/DestinationsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
-import { GroupEditorPage } from "@/components/GroupEditorPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { NewProfileDialog } from "@/components/NewProfileDialog";
@@ -13,18 +12,23 @@ import { ProfileDetailPage } from "@/components/ProfileDetailPage";
 import { ProfileList } from "@/components/ProfileList";
 import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { getHelperStatus, importProfile, importProfileFromFile } from "@/api";
+import {
+  addProfileToGroup,
+  getHelperStatus,
+  importProfile,
+  importProfileFromFile,
+} from "@/api";
 import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
 import dragStyles from "@/drag.module.css";
 
 // Sub-page state for profile detail (pushed on top of nav).
 type SubPage =
   | null
-  | { kind: "detail"; profile: Profile; isNew: boolean }
-  | { kind: "groups" };
+  | { kind: "detail"; profile: Profile; isNew: boolean };
 
 type NavTab = "profiles" | "destinations" | "settings" | "connection";
 
@@ -75,7 +79,32 @@ function App() {
     stopSSE,
   } = useConnectionStore();
 
-  const { loadRules, activeGroup } = useRuleStore();
+  const { loadRules, activeGroup, connectionMode, setConnectionMode } = useRuleStore();
+  const { fetch: fetchGroups } = useGroupStore();
+
+  /**
+   * After an import call returns a new profiles array, find the id that didn't
+   * exist before and attach it to the active group so it shows up in the list
+   * the user is currently looking at.
+   */
+  const attachNewProfilesToActiveGroup = async (
+    prevIds: Set<string>,
+    updated: Profile[],
+  ) => {
+    const groupId = useRuleStore.getState().activeGroup?.id;
+    if (!groupId) return;
+    const newlyImported = updated.filter((p) => !prevIds.has(p.id));
+    if (newlyImported.length === 0) return;
+    for (const p of newlyImported) {
+      try {
+        await addProfileToGroup(groupId, p.id);
+      } catch (err) {
+        console.error("Failed to attach imported profile to group:", err);
+      }
+    }
+    await fetchGroups();
+    await loadRules();
+  };
 
   // Initial load
   useEffect(() => {
@@ -135,8 +164,10 @@ function App() {
     });
     const offImportFile = listen<string>("import-profile-file", async (event) => {
       try {
-        await importProfileFromFile(event.payload);
+        const prevIds = new Set(useProfileStore.getState().profiles.map((p) => p.id));
+        const updated = await importProfileFromFile(event.payload);
         await loadProfiles();
+        await attachNewProfilesToActiveGroup(prevIds, updated);
       } catch (err) {
         console.error("Failed to import profile from file:", err);
       }
@@ -184,7 +215,23 @@ function App() {
   };
 
   const handleConnect = async (profile: Profile) => {
+    // Clicking a single profile disengages the group's multi-profile mode —
+    // the sidecar receives a null group so ConnectionPage shows single-profile UI.
+    setConnectionMode("solo");
     await connect(profile);
+  };
+
+  const handleConnectGroup = async () => {
+    const group = useRuleStore.getState().activeGroup;
+    if (!group) return;
+    const profiles = useProfileStore.getState().profiles;
+    const children = joinGroupProfiles(group, profiles);
+    const seed = children[0];
+    if (!seed) return;
+    setConnectionMode("group");
+    // Pass full group + children so the sidecar writes a temp group.json and
+    // spawns the Go tunnel with --group, bringing up N SSH connections.
+    await connect(seed, group, children);
   };
 
   const activeProfile =
@@ -230,6 +277,7 @@ function App() {
 
   // Profile detail page (pushed on top).
   if (subPage?.kind === "detail") {
+    const wasNew = subPage.isNew;
     return (
       <>
         {dragBar}
@@ -238,8 +286,12 @@ function App() {
           isNew={subPage.isNew}
           onBack={() => setSubPage(null)}
           onSave={async (saved) => {
+            const prevIds = new Set(useProfileStore.getState().profiles.map((p) => p.id));
             await updateProfile(saved);
             await loadProfiles();
+            if (wasNew) {
+              await attachNewProfilesToActiveGroup(prevIds, useProfileStore.getState().profiles);
+            }
             setSubPage(null);
           }}
           onDelete={async (id) => {
@@ -247,16 +299,6 @@ function App() {
             setSubPage(null);
           }}
         />
-      </>
-    );
-  }
-
-  // Group editor page (pushed on top).
-  if (subPage?.kind === "groups") {
-    return (
-      <>
-        {dragBar}
-        <GroupEditorPage onBack={() => setSubPage(null)} />
       </>
     );
   }
@@ -342,31 +384,27 @@ function App() {
 
         {activeTab === "profiles" && (
           <>
-            <button
-              type="button"
-              onClick={() => setSubPage({ kind: "groups" })}
-              className="absolute right-6 top-[14px] z-10 flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-t3 transition-colors hover:bg-ov-8 hover:text-t1"
-              title="Manage profile groups"
-            >
-              <Layers className="h-3.5 w-3.5" />
-              Groups
-            </button>
             <ProfileList
-              profiles={profiles}
               connectedProfileId={isConnected ? status.profileId : undefined}
+              groupConnected={isConnected && connectionMode === "group"}
               onNew={() => setNewProfileDialogOpen(true)}
               onConnect={handleConnect}
+              onConnectGroup={handleConnectGroup}
               onEdit={(id) => {
                 const profile = profiles.find((p) => p.id === id);
                 if (profile) setSubPage({ kind: "detail", profile, isNew: false });
               }}
               onImport={async (data) => {
-                await importProfile(data);
+                const prevIds = new Set(useProfileStore.getState().profiles.map((p) => p.id));
+                const updated = await importProfile(data);
                 await loadProfiles();
+                await attachNewProfilesToActiveGroup(prevIds, updated);
               }}
               onImportFile={async (path) => {
-                await importProfileFromFile(path);
+                const prevIds = new Set(useProfileStore.getState().profiles.map((p) => p.id));
+                const updated = await importProfileFromFile(path);
                 await loadProfiles();
+                await attachNewProfilesToActiveGroup(prevIds, updated);
               }}
             />
 

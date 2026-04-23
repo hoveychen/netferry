@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Shield, Zap, Ban, Gauge } from "lucide-react";
 import type { ActiveConnection } from "@/stores/connectionStore";
-import { useRuleStore } from "@/stores/ruleStore";
-import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, ProfileGroup, RouteMode, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
+import { joinGroupProfiles } from "@/stores/groupStore";
+import { useProfileStore } from "@/stores/profileStore";
+import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, ProfileGroup, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
+import { tunnelColor } from "@/lib/tunnelColor";
 
 interface Props {
   status: ConnectionStatus;
@@ -211,20 +212,6 @@ const AVATAR_GRADIENTS = [
   "from-emerald-500 to-green-600",
 ];
 
-// Colors for tunnel index badges (0-based slot → color pair)
-const TUNNEL_COLORS = [
-  { bg: "bg-accent/20", text: "text-accent", dot: "bg-accent" },
-  { bg: "bg-success/20", text: "text-success", dot: "bg-success" },
-  { bg: "bg-c-purple/20", text: "text-c-purple", dot: "bg-c-purple" },
-  { bg: "bg-warning/20", text: "text-warning", dot: "bg-warning" },
-  { bg: "bg-danger/20", text: "text-danger", dot: "bg-danger" },
-  { bg: "bg-c-yellow/20", text: "text-c-yellow", dot: "bg-c-yellow" },
-];
-
-function tunnelColor(idx: number) {
-  return TUNNEL_COLORS[(idx - 1) % TUNNEL_COLORS.length];
-}
-
 /** Format RTT from microseconds to a human-readable string. */
 function formatRtt(us: number): string {
   if (us === 0) return "—";
@@ -365,116 +352,6 @@ function TunnelBreakdown({ tunnels }: { tunnels: TunnelSnapshot[] }) {
   );
 }
 
-const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
-  1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
-  2: { label: "Low+", color: "text-t3",   ring: "ring-bdr",     bg: "bg-ov-8",    dotColor: "bg-t3" },
-  3: { label: "Norm", color: "text-accent",  ring: "ring-accent/30", bg: "bg-accent/10",    dotColor: "bg-accent" },
-  4: { label: "High", color: "text-warning",  ring: "ring-warning/30", bg: "bg-warning/10",    dotColor: "bg-warning" },
-  5: { label: "Crit", color: "text-danger",  ring: "ring-danger/30", bg: "bg-danger/10",    dotColor: "bg-danger" },
-};
-
-const ROUTE_META: Record<RouteMode, { label: string; color: string; ring: string; bg: string; Icon: typeof Shield }> = {
-  tunnel:  { label: "Tunnel",  color: "text-accent", ring: "ring-accent/30", bg: "bg-accent/10", Icon: Shield },
-  direct:  { label: "Direct",  color: "text-success", ring: "ring-success/30", bg: "bg-success/10", Icon: Zap },
-  blocked: { label: "Blocked", color: "text-danger", ring: "ring-danger/30", bg: "bg-danger/10", Icon: Ban },
-};
-
-function RouteBadge({ route, onChange }: { route: RouteMode; onChange: (r: RouteMode) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const meta = ROUTE_META[route];
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-all hover:brightness-125 ${meta.bg} ${meta.color} ${meta.ring}`}
-      >
-        <meta.Icon size={11} />
-        {meta.label}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
-          {(["tunnel", "direct", "blocked"] as RouteMode[]).map((mode) => {
-            const m = ROUTE_META[mode];
-            const active = mode === route;
-            return (
-              <button
-                key={mode}
-                onClick={(e) => { e.stopPropagation(); onChange(mode); setOpen(false); }}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
-                }`}
-              >
-                <m.Icon size={13} className={active ? m.color : "text-t3"} />
-                {m.label}
-                {active && <span className="ml-auto text-[10px]">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p: number) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const meta = PRIORITY_META[priority] ?? PRIORITY_META[3];
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-all hover:brightness-125 ${meta.bg} ${meta.color} ${meta.ring}`}
-      >
-        <Gauge size={11} />
-        {meta.label}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
-          {[1, 2, 3, 4, 5].map((p) => {
-            const m = PRIORITY_META[p];
-            const active = p === priority;
-            return (
-              <button
-                key={p}
-                onClick={(e) => { e.stopPropagation(); onChange(p); setOpen(false); }}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
-                  active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
-                }`}
-              >
-                <span className={`h-2 w-2 rounded-full ${m.dotColor}`} />
-                {m.label}
-                {active && <span className="ml-auto text-[10px]">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Extract display host + scheme from connection info. Prefers the resolved host (SNI/HTTP Host). */
 function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port: number; scheme?: string } {
   const lastColon = dstAddr.lastIndexOf(":");
@@ -487,11 +364,11 @@ function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port
 // Per-profile summary rendered above the per-tunnel breakdown when the active
 // group has multiple profiles. Each card shows profile name + its tunnel stats.
 function PerProfileBreakdown({
-  group,
+  profiles,
   tunnels,
   perProfileActiveConns,
 }: {
-  group: ProfileGroup;
+  profiles: Profile[];
   tunnels: TunnelSnapshot[];
   perProfileActiveConns: Map<string, number>;
 }) {
@@ -504,16 +381,16 @@ function PerProfileBreakdown({
   for (const tun of tunnels) {
     if (tun.profileId) snapshotByProfileId.set(tun.profileId, tun);
   }
-  const positional = tunnels.length === group.children.length;
+  const positional = tunnels.length === profiles.length;
 
-  const cols = Math.min(group.children.length, 4);
+  const cols = Math.min(profiles.length, 4);
 
   return (
     <div
       className="grid gap-2"
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
-      {group.children.map((profile, idx) => {
+      {profiles.map((profile, idx) => {
         const tun =
           snapshotByProfileId.get(profile.id) ??
           (positional ? tunnels[idx] : undefined);
@@ -588,7 +465,6 @@ export function ConnectionPage({
   onDisconnect,
 }: Props) {
   const { t } = useTranslation();
-  const { setPriority: onSetDestinationPriority, setRoute: onSetDestinationRoute } = useRuleStore();
   const [activeTab, setActiveTab] = useState<Tab>("speed");
   const [disconnecting, setDisconnecting] = useState(false);
   const [speedHistory, setSpeedHistory] = useState<SpeedPoint[]>([]);
@@ -680,17 +556,25 @@ export function ConnectionPage({
     { id: "errors", label: t("connection.errors"), badge: tunnelErrors.length || undefined },
   ];
 
+  // Resolve the active group's profile-id references to concrete Profile
+  // objects. Orphan ids (missing from profileStore) are dropped by the join.
+  const profilesSnapshot = useProfileStore((s) => s.profiles);
+  const groupChildren = useMemo<Profile[]>(
+    () => (activeGroup ? joinGroupProfiles(activeGroup, profilesSnapshot) : []),
+    [activeGroup, profilesSnapshot],
+  );
+
   // Multi-profile view is only engaged when the caller passed an active group
   // with 2+ children. Everything else (no group, 1-child group, legacy single-
   // profile mode) uses the original single-profile layout.
-  const isMultiProfile = !!activeGroup && activeGroup.children.length > 1;
+  const isMultiProfile = groupChildren.length > 1;
 
   // Count active connections per profile. Connections without an
   // activeProfileId (e.g. direct-routed or legacy relays) are attributed to
   // the group's default profile (children[0]) so counts still render.
   const perProfileActiveConns = new Map<string, number>();
   if (isMultiProfile) {
-    const defaultId = activeGroup!.children[0]?.id ?? "";
+    const defaultId = groupChildren[0]?.id ?? "";
     for (const conn of activeConnections.values()) {
       const key = conn.activeProfileId ?? defaultId;
       perProfileActiveConns.set(key, (perProfileActiveConns.get(key) ?? 0) + 1);
@@ -701,7 +585,7 @@ export function ConnectionPage({
   // render one section per profile when we are in multi-profile mode.
   const connsByProfile = new Map<string, ActiveConnection[]>();
   if (isMultiProfile) {
-    const defaultId = activeGroup!.children[0]?.id ?? "";
+    const defaultId = groupChildren[0]?.id ?? "";
     for (const conn of activeConnections.values()) {
       const key = conn.activeProfileId ?? defaultId;
       const list = connsByProfile.get(key);
@@ -888,7 +772,7 @@ export function ConnectionPage({
                       {t("connection.perProfile", { defaultValue: "per profile" })}
                     </p>
                     <PerProfileBreakdown
-                      group={activeGroup!}
+                      profiles={groupChildren}
                       tunnels={tunnelStats?.tunnels ?? []}
                       perProfileActiveConns={perProfileActiveConns}
                     />
@@ -923,6 +807,20 @@ export function ConnectionPage({
                       .map((conn) => {
                         const { host, port, scheme } = parseHost(conn.dstAddr, conn.host);
                         const tc = conn.tunnelIndex ? tunnelColor(conn.tunnelIndex) : null;
+                        // In multi-profile mode, attribute the connection to a
+                        // specific profile (fall back to default child if the
+                        // relay didn't stamp activeProfileId yet).
+                        let profileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
+                        if (isMultiProfile) {
+                          const pid = conn.activeProfileId ?? groupChildren[0]?.id;
+                          const idx = groupChildren.findIndex((p) => p.id === pid);
+                          if (idx >= 0) {
+                            profileBadge = {
+                              name: groupChildren[idx].name,
+                              color: tunnelColor(idx + 1),
+                            };
+                          }
+                        }
                         return (
                           <div
                             key={conn.id}
@@ -930,6 +828,14 @@ export function ConnectionPage({
                           >
                             <span className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-success" />
                             <span className="shrink-0 text-t5">{formatTime(conn.openedAt)}</span>
+                            {profileBadge && (
+                              <span
+                                className={`shrink-0 truncate max-w-[10rem] rounded px-1 py-0.5 text-[10px] font-semibold ${profileBadge.color.bg} ${profileBadge.color.text}`}
+                                title={profileBadge.name}
+                              >
+                                {profileBadge.name}
+                              </span>
+                            )}
                             {tc && (
                               <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${tc.bg} ${tc.text}`}>
                                 T{conn.tunnelIndex}
@@ -1029,6 +935,26 @@ export function ConnectionPage({
                     const isActive = dest.activeConns > 0;
                     const isBlocked = dest.route === "blocked";
                     const isDirect = dest.route === "direct";
+                    // In multi-profile mode, surface where this host's traffic
+                    // flows. Pinned (assignedProfileId from a tunnel:X rule) wins
+                    // over currently-routing (activeProfileId) so users can tell
+                    // sticky rules from incidental dispatches.
+                    let profileAttr: { label: string; color: ReturnType<typeof tunnelColor> } | null = null;
+                    if (isMultiProfile && !isBlocked && !isDirect) {
+                      const pinnedId = dest.assignedProfileId;
+                      const liveId = dest.activeProfileId;
+                      const pid = pinnedId ?? liveId;
+                      const idx = pid ? groupChildren.findIndex((p) => p.id === pid) : -1;
+                      if (idx >= 0) {
+                        const name = groupChildren[idx].name;
+                        profileAttr = {
+                          label: pinnedId
+                            ? t("connection.pinnedTo", { name })
+                            : t("connection.routedVia", { name }),
+                          color: tunnelColor(idx + 1),
+                        };
+                      }
+                    }
                     return (
                       <div
                         key={dest.host}
@@ -1058,6 +984,14 @@ export function ConnectionPage({
                             </span>
                           </div>
                           <div className="flex items-center gap-3 shrink-0 ml-3">
+                            {profileAttr && (
+                              <span
+                                className={`truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${profileAttr.color.bg} ${profileAttr.color.text}`}
+                                title={profileAttr.label}
+                              >
+                                {profileAttr.label}
+                              </span>
+                            )}
                             {totalSpeed > 0 && (
                               <span className="text-success text-[11px]">
                                 {formatBytes(totalSpeed)}/s
@@ -1066,14 +1000,6 @@ export function ConnectionPage({
                             <span className="text-t4 text-[11px]">
                               {formatBytes(totalBytes)}
                             </span>
-                            <RouteBadge
-                              route={dest.route}
-                              onChange={(r) => onSetDestinationRoute(dest.host, r)}
-                            />
-                            <PriorityBadge
-                              priority={dest.priority}
-                              onChange={(p) => onSetDestinationPriority(dest.host, p)}
-                            />
                           </div>
                         </div>
                         {dest.processNames && dest.processNames.length > 0 && (

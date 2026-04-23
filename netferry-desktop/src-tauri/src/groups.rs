@@ -38,8 +38,11 @@ pub fn list_groups(app: &AppHandle) -> Result<Vec<ProfileGroup>, String> {
         if raw.trim().is_empty() {
             continue;
         }
-        let group: ProfileGroup = serde_json::from_str(&raw)
+        let mut group: ProfileGroup = serde_json::from_str(&raw)
             .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+        if group.normalize_legacy() {
+            let _ = save_group(app, &group);
+        }
         out.push(group);
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -56,8 +59,11 @@ pub fn load_group(app: &AppHandle, group_id: &str) -> Result<Option<ProfileGroup
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let group: ProfileGroup = serde_json::from_str(&raw)
+    let mut group: ProfileGroup = serde_json::from_str(&raw)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    if group.normalize_legacy() {
+        let _ = save_group(app, &group);
+    }
     Ok(Some(group))
 }
 

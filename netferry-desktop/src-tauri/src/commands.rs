@@ -50,8 +50,17 @@ pub fn connect_profile(
     app: AppHandle,
     state: State<'_, sidecar::AppState>,
     profile: Profile,
+    group: Option<ProfileGroup>,
+    children: Option<Vec<Profile>>,
 ) -> Result<ConnectionStatus, String> {
-    sidecar::connect(app, state, profile)
+    // Group mode requires both `group` and a non-empty `children` list — the
+    // children carry inline PEM keys that the temp group.json embeds. Solo
+    // mode passes `null` for both and keeps the legacy single-tunnel path.
+    let group_spec = match (group, children) {
+        (Some(g), Some(c)) if !c.is_empty() => Some((g, c)),
+        _ => None,
+    };
+    sidecar::connect(app, state, profile, group_spec)
 }
 
 #[tauri::command]
@@ -125,6 +134,37 @@ pub fn save_group(app: AppHandle, group: ProfileGroup) -> Result<(), String> {
 #[tauri::command]
 pub fn delete_group(app: AppHandle, group_id: String) -> Result<(), String> {
     groups::delete_group(&app, &group_id)
+}
+
+#[tauri::command]
+pub fn add_profile_to_group(
+    app: AppHandle,
+    group_id: String,
+    profile_id: String,
+) -> Result<ProfileGroup, String> {
+    let mut group = groups::load_group(&app, &group_id)?
+        .ok_or_else(|| format!("Group not found: {group_id}"))?;
+    if !group.children_ids.iter().any(|id| id == &profile_id) {
+        group.children_ids.push(profile_id);
+        groups::save_group(&app, &group)?;
+    }
+    Ok(group)
+}
+
+#[tauri::command]
+pub fn remove_profile_from_group(
+    app: AppHandle,
+    group_id: String,
+    profile_id: String,
+) -> Result<ProfileGroup, String> {
+    let mut group = groups::load_group(&app, &group_id)?
+        .ok_or_else(|| format!("Group not found: {group_id}"))?;
+    let before = group.children_ids.len();
+    group.children_ids.retain(|id| id != &profile_id);
+    if group.children_ids.len() != before {
+        groups::save_group(&app, &group)?;
+    }
+    Ok(group)
 }
 
 #[tauri::command]

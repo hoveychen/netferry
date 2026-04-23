@@ -64,12 +64,17 @@ export type RouteModeV2 =
 export interface ProfileGroup {
   id: string;
   name: string;
-  /** Ordered; children[0] is the group's default profile. */
-  children: Profile[];
+  /** Ordered profile-id references; childrenIds[0] is the group's default profile.
+   *  Profile objects themselves live in `profiles.json`. */
+  childrenIds: string[];
   /** Destination host → route decision. */
   rules: Record<string, RouteModeV2>;
   /** Destination host → priority (1–5). */
   priorities: Record<string, number>;
+  /** Every host/IP the relay has ever observed for this group (dedup, unordered).
+   *  Accumulated from SSE destination snapshots so DestinationsPage can surface
+   *  hosts across sessions. */
+  knownHosts: string[];
 }
 
 export interface SshHostEntry {
@@ -143,6 +148,12 @@ export interface DestinationSnapshot {
   priority: number;      // 1=low, 3=normal, 5=high
   route: RouteMode;      // tunnel, direct, or blocked
   processNames?: string[]; // local processes that connected to this destination
+  // Profile id this host's traffic is currently being dispatched through.
+  // Empty/undefined in single-profile mode.
+  activeProfileId?: string;
+  // Profile id this host is pinned to via a `tunnel:profileId` route rule.
+  // Empty/undefined when the host follows the group's default routing.
+  assignedProfileId?: string;
 }
 
 export type RouteMode = "tunnel" | "direct" | "blocked";

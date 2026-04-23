@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Shield, Zap, Ban, Gauge } from "lucide-react";
-import type { Profile, RouteModeV2 } from "@/types";
+import { Shield, Zap, Ban, Gauge, Search, X } from "lucide-react";
+import type { DestinationSnapshot, Profile, RouteModeV2 } from "@/types";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
-import { useGroupStore } from "@/stores/groupStore";
+import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
+import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { tunnelColor } from "@/lib/tunnelColor";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
   1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
@@ -182,25 +185,53 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
  */
 export function DestinationsPage() {
   const { t } = useTranslation();
-  const { priorities, routes, setPriority, setRule } = useRuleStore();
-  const { groups, fetch: fetchGroups } = useGroupStore();
-  const { settings, loadSettings } = useSettingsStore();
+  const { priorities, routes, setPriority, setRule, activeGroup } = useRuleStore();
+  const { fetch: fetchGroups } = useGroupStore();
+  const { profiles, loadProfiles } = useProfileStore();
+  const { loadSettings } = useSettingsStore();
+  // Live-session observed hosts; empty when disconnected.
+  const liveDestinations = useConnectionStore((s) => s.destinations);
+  const [filter, setFilter] = useState("");
 
-  // Ensure groups + settings are loaded so we can find the active group's children.
+  // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
   useEffect(() => {
     fetchGroups();
+    loadProfiles();
     loadSettings();
-  }, [fetchGroups, loadSettings]);
+  }, [fetchGroups, loadProfiles, loadSettings]);
 
-  const activeGroup = useMemo(
-    () => groups.find((g) => g.id === settings.activeGroupId) ?? null,
-    [groups, settings.activeGroupId],
+  const children = useMemo<Profile[]>(
+    () => (activeGroup ? joinGroupProfiles(activeGroup, profiles) : []),
+    [activeGroup, profiles],
   );
-  const children = activeGroup?.children ?? [];
 
-  // Build a deduplicated list of hosts that have any non-default rule.
-  const allHosts = new Set([...Object.keys(priorities), ...Object.keys(routes)]);
-  const sorted = [...allHosts].sort((a, b) => a.localeCompare(b));
+  const isMultiProfile = children.length > 1;
+
+  // Index live destinations by host for O(1) lookup so per-row render can
+  // surface "currently routing via X profile" without scanning the array.
+  const liveDestMap = useMemo(() => {
+    const m = new Map<string, DestinationSnapshot>();
+    for (const d of liveDestinations) m.set(d.host, d);
+    return m;
+  }, [liveDestinations]);
+
+  // Union of hosts that have any configured rule, hosts observed in the live
+  // session, and hosts accumulated across sessions (`activeGroup.knownHosts`).
+  // `knownHosts` is what gives this list continuity after disconnect.
+  const sorted = useMemo(() => {
+    const all = new Set<string>();
+    for (const h of Object.keys(priorities)) all.add(h);
+    for (const h of Object.keys(routes)) all.add(h);
+    for (const d of liveDestinations) if (d.host) all.add(d.host);
+    for (const h of activeGroup?.knownHosts ?? []) if (h) all.add(h);
+    return [...all].sort((a, b) => a.localeCompare(b));
+  }, [priorities, routes, liveDestinations, activeGroup]);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter((h) => h.toLowerCase().includes(q));
+  }, [sorted, filter]);
 
   const noGroup = !activeGroup;
 
@@ -212,20 +243,68 @@ export function DestinationsPage() {
         <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>
       </div>
 
-      {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 font-mono text-xs">
-        {noGroup ? (
-          <p className="text-t4">
-            No active profile group. Rules cannot be edited until a group is selected.
+      {/* Filter bar */}
+      {!noGroup && sorted.length > 0 && (
+        <div className="px-4 pt-2 pb-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t4" />
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t("destinationsPage.filterPlaceholder")}
+              className="w-full rounded-lg border border-bdr bg-surface py-2 pl-9 pr-9 text-sm text-t1 outline-none placeholder:text-t5 focus:border-accent"
+            />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-t4 transition-colors hover:bg-ov-6 hover:text-t2"
+                title={t("nav.cancel")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <p className="mt-1.5 text-[11px] text-t4">
+            {t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}
           </p>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs">
+        {noGroup ? (
+          <p className="text-t4">{t("destinationsPage.noGroup")}</p>
         ) : sorted.length === 0 ? (
-          <p className="text-t4">{t("destinationsPage.noRules")}</p>
+          <p className="text-t4">{t("destinationsPage.noHosts")}</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-t4">{t("destinationsPage.noMatches")}</p>
         ) : (
-          sorted.map((host) => {
+          filtered.map((host) => {
             const priority = priorities[host] ?? 3;
             const route: RouteModeV2 = routes[host] ?? { kind: "default" };
             const isBlocked = route.kind === "blocked";
             const isDirect = route.kind === "direct";
+
+            // Live attribution: only show in multi-profile mode, only for
+            // hosts that are currently routing through the tunnel (skip
+            // direct/blocked since those bypass the profile dispatcher).
+            // The pinned-profile case is already covered by RouteBadge's
+            // "Tunnel: X" label, so this badge is purely a "where is traffic
+            // *actually* going right now" hint.
+            let liveProfileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
+            if (isMultiProfile && !isBlocked && !isDirect) {
+              const live = liveDestMap.get(host);
+              const pid = live?.activeProfileId;
+              const idx = pid ? children.findIndex((c) => c.id === pid) : -1;
+              if (idx >= 0) {
+                liveProfileBadge = {
+                  name: children[idx].name,
+                  color: tunnelColor(idx + 1),
+                };
+              }
+            }
 
             return (
               <div
@@ -250,6 +329,14 @@ export function DestinationsPage() {
                     }`}>
                       {host}
                     </span>
+                    {liveProfileBadge && (
+                      <span
+                        className={`shrink-0 truncate max-w-[10rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${liveProfileBadge.color.bg} ${liveProfileBadge.color.text}`}
+                        title={t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
+                      >
+                        {t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-3">
                     <RouteBadge

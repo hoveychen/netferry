@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import { connectProfile, disconnectProfile, getConnectionStatus, getStatsUrl, updateTrayInfo } from "@/api";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { onSidecarConnected, onSidecarDisconnected } from "@/stores/ruleStore";
+import { onSidecarConnected, onSidecarDisconnected, useRuleStore } from "@/stores/ruleStore";
 import type {
   ConnectionEvent,
   ConnectionStatus,
   DeployProgress,
   DestinationSnapshot,
   Profile,
+  ProfileGroup,
   TunnelError,
   TunnelStats,
 } from "@/types";
@@ -42,7 +43,12 @@ interface ConnectionStore {
   deployProgress: DeployProgress | null;
   deployReason: string | null;
   syncStatus: () => Promise<void>;
-  connect: (profile: Profile) => Promise<void>;
+  /**
+   * Connect using `profile` as the seed. When `group` + `children` are passed,
+   * the sidecar spawns the tunnel with `--group`, bringing up one SSH per
+   * child profile. Solo mode (single tunnel) omits both.
+   */
+  connect: (profile: Profile, group?: ProfileGroup, children?: Profile[]) => Promise<void>;
   disconnect: () => Promise<void>;
   pushLog: (line: string) => void;
   setStatus: (status: ConnectionStatus) => void;
@@ -107,7 +113,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
   },
 
-  connect: async (profile) => {
+  connect: async (profile, group, children) => {
     set({
       status: { state: "connecting", profileId: profile.id },
       logs: [],
@@ -121,7 +127,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     });
     stopSSEInternal();
     try {
-      const status = await connectProfile(profile);
+      const status = await connectProfile(profile, group, children);
       set({ status });
     } catch (e) {
       set({
@@ -209,8 +215,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       return { activeConnections: active };
     }),
 
-  handleDestinationsSnapshot: (dests: DestinationSnapshot[]) =>
-    set({ destinations: dests }),
+  handleDestinationsSnapshot: (dests: DestinationSnapshot[]) => {
+    set({ destinations: dests });
+    // Accumulate observed hosts into the active group's knownHosts so
+    // DestinationsPage survives disconnects. Cheap no-op when all hosts
+    // are already known.
+    useRuleStore.getState().recordObservedHosts(dests.map((d) => d.host));
+  },
 
   pushTunnelError: (error) =>
     set((s) => ({

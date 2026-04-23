@@ -1,7 +1,8 @@
-use crate::models::{ConnectionStatus, DnsMode, Profile, TunnelError, now_ms};
+use crate::models::{ConnectionStatus, DnsMode, Profile, ProfileGroup, TunnelError, now_ms};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::net::ToSocketAddrs;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -116,6 +117,82 @@ impl Drop for SudoHelper {
     }
 }
 
+// ── Group mode: temp group.json with auto-cleanup ─────────────────────────────
+
+/// A `--group` JSON file the sidecar writes to a 0600 temp file before spawning
+/// the tunnel. The path is unlinked on Drop, so the file disappears as soon as
+/// the connection ends (or on reconnect, when the previous guard is replaced).
+///
+/// The tunnel only reads the file once at startup, so unlinking even mid-run
+/// is safe. We keep the guard alive until disconnect anyway, in case a future
+/// hot-reload path wants to re-read it.
+pub struct GroupTempFile {
+    path: PathBuf,
+}
+
+impl GroupTempFile {
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for GroupTempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// (group, children profile objects). Bundled so reconnect can rewrite the
+/// temp file with the same payload after the previous guard was dropped.
+type GroupSpec = (ProfileGroup, Vec<Profile>);
+
+/// Serialise a group + its children into the on-disk shape the Go tunnel's
+/// `loadGroupFile` expects (`{id, name, defaultProfileId, children[]}`) and
+/// write it to a unique 0600 temp file.
+fn write_group_temp_file(group: &ProfileGroup, children: &[Profile]) -> Result<GroupTempFile, String> {
+    let default_id = group
+        .children_ids
+        .iter()
+        .find(|id| !id.is_empty())
+        .cloned()
+        .or_else(|| children.first().map(|p| p.id.clone()))
+        .ok_or_else(|| "Group has no children".to_string())?;
+
+    let payload = serde_json::json!({
+        "id": group.id,
+        "name": group.name,
+        "defaultProfileId": default_id,
+        "children": children,
+    });
+    let body = serde_json::to_vec(&payload).map_err(|e| format!("serialise group: {e}"))?;
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("netferry-group-{unique}.json"));
+
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("create group temp file: {e}"))?;
+        f.write_all(&body)
+            .map_err(|e| format!("write group temp file: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, &body).map_err(|e| format!("write group temp file: {e}"))?;
+    }
+
+    Ok(GroupTempFile { path })
+}
+
 // ── Windows: UAC elevation at startup ─────────────────────────────────────────
 
 /// On Windows, the tunnel does not implement its own privilege elevation and
@@ -177,6 +254,13 @@ pub struct AppState {
 
     /// The profile that was last successfully connected, used for auto-reconnect.
     pub last_connected_profile: Mutex<Option<Profile>>,
+    /// Group spec (group + child Profiles) used for the current/last connection.
+    /// Set when the user connects in group mode; consulted by reconnect so the
+    /// retry uses the same multi-profile bring-up. Cleared on manual disconnect.
+    pub last_connected_group: Mutex<Option<GroupSpec>>,
+    /// Live `--group` temp file. Held so its Drop unlinks the file when the
+    /// connection ends or another connect overwrites it.
+    pub group_temp_file: Mutex<Option<GroupTempFile>>,
     /// Set to true to cancel an in-progress reconnection loop.
     pub reconnect_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// Cached resolved address of the SSH server.  Used by the reconnect loop
@@ -201,6 +285,8 @@ impl AppState {
             #[cfg(unix)]
             sudo_helper: Mutex::new(None),
             last_connected_profile: Mutex::new(None),
+            last_connected_group: Mutex::new(None),
+            group_temp_file: Mutex::new(None),
             reconnect_cancel: Mutex::new(None),
             resolved_remote_addr: Mutex::new(None),
         }
@@ -646,16 +732,16 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
                     }
                 }
                 let default_id = group
-                    .children
+                    .children_ids
                     .iter()
-                    .find(|c| !c.id.is_empty())
-                    .map(|c| c.id.as_str())
+                    .find(|id| !id.is_empty())
+                    .map(String::as_str)
                     .unwrap_or("");
                 let payload = ActiveGroupPayload {
                     id: &group.id,
                     name: &group.name,
                     default_profile_id: default_id,
-                    profile_ids: group.children.iter().map(|c| c.id.as_str()).collect(),
+                    profile_ids: group.children_ids.iter().map(String::as_str).collect(),
                 };
                 if let Ok(body) = serde_json::to_string(&payload) {
                     if let Err(e) = post("/group", &body) {
@@ -930,7 +1016,15 @@ fn spawn_reconnect_thread(app: AppHandle, profile: Profile) {
 
             // Attempt reconnect.
             let state: State<'_, AppState> = app.state();
-            match connect(app.clone(), state, profile.clone()) {
+            // Group mode: re-fetch the group spec from state so we rebuild
+            // the temp file with the same children. solo connections leave
+            // last_connected_group as None.
+            let group_spec = state
+                .last_connected_group
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            match connect(app.clone(), state, profile.clone(), group_spec) {
                 Ok(_) => {
                     log::info!("Reconnect succeeded for profile '{}'", profile.id);
                     return;
@@ -965,6 +1059,7 @@ pub fn connect(
     app: AppHandle,
     state: State<'_, AppState>,
     profile: Profile,
+    group_spec: Option<GroupSpec>,
 ) -> Result<ConnectionStatus, String> {
     // Cancel any pending reconnection attempt.
     if let Ok(mut g) = state.reconnect_cancel.lock() {
@@ -996,6 +1091,40 @@ pub fn connect(
     let binary = resolve_tunnel_exe();
     log::info!("Connecting profile '{}', tunnel binary: {binary}", profile.id);
 
+    // Group mode: write the group + children to a 0600 temp file and remember
+    // the spec on AppState so reconnect can rebuild the file. The previous
+    // guard (if any) is dropped here, unlinking its file.
+    let group_arg_path: Option<PathBuf> = if let Some((ref group, ref children)) = group_spec {
+        let g = write_group_temp_file(group, children)?;
+        log::info!(
+            "Group mode: wrote {} (id={}, {} children)",
+            g.path().display(),
+            group.id,
+            children.len()
+        );
+        let path = g.path().clone();
+        let mut slot = state
+            .group_temp_file
+            .lock()
+            .map_err(|_| "group_temp_file lock is poisoned".to_string())?;
+        *slot = Some(g);
+        Some(path)
+    } else {
+        let mut slot = state
+            .group_temp_file
+            .lock()
+            .map_err(|_| "group_temp_file lock is poisoned".to_string())?;
+        *slot = None;
+        None
+    };
+    {
+        let mut slot = state
+            .last_connected_group
+            .lock()
+            .map_err(|_| "last_connected_group lock is poisoned".to_string())?;
+        *slot = group_spec.clone();
+    }
+
     // If the profile carries inline PEM key material, write it to a temp file
     // so the tunnel binary can read it via --identity.
     let prepared = prepare_identity_args(&profile)?;
@@ -1010,7 +1139,11 @@ pub fn connect(
             log::info!("Using privileged helper daemon for connection");
             // The Go tunnel reads SSH config natively and receives HOME/USER/SSH_AUTH_SOCK
             // from the helper's env injection — no SSH wrapper script needed.
-            let args = build_args(&profile, &prepared);
+            let mut args = build_args(&profile, &prepared);
+            if let Some(p) = group_arg_path.as_ref() {
+                args.push("--group".to_string());
+                args.push(p.display().to_string());
+            }
             log::debug!("Tunnel args: {:?}", args);
             let stream = helper_ipc::start_tunnel(&binary, &args, &prepared.env_vars)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
@@ -1044,7 +1177,11 @@ pub fn connect(
         }
     }
 
-    let args = build_args(&profile, &prepared);
+    let mut args = build_args(&profile, &prepared);
+    if let Some(p) = group_arg_path.as_ref() {
+        args.push("--group".to_string());
+        args.push(p.display().to_string());
+    }
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     // Inject PEM key material as env vars (never written to disk, not in ps aux).
@@ -1235,6 +1372,13 @@ pub fn disconnect(app: AppHandle, state: State<'_, AppState>) -> Result<Connecti
     }
     // Clear the stored profile so we don't auto-reconnect after manual disconnect.
     if let Ok(mut g) = state.last_connected_profile.lock() {
+        *g = None;
+    }
+    // Same for group mode. Drops the temp group.json (its Drop impl unlinks it).
+    if let Ok(mut g) = state.last_connected_group.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = state.group_temp_file.lock() {
         *g = None;
     }
 
