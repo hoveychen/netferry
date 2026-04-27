@@ -1,5 +1,6 @@
 use futures_util::StreamExt;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -79,18 +80,42 @@ pub struct InstallStatus {
 }
 
 /// Map the build target triple to the matching nxtrace/NTrace-core release
-/// asset name. Returns None for triples we have not validated.
-fn release_asset_name() -> Option<&'static str> {
+/// asset (file name + expected SHA-256). Returns None for triples we have
+/// not validated. Hashes are pinned for NEXTTRACE_VERSION; bump them
+/// together when upgrading.
+fn release_asset() -> Option<(&'static str, &'static str)> {
     let triple = env!("TARGET_TRIPLE");
     Some(match triple {
-        "aarch64-apple-darwin" => "nexttrace-tiny_darwin_arm64",
-        "x86_64-apple-darwin" => "nexttrace-tiny_darwin_amd64",
-        "x86_64-pc-windows-msvc" => "nexttrace-tiny_windows_amd64.exe",
-        "aarch64-pc-windows-msvc" => "nexttrace-tiny_windows_arm64.exe",
-        "x86_64-unknown-linux-gnu" => "nexttrace-tiny_linux_amd64",
-        "aarch64-unknown-linux-gnu" => "nexttrace-tiny_linux_arm64",
+        "aarch64-apple-darwin" => (
+            "nexttrace-tiny_darwin_arm64",
+            "e666b60fe8d2b0bf12555e4f463f2bba596fee9d03dadee35e3a2edf7e6c86fd",
+        ),
+        "x86_64-apple-darwin" => (
+            "nexttrace-tiny_darwin_amd64",
+            "3ed6893cd438d0dfb8fe2d4c0060ad7fa9becc7968a8016a40da23599174e59f",
+        ),
+        "x86_64-pc-windows-msvc" => (
+            "nexttrace-tiny_windows_amd64.exe",
+            "808d7c5eab3569e7009d4698872bc1aecba34804019ce8df738abfd2e13d7e4d",
+        ),
+        "aarch64-pc-windows-msvc" => (
+            "nexttrace-tiny_windows_arm64.exe",
+            "a31915cdaf387be05158ce680466104b1b76c13fdf0ceedd1fa9c65c7de05998",
+        ),
+        "x86_64-unknown-linux-gnu" => (
+            "nexttrace-tiny_linux_amd64",
+            "03d514c7de478c4bb1ea8a43e771d6e8eb0a4f8a7347a36cf2b48c691f067e03",
+        ),
+        "aarch64-unknown-linux-gnu" => (
+            "nexttrace-tiny_linux_arm64",
+            "9670182456da65dd6a05a40cdca37f17ccf81581ce78d1132d48072c9b6d68a9",
+        ),
         _ => return None,
     })
+}
+
+fn release_asset_name() -> Option<&'static str> {
+    release_asset().map(|(n, _)| n)
 }
 
 fn release_download_url() -> Option<String> {
@@ -247,12 +272,15 @@ pub async fn ensure_nexttrace_installed(app: AppHandle) -> Result<InstallStatus,
         });
     }
 
-    let url = release_download_url().ok_or_else(|| {
+    let (asset_name, expected_sha256) = release_asset().ok_or_else(|| {
         format!(
             "No prebuilt NextTrace binary available for this platform ({}). Install it manually and set NETFERRY_NEXTTRACE_BIN.",
             env!("TARGET_TRIPLE")
         )
     })?;
+    let url = format!(
+        "https://github.com/nxtrace/NTrace-core/releases/download/{NEXTTRACE_VERSION}/{asset_name}"
+    );
     let target = install_path(&app)?;
 
     let _ = app.emit(
@@ -265,7 +293,7 @@ pub async fn ensure_nexttrace_installed(app: AppHandle) -> Result<InstallStatus,
         },
     );
 
-    match download_to(&app, &url, &target).await {
+    match download_to(&app, &url, &target, expected_sha256).await {
         Ok(()) => {
             #[cfg(unix)]
             {
@@ -311,6 +339,7 @@ async fn download_to(
     app: &AppHandle,
     url: &str,
     target: &std::path::Path,
+    expected_sha256: &str,
 ) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Create install dir: {e}"))?;
@@ -337,11 +366,13 @@ async fn download_to(
     let mut file = std::fs::File::create(&part_path)
         .map_err(|e| format!("Open download file: {e}"))?;
 
+    let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Network read: {e}"))?;
         file.write_all(&chunk).map_err(|e| format!("Disk write: {e}"))?;
+        hasher.update(&chunk);
         downloaded += chunk.len() as u64;
         let _ = app.emit(
             DOWNLOAD_PROGRESS_EVENT,
@@ -359,6 +390,17 @@ async fn download_to(
         let _ = std::fs::remove_file(&part_path);
         return Err(format!(
             "Truncated download: got {downloaded} of {total} bytes"
+        ));
+    }
+
+    // Verify SHA-256 before publishing the binary, so a tampered or
+    // mirrored asset never gets executed. Compare against the lower-case
+    // hex of the pinned hash.
+    let actual = hex::encode(hasher.finalize());
+    if !actual.eq_ignore_ascii_case(expected_sha256) {
+        let _ = std::fs::remove_file(&part_path);
+        return Err(format!(
+            "SHA-256 mismatch: expected {expected_sha256}, got {actual}"
         ));
     }
 
@@ -575,5 +617,15 @@ mod tests {
         // Just ensure the function returns Some for the host triple under test.
         // (In CI-scoped tests this proves the platform we run tests on is wired.)
         assert!(release_asset_name().is_some());
+    }
+
+    #[test]
+    fn release_asset_sha256_is_lowercase_hex_of_correct_length() {
+        let (_, sha) = release_asset().expect("host triple wired");
+        assert_eq!(sha.len(), 64, "SHA-256 hex must be 64 chars");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "SHA-256 hex must be lowercase: {sha}"
+        );
     }
 }
