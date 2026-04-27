@@ -1,20 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Play, Square } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Download, Play, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useProfileStore } from "@/stores/profileStore";
 import {
   cancelTraceroute,
+  ensureNexttraceInstalled,
+  nexttraceStatus,
   startTraceroute,
+  type DownloadProgress,
   type Hop,
+  type InstallStatus,
   type TracerouteDone,
 } from "@/api";
 
 const HOP_EVENT = "traceroute-hop";
 const DONE_EVENT = "traceroute-done";
+const DOWNLOAD_PROGRESS_EVENT = "traceroute-download-progress";
 
 const GEO_SOURCES = ["LeoMoeAPI", "IPInfo", "IP-API", "IP.SB", "Ip2region"] as const;
 type GeoSource = (typeof GEO_SOURCES)[number];
@@ -33,6 +39,12 @@ function formatRtt(ms: number | undefined): string {
   return `${Math.round(ms)} ms`;
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function DiagnosticsPage() {
   const { t } = useTranslation();
   const { profiles, loadProfiles } = useProfileStore();
@@ -48,16 +60,22 @@ export function DiagnosticsPage() {
   const [statusMsg, setStatusMsg] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
+  const [install, setInstall] = useState<InstallStatus | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+
   const sessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (profiles.length === 0) loadProfiles().catch(() => {});
+    nexttraceStatus().then(setInstall).catch(() => {});
   }, [profiles.length, loadProfiles]);
 
   // Subscribe to streaming hop / done events for the active session.
   useEffect(() => {
     let unlistenHop: UnlistenFn | null = null;
     let unlistenDone: UnlistenFn | null = null;
+    let unlistenDl: UnlistenFn | null = null;
     listen<Hop>(HOP_EVENT, (e) => {
       if (e.payload.sessionId !== sessionIdRef.current) return;
       setHops((prev) => {
@@ -81,9 +99,14 @@ export function DiagnosticsPage() {
       );
     }).then((fn) => { unlistenDone = fn; });
 
+    listen<DownloadProgress>(DOWNLOAD_PROGRESS_EVENT, (e) => {
+      setDownloadProgress(e.payload);
+    }).then((fn) => { unlistenDl = fn; });
+
     return () => {
       unlistenHop?.();
       unlistenDone?.();
+      unlistenDl?.();
     };
   }, [t]);
 
@@ -94,13 +117,33 @@ export function DiagnosticsPage() {
     if (p) setTarget(p.remote);
   };
 
+  const ensureInstalled = async (): Promise<boolean> => {
+    if (install?.installed) return true;
+    setDownloading(true);
+    setErrorMsg("");
+    setDownloadProgress({ bytes: 0, total: 0, phase: "downloading" });
+    try {
+      const status = await ensureNexttraceInstalled();
+      setInstall(status);
+      return true;
+    } catch (e) {
+      setErrorMsg(t("diagnostics.installError", { msg: String(e) }));
+      // Refresh status so the manual-install hint can show.
+      nexttraceStatus().then(setInstall).catch(() => {});
+      return false;
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleStart = async () => {
-    if (running) return;
+    if (running || downloading) return;
     const trimmed = target.trim();
     if (!trimmed) return;
     setHops([]);
     setStatusMsg("");
     setErrorMsg("");
+    if (!(await ensureInstalled())) return;
     try {
       const sid = await startTraceroute({
         target: trimmed,
@@ -125,6 +168,23 @@ export function DiagnosticsPage() {
     }
   };
 
+  const handleManualDownload = async () => {
+    if (install?.downloadUrl) {
+      try {
+        await openUrl(install.downloadUrl);
+      } catch {
+        // ignore — the URL is also shown inline so user can copy
+      }
+    }
+  };
+
+  const downloadPct = (() => {
+    if (!downloadProgress || downloadProgress.total === 0) return null;
+    return Math.min(100, (downloadProgress.bytes / downloadProgress.total) * 100);
+  })();
+
+  const showInstallHint = install && !install.installed && !downloading;
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-[52px] items-center gap-3 px-6">
@@ -132,10 +192,63 @@ export function DiagnosticsPage() {
         {running && (
           <span className="text-xs text-t3">{t("diagnostics.running")}</span>
         )}
+        {downloading && (
+          <span className="text-xs text-t3">
+            {t("diagnostics.downloading")} {downloadPct !== null && `${downloadPct.toFixed(0)}%`}
+          </span>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         <p className="mb-4 text-xs text-t3">{t("diagnostics.subtitle")}</p>
+
+        {/* Install hint banner */}
+        {showInstallHint && (
+          <div className="mb-4 rounded-2xl border border-sep bg-ov-3 p-4">
+            <div className="flex items-start gap-3">
+              <Download size={16} className="mt-0.5 text-accent" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-t1">
+                  {t("diagnostics.installTitle", { version: install!.version })}
+                </p>
+                <p className="mt-1 text-xs text-t3">
+                  {t("diagnostics.installBody")}
+                </p>
+                <p className="mt-2 break-all font-mono text-[11px] text-t4">
+                  {t("diagnostics.installPath")}: {install!.expectedPath}
+                </p>
+                {install!.downloadUrl && (
+                  <button
+                    onClick={handleManualDownload}
+                    className="mt-1 break-all text-left font-mono text-[11px] text-accent hover:underline"
+                  >
+                    {install!.downloadUrl}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Download progress */}
+        {downloading && (
+          <div className="mb-4 rounded-2xl border border-sep bg-ov-3 p-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-t2">
+              <span>{t("diagnostics.downloading")}</span>
+              <span className="font-mono text-t3">
+                {downloadProgress
+                  ? `${formatBytes(downloadProgress.bytes)}${downloadProgress.total > 0 ? ` / ${formatBytes(downloadProgress.total)}` : ""}`
+                  : ""}
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-ov-6">
+              <div
+                className="h-full bg-accent transition-all duration-150"
+                style={{ width: downloadPct !== null ? `${downloadPct}%` : "20%" }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Controls card */}
         <div className="mb-4 rounded-2xl border border-sep bg-ov-3 p-4">
@@ -148,9 +261,9 @@ export function DiagnosticsPage() {
                 value={target}
                 placeholder={t("diagnostics.targetPlaceholder")}
                 onChange={(e) => setTarget(e.target.value)}
-                disabled={running}
+                disabled={running || downloading}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !running) handleStart();
+                  if (e.key === "Enter" && !running && !downloading) handleStart();
                 }}
               />
             </div>
@@ -161,7 +274,7 @@ export function DiagnosticsPage() {
               <Select
                 value={profileId}
                 onChange={(e) => handleFromProfile(e.target.value)}
-                disabled={running}
+                disabled={running || downloading}
               >
                 <option value="">{t("diagnostics.noProfile")}</option>
                 {profiles.map((p) => (
@@ -179,7 +292,7 @@ export function DiagnosticsPage() {
               <Select
                 value={geoSource}
                 onChange={(e) => setGeoSource(e.target.value as GeoSource)}
-                disabled={running}
+                disabled={running || downloading}
               >
                 {GEO_SOURCES.map((g) => (
                   <option key={g} value={g}>{g}</option>
@@ -196,7 +309,7 @@ export function DiagnosticsPage() {
                 max={64}
                 value={maxHops}
                 onChange={(e) => setMaxHops(Math.max(1, Math.min(64, Number(e.target.value) || 30)))}
-                disabled={running}
+                disabled={running || downloading}
               />
             </div>
             <div>
@@ -209,7 +322,7 @@ export function DiagnosticsPage() {
                 max={5}
                 value={queries}
                 onChange={(e) => setQueries(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
-                disabled={running}
+                disabled={running || downloading}
               />
             </div>
           </div>
@@ -221,7 +334,7 @@ export function DiagnosticsPage() {
                 {t("diagnostics.stop")}
               </Button>
             ) : (
-              <Button onClick={handleStart} disabled={!target.trim()}>
+              <Button onClick={handleStart} disabled={!target.trim() || downloading}>
                 <Play size={14} className="mr-1.5" />
                 {t("diagnostics.start")}
               </Button>

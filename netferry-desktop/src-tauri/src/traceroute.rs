@@ -1,12 +1,21 @@
+use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const HOP_EVENT: &str = "traceroute-hop";
 pub const DONE_EVENT: &str = "traceroute-done";
+pub const DOWNLOAD_PROGRESS_EVENT: &str = "traceroute-download-progress";
+
+/// Pinned upstream version. Bump together with INSTALL_VERSION below
+/// when validating a newer NextTrace release.
+const NEXTTRACE_VERSION: &str = "v1.6.4";
+/// Subdirectory under app_data_dir; bump if the on-disk binary layout changes.
+const INSTALL_DIR: &str = "nexttrace";
 
 #[derive(Default)]
 pub struct TracerouteState {
@@ -43,21 +52,80 @@ pub struct DonePayload {
     pub exit_code: Option<i32>,
 }
 
-/// Mirror of the resolution strategy in `sidecar::resolve_tunnel_exe` so the
-/// nexttrace sidecar is found in dev (`binaries/nexttrace-<triple>`),
-/// production bundle (next to the main exe), or via env override.
-fn resolve_nexttrace_exe() -> String {
+#[derive(Serialize, Clone)]
+pub struct DownloadProgress {
+    pub bytes: u64,
+    pub total: u64,
+    /// "downloading" | "done" | "error"
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct InstallStatus {
+    pub installed: bool,
+    pub path: String,
+    /// One of: "env", "appdata", "dev", "path".
+    pub source: String,
+    pub version: String,
+    /// Where downloads land if `installed = false`. Surfaced so the UI can
+    /// tell users where to drop a manually downloaded binary.
+    #[serde(rename = "expectedPath")]
+    pub expected_path: String,
+    /// Direct download URL for the current platform — UI can offer it as a
+    /// fallback when automatic download is blocked (e.g. GFW).
+    #[serde(rename = "downloadUrl")]
+    pub download_url: String,
+}
+
+/// Map the build target triple to the matching nxtrace/NTrace-core release
+/// asset name. Returns None for triples we have not validated.
+fn release_asset_name() -> Option<&'static str> {
+    let triple = env!("TARGET_TRIPLE");
+    Some(match triple {
+        "aarch64-apple-darwin" => "nexttrace-tiny_darwin_arm64",
+        "x86_64-apple-darwin" => "nexttrace-tiny_darwin_amd64",
+        "x86_64-pc-windows-msvc" => "nexttrace-tiny_windows_amd64.exe",
+        "aarch64-pc-windows-msvc" => "nexttrace-tiny_windows_arm64.exe",
+        "x86_64-unknown-linux-gnu" => "nexttrace-tiny_linux_amd64",
+        "aarch64-unknown-linux-gnu" => "nexttrace-tiny_linux_arm64",
+        _ => return None,
+    })
+}
+
+fn release_download_url() -> Option<String> {
+    release_asset_name().map(|name| {
+        format!(
+            "https://github.com/nxtrace/NTrace-core/releases/download/{NEXTTRACE_VERSION}/{name}"
+        )
+    })
+}
+
+fn install_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir unavailable: {e}"))?;
+    Ok(base.join(INSTALL_DIR))
+}
+
+fn install_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(install_dir(app)?.join(if cfg!(windows) { "nexttrace.exe" } else { "nexttrace" }))
+}
+
+/// Locate an existing nexttrace binary without touching the network.
+/// Resolution order: env override → app data dir (canonical install
+/// location) → dev-mode local `binaries/` checkout → return None.
+fn find_existing(app: &AppHandle) -> Option<(PathBuf, &'static str)> {
     if let Ok(path) = std::env::var("NETFERRY_NEXTTRACE_BIN") {
-        if !path.trim().is_empty() {
-            return path;
+        let p = PathBuf::from(path.trim());
+        if p.exists() {
+            return Some((p, "env"));
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(if cfg!(windows) { "nexttrace.exe" } else { "nexttrace" });
-            if candidate.exists() {
-                return candidate.to_string_lossy().into_owned();
-            }
+    if let Ok(p) = install_path(app) {
+        if p.exists() {
+            return Some((p, "appdata"));
         }
     }
     #[cfg(debug_assertions)]
@@ -70,10 +138,10 @@ fn resolve_nexttrace_exe() -> String {
             .join("binaries")
             .join(name);
         if candidate.exists() {
-            return candidate.to_string_lossy().into_owned();
+            return Some((candidate, "dev"));
         }
     }
-    "nexttrace".to_string()
+    None
 }
 
 /// Extract the host portion from a profile.remote-style string. Accepts:
@@ -140,6 +208,165 @@ fn parse_raw_line(line: &str, session_id: &str) -> Option<HopPayload> {
 }
 
 #[tauri::command]
+pub fn nexttrace_status(app: AppHandle) -> Result<InstallStatus, String> {
+    let expected = install_path(&app)?
+        .to_string_lossy()
+        .into_owned();
+    let download_url = release_download_url().unwrap_or_default();
+    if let Some((p, src)) = find_existing(&app) {
+        Ok(InstallStatus {
+            installed: true,
+            path: p.to_string_lossy().into_owned(),
+            source: src.to_string(),
+            version: NEXTTRACE_VERSION.to_string(),
+            expected_path: expected,
+            download_url,
+        })
+    } else {
+        Ok(InstallStatus {
+            installed: false,
+            path: String::new(),
+            source: String::new(),
+            version: NEXTTRACE_VERSION.to_string(),
+            expected_path: expected,
+            download_url,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn ensure_nexttrace_installed(app: AppHandle) -> Result<InstallStatus, String> {
+    if let Some((p, src)) = find_existing(&app) {
+        return Ok(InstallStatus {
+            installed: true,
+            path: p.to_string_lossy().into_owned(),
+            source: src.to_string(),
+            version: NEXTTRACE_VERSION.to_string(),
+            expected_path: install_path(&app)?.to_string_lossy().into_owned(),
+            download_url: release_download_url().unwrap_or_default(),
+        });
+    }
+
+    let url = release_download_url().ok_or_else(|| {
+        format!(
+            "No prebuilt NextTrace binary available for this platform ({}). Install it manually and set NETFERRY_NEXTTRACE_BIN.",
+            env!("TARGET_TRIPLE")
+        )
+    })?;
+    let target = install_path(&app)?;
+
+    let _ = app.emit(
+        DOWNLOAD_PROGRESS_EVENT,
+        DownloadProgress {
+            bytes: 0,
+            total: 0,
+            phase: "downloading".into(),
+            message: Some(url.clone()),
+        },
+    );
+
+    match download_to(&app, &url, &target).await {
+        Ok(()) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+            }
+            let _ = app.emit(
+                DOWNLOAD_PROGRESS_EVENT,
+                DownloadProgress {
+                    bytes: 0,
+                    total: 0,
+                    phase: "done".into(),
+                    message: None,
+                },
+            );
+            Ok(InstallStatus {
+                installed: true,
+                path: target.to_string_lossy().into_owned(),
+                source: "appdata".into(),
+                version: NEXTTRACE_VERSION.to_string(),
+                expected_path: target.to_string_lossy().into_owned(),
+                download_url: url,
+            })
+        }
+        Err(e) => {
+            // Best-effort cleanup of any partial file.
+            let _ = std::fs::remove_file(&target);
+            let _ = app.emit(
+                DOWNLOAD_PROGRESS_EVENT,
+                DownloadProgress {
+                    bytes: 0,
+                    total: 0,
+                    phase: "error".into(),
+                    message: Some(e.clone()),
+                },
+            );
+            Err(e)
+        }
+    }
+}
+
+async fn download_to(
+    app: &AppHandle,
+    url: &str,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Create install dir: {e}"))?;
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("NetFerry-Desktop")
+        .build()
+        .map_err(|e| format!("HTTP client init: {e}"))?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub returned status {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+
+    // Write to a sibling .part file then atomically rename, so a partial
+    // download never gets picked up as a usable binary.
+    let part_path = target.with_extension("part");
+    let mut file = std::fs::File::create(&part_path)
+        .map_err(|e| format!("Open download file: {e}"))?;
+
+    let mut downloaded: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Network read: {e}"))?;
+        file.write_all(&chunk).map_err(|e| format!("Disk write: {e}"))?;
+        downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            DOWNLOAD_PROGRESS_EVENT,
+            DownloadProgress {
+                bytes: downloaded,
+                total,
+                phase: "downloading".into(),
+                message: None,
+            },
+        );
+    }
+    drop(file);
+
+    if total > 0 && downloaded != total {
+        let _ = std::fs::remove_file(&part_path);
+        return Err(format!(
+            "Truncated download: got {downloaded} of {total} bytes"
+        ));
+    }
+
+    std::fs::rename(&part_path, target).map_err(|e| format!("Rename to final path: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn start_traceroute(
     app: AppHandle,
     state: State<'_, TracerouteState>,
@@ -150,7 +377,11 @@ pub fn start_traceroute(
 ) -> Result<String, String> {
     let host = parse_target(&target)?;
     let session_id = uuid::Uuid::new_v4().to_string();
-    let exe = resolve_nexttrace_exe();
+    let exe = find_existing(&app)
+        .map(|(p, _)| p.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            "NextTrace binary not installed. Click \"Prepare tool\" first.".to_string()
+        })?;
 
     let mut cmd = Command::new(&exe);
     cmd.args(["--raw", "--no-color"]);
@@ -337,5 +568,12 @@ mod tests {
         assert!(parse_raw_line("IP Geo Data Provider: LeoMoeAPI", "sid").is_none());
         assert!(parse_raw_line("MapTrace URL: ...", "sid").is_none());
         assert!(parse_raw_line("", "sid").is_none());
+    }
+
+    #[test]
+    fn release_asset_name_known_for_supported_triples() {
+        // Just ensure the function returns Some for the host triple under test.
+        // (In CI-scoped tests this proves the platform we run tests on is wired.)
+        assert!(release_asset_name().is_some());
     }
 }

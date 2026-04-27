@@ -187,7 +187,9 @@ pub fn run() {
             commands::get_tunnel_version,
             commands::check_for_update,
             traceroute::start_traceroute,
-            traceroute::cancel_traceroute
+            traceroute::cancel_traceroute,
+            traceroute::ensure_nexttrace_installed,
+            traceroute::nexttrace_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

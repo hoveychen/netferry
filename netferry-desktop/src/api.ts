@@ -186,3 +186,29 @@ export function startTraceroute(opts: {
 export function cancelTraceroute(sessionId: string) {
   return invoke<void>("cancel_traceroute", { sessionId });
 }
+
+export interface InstallStatus {
+  installed: boolean;
+  path: string;
+  /** "env" | "appdata" | "dev" | "" (empty when not installed) */
+  source: string;
+  version: string;
+  expectedPath: string;
+  downloadUrl: string;
+}
+
+export interface DownloadProgress {
+  bytes: number;
+  total: number;
+  /** "downloading" | "done" | "error" */
+  phase: string;
+  message?: string;
+}
+
+export function nexttraceStatus() {
+  return invoke<InstallStatus>("nexttrace_status");
+}
+
+export function ensureNexttraceInstalled() {
+  return invoke<InstallStatus>("ensure_nexttrace_installed");
+}

@@ -28,8 +28,7 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/netferry-tunnel",
-      "binaries/nexttrace"
+      "binaries/netferry-tunnel"
     ],
     "resources": {},
     "icon": [
