@@ -13,6 +13,7 @@ mod settings;
 mod sidecar;
 mod ssh_config;
 mod stats;
+mod traceroute;
 mod tray;
 
 #[cfg(unix)]
@@ -59,6 +60,7 @@ pub fn run() {
             emit_nfprofile_paths(app, argv.iter().map(|s| s.as_str()));
         }))
         .manage(sidecar::AppState::new())
+        .manage(traceroute::TracerouteState::default())
         .setup(|app| {
             // On Windows, the tunnel cannot self-elevate, so the whole app must
             // run as Administrator.  Re-launch with UAC if needed.
@@ -183,7 +185,9 @@ pub fn run() {
             commands::set_window_theme,
             commands::get_app_version,
             commands::get_tunnel_version,
-            commands::check_for_update
+            commands::check_for_update,
+            traceroute::start_traceroute,
+            traceroute::cancel_traceroute
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -191,6 +195,10 @@ pub fn run() {
             // On graceful exit (Cmd+Q, window close, tray quit), ensure the
             // tunnel process group is terminated and the PID file is removed.
             if let tauri::RunEvent::Exit = event {
+                // Terminate any in-flight traceroute child processes.
+                let trace_state = app_handle.state::<traceroute::TracerouteState>();
+                traceroute::kill_all_sessions(&trace_state);
+
                 let state = app_handle.state::<sidecar::AppState>();
 
                 // macOS: signal the helper to kill the tunnel by writing a

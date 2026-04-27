@@ -14,7 +14,34 @@
     "profiles": "Profiles",
     "destinations": "Destinations",
     "connection": "Connection",
+    "diagnostics": "Diagnostics",
     "collapseSidebar": "Collapse"
+  },
+  "diagnostics": {
+    "title": "Route Diagnostics",
+    "subtitle": "Trace the underlay path from this machine to a target host using NextTrace.",
+    "target": "Target host",
+    "targetPlaceholder": "host.example.com or user@host:port",
+    "fromProfile": "Fill from profile",
+    "noProfile": "None",
+    "geoSource": "Data source",
+    "maxHops": "Max hops",
+    "queries": "Queries per hop",
+    "start": "Start trace",
+    "stop": "Stop",
+    "running": "Tracing…",
+    "empty": "Enter a target host and click \"Start trace\".",
+    "exited": "Finished (exit {{code}}).",
+    "exitedOk": "Finished.",
+    "errorPrefix": "Error: {{msg}}",
+    "col": {
+      "ttl": "#",
+      "ip": "Hop",
+      "rtt": "RTT",
+      "asn": "AS",
+      "location": "Owner / Location"
+    },
+    "timeoutCell": "* No reply"
   },
   "welcome": {
     "title": "Welcome to NetFerry",

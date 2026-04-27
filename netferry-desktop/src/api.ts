@@ -146,3 +146,43 @@ export function getTunnelVersion() {
 export function checkForUpdate() {
   return invoke<UpdateInfo>("check_for_update");
 }
+
+// ── Traceroute (nexttrace sidecar) ──
+
+export interface Hop {
+  sessionId: string;
+  ttl: number;
+  ip?: string;
+  hostname?: string;
+  rttMs?: number;
+  asn?: string;
+  owner?: string;
+  country?: string;
+  province?: string;
+  city?: string;
+  isp?: string;
+  timeout: boolean;
+}
+
+export interface TracerouteDone {
+  sessionId: string;
+  exitCode: number | null;
+}
+
+export function startTraceroute(opts: {
+  target: string;
+  maxHops?: number;
+  queries?: number;
+  geoSource?: string;
+}) {
+  return invoke<string>("start_traceroute", {
+    target: opts.target,
+    maxHops: opts.maxHops ?? null,
+    queries: opts.queries ?? null,
+    geoSource: opts.geoSource ?? null,
+  });
+}
+
+export function cancelTraceroute(sessionId: string) {
+  return invoke<void>("cancel_traceroute", { sessionId });
+}

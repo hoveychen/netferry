@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Settings } from "lucide-react";
+import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Route, Settings } from "lucide-react";
 import { ConnectionErrorDialog } from "@/components/ConnectionErrorDialog";
 import { ConnectionPage } from "@/components/ConnectionPage";
 import { DestinationsPage } from "@/components/DestinationsPage";
+import { DiagnosticsPage } from "@/components/DiagnosticsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -31,7 +32,7 @@ type SubPage =
   | null
   | { kind: "detail"; profile: Profile; isNew: boolean };
 
-type NavTab = "profiles" | "destinations" | "settings" | "connection";
+type NavTab = "profiles" | "destinations" | "diagnostics" | "settings" | "connection";
 
 function App() {
   const { t } = useTranslation();
@@ -336,6 +337,7 @@ function App() {
     ...(isConnected ? [{ id: "connection" as NavTab, label: t("nav.connection"), icon: Activity }] : []),
     { id: "profiles", label: t("nav.profiles"), icon: Network },
     { id: "destinations", label: t("nav.destinations"), icon: Globe },
+    { id: "diagnostics", label: t("nav.diagnostics"), icon: Route },
     { id: "settings", label: t("nav.settings"), icon: Settings },
   ];
 
@@ -397,7 +399,7 @@ function App() {
           <ConnectionPage
             status={status}
             activeProfile={activeProfile}
-            activeGroup={activeGroup}
+            activeGroup={connectionMode === "group" ? activeGroup : null}
             logs={logs}
             tunnelStats={tunnelStats}
             activeConnections={activeConnections}
@@ -458,6 +460,10 @@ function App() {
 
         {activeTab === "destinations" && (
           <DestinationsPage />
+        )}
+
+        {activeTab === "diagnostics" && (
+          <DiagnosticsPage />
         )}
 
         {activeTab === "settings" && (
