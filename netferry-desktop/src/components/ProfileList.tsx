@@ -88,6 +88,76 @@ function isExportable(profile: Profile): boolean {
   return true;
 }
 
+function GroupDeleteDialog({
+  open,
+  groupName,
+  profileCount,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  groupName: string;
+  /** Number of profiles that will be deleted alongside the group. */
+  profileCount: number;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (open) setDeleting(false);
+  }, [open]);
+
+  if (!open) return null;
+
+  const confirm = async () => {
+    setDeleting(true);
+    try {
+      await onConfirm();
+      onClose();
+    } catch (err) {
+      console.error("Delete group failed:", err);
+      setDeleting(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="mb-3 text-[17px] font-semibold text-t1">
+          {t("groups.deleteDialogTitle", { name: groupName })}
+        </h3>
+        <p className="mb-5 text-sm leading-relaxed text-t3">
+          {profileCount > 0
+            ? t("groups.deleteDialogBodyWithProfiles", { count: profileCount })
+            : t("groups.deleteDialogBodyEmpty")}
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={deleting}>
+            {t("nav.cancel")}
+          </Button>
+          <Button
+            size="sm"
+            onClick={confirm}
+            disabled={deleting}
+            className="bg-danger text-white hover:bg-danger/90"
+          >
+            {deleting ? t("groups.deleting") : t("groups.yesDelete")}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function GroupRenameDialog({
   open,
   initialName,
@@ -188,7 +258,7 @@ function GroupSwitcher({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -196,18 +266,11 @@ function GroupSwitcher({
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
-        setConfirmingDelete(false);
       }
     };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [open]);
-
-  // Reset the in-flight confirmation whenever the dropdown closes or the
-  // active group changes — otherwise the confirm button can linger.
-  useEffect(() => {
-    if (!open) setConfirmingDelete(false);
-  }, [open, activeGroup?.id]);
 
   const label = activeGroup?.name?.trim() || t("groups.unnamed");
 
@@ -281,44 +344,19 @@ function GroupSwitcher({
             {t("groups.newEmptyGroup")}
           </button>
 
-          {/* Delete active group — two-step confirm, disabled when no group. */}
-          {confirmingDelete ? (
-            <div className="flex items-center gap-2 px-3 py-2">
-              <button
-                type="button"
-                className="flex-1 rounded-md bg-danger/15 px-2 py-1 text-[12px] font-medium text-danger transition-all hover:bg-danger/25"
-                onClick={async () => {
-                  setConfirmingDelete(false);
-                  setOpen(false);
-                  try {
-                    await onDelete();
-                  } catch (err) {
-                    console.error("Delete group failed:", err);
-                  }
-                }}
-              >
-                {t("groups.yesDelete")}
-              </button>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-t5 transition-all hover:bg-ov-8 hover:text-t2"
-                onClick={() => setConfirmingDelete(false)}
-                title={t("nav.cancel")}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-danger/90 hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-              disabled={!activeGroup}
-              onClick={() => setConfirmingDelete(true)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t("groups.deleteGroup")}
-            </button>
-          )}
+          {/* Delete active group — opens a confirmation dialog. */}
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-danger/90 hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+            disabled={!activeGroup}
+            onClick={() => {
+              setOpen(false);
+              setDeleteDialogOpen(true);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t("groups.deleteGroup")}
+          </button>
         </div>
       )}
 
@@ -327,6 +365,14 @@ function GroupSwitcher({
         initialName={activeGroup?.name ?? ""}
         onClose={() => setRenameDialogOpen(false)}
         onSave={onRename}
+      />
+
+      <GroupDeleteDialog
+        open={deleteDialogOpen && !!activeGroup}
+        groupName={activeGroup?.name?.trim() || t("groups.unnamed")}
+        profileCount={activeGroup?.childrenIds.length ?? 0}
+        onClose={() => setDeleteDialogOpen(false)}
+        onConfirm={onDelete}
       />
     </div>
   );
@@ -351,7 +397,7 @@ export function ProfileList({
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   const { groups, fetch: fetchGroups, save: saveGroup, remove: removeGroup } = useGroupStore();
-  const { profiles } = useProfileStore();
+  const { profiles, removeProfile } = useProfileStore();
   const { activeGroup, loadRules } = useRuleStore();
   const { settings, updateSettings } = useSettingsStore();
 
@@ -450,6 +496,15 @@ export function ProfileList({
   const handleDeleteActiveGroup = async () => {
     if (!activeGroup) return;
     const deletedId = activeGroup.id;
+    // Delete child profiles first so a partial failure leaves the group
+    // intact (and recoverable) rather than orphaning profiles.
+    for (const id of activeGroup.childrenIds) {
+      try {
+        await removeProfile(id);
+      } catch (err) {
+        console.error("Failed to delete profile in group:", id, err);
+      }
+    }
     await removeGroup(deletedId);
     // Pick the next group to activate: first surviving group, or null.
     const survivors = groups.filter((g) => g.id !== deletedId);
