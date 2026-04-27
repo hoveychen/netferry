@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Check,
@@ -87,6 +88,85 @@ function isExportable(profile: Profile): boolean {
   return true;
 }
 
+function GroupRenameDialog({
+  open,
+  initialName,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  initialName: string;
+  onClose: () => void;
+  onSave: (next: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(initialName);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(initialName);
+    setSaving(false);
+    queueMicrotask(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }, [open, initialName]);
+
+  if (!open) return null;
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (!next || next === initialName) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(next);
+      onClose();
+    } catch (err) {
+      console.error("Rename group failed:", err);
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-bdr bg-elevated p-6 shadow-2xl shadow-black/60"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="mb-4 text-[17px] font-semibold text-t1">{t("groups.renameGroup")}</h3>
+        <input
+          ref={inputRef}
+          className="mb-5 w-full rounded-lg border border-bdr bg-surface px-3 py-2 text-sm text-t1 outline-none focus:border-accent"
+          value={draft}
+          placeholder={t("groups.namePlaceholder")}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            else if (e.key === "Escape") onClose();
+          }}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>
+            {t("nav.cancel")}
+          </Button>
+          <Button size="sm" onClick={commit} disabled={saving}>
+            {saving ? t("groups.saving") : t("groups.save")}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function GroupSwitcher({
   groups,
   activeGroup,
@@ -107,18 +187,15 @@ function GroupSwitcher({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [draftName, setDraftName] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
-        setRenaming(false);
         setConfirmingDelete(false);
       }
     };
@@ -131,31 +208,6 @@ function GroupSwitcher({
   useEffect(() => {
     if (!open) setConfirmingDelete(false);
   }, [open, activeGroup?.id]);
-
-  useEffect(() => {
-    if (renaming) {
-      setDraftName(activeGroup?.name ?? "");
-      // Focus + select next tick so the input exists.
-      queueMicrotask(() => {
-        renameInputRef.current?.focus();
-        renameInputRef.current?.select();
-      });
-    }
-  }, [renaming, activeGroup?.id]);
-
-  const commitRename = async () => {
-    const next = draftName.trim();
-    if (!next || !activeGroup || next === activeGroup.name) {
-      setRenaming(false);
-      return;
-    }
-    try {
-      await onRename(next);
-    } catch (err) {
-      console.error("Rename group failed:", err);
-    }
-    setRenaming(false);
-  };
 
   const label = activeGroup?.name?.trim() || t("groups.unnamed");
 
@@ -199,34 +251,19 @@ function GroupSwitcher({
           )}
           <div className="my-1 h-px bg-sep" />
 
-          {/* Rename current group (inline). Disabled when no group selected. */}
-          {renaming ? (
-            <div className="flex items-center gap-2 px-3 py-2">
-              <Pencil className="h-3.5 w-3.5 text-t3" />
-              <input
-                ref={renameInputRef}
-                className="flex-1 rounded-md border border-bdr bg-surface px-2 py-1 text-sm text-t1 outline-none focus:border-accent"
-                value={draftName}
-                placeholder={t("groups.namePlaceholder")}
-                onChange={(e) => setDraftName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename();
-                  else if (e.key === "Escape") setRenaming(false);
-                }}
-                onBlur={commitRename}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-t2 hover:bg-ov-8 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-              disabled={!activeGroup}
-              onClick={() => setRenaming(true)}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-              {t("groups.renameGroup")}
-            </button>
-          )}
+          {/* Rename current group — opens a modal dialog. Disabled when no group selected. */}
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-t2 hover:bg-ov-8 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+            disabled={!activeGroup}
+            onClick={() => {
+              setOpen(false);
+              setRenameDialogOpen(true);
+            }}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {t("groups.renameGroup")}
+          </button>
 
           <button
             type="button"
@@ -284,6 +321,13 @@ function GroupSwitcher({
           )}
         </div>
       )}
+
+      <GroupRenameDialog
+        open={renameDialogOpen && !!activeGroup}
+        initialName={activeGroup?.name ?? ""}
+        onClose={() => setRenameDialogOpen(false)}
+        onSave={onRename}
+      />
     </div>
   );
 }
