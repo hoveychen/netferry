@@ -6,86 +6,77 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
-  build-tunnel-cli:
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
+  # Locate the ci.yml run that built this exact commit. release.yml downloads
+  # its artifacts (compiled .app / MSI / APK / tunnel binaries) instead of
+  # rebuilding from source.
+  wait-for-ci:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: netferry-relay/go.mod
-          cache-dependency-path: netferry-relay/go.sum
-
-      - name: Get version
-        id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build server binaries (embedded)
-        working-directory: netferry-relay
-        run: |
-          mkdir -p cmd/tunnel/binaries
-          for target in "linux/amd64" "linux/arm64" "linux/mipsle" "darwin/amd64" "darwin/arm64"; do
-            os="${target%/*}"
-            arch="${target#*/}"
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
-              go build -ldflags="-X main.Version=${{ steps.version.outputs.version }} -s -w" \
-              -o "cmd/tunnel/binaries/server-${os}-${arch}" ./cmd/server
-          done
-
-      - name: Build tunnel binary
-        working-directory: netferry-relay
+      # Must match the tag-triggered ci.yml run specifically. A prior
+      # main-push run on the same SHA does not have "Set version from tag"
+      # applied, so its .app/.apk/.msi carries the dev version (0.1.0).
+      - name: Wait for ci.yml on this tag
+        id: find
         env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
         run: |
-          go build \
-            -ldflags="-X main.Version=${{ steps.version.outputs.version }} -s -w" \
-            -o "netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}" \
-            ./cmd/tunnel
-          chmod +x "netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}"
+          for i in $(seq 1 90); do
+            run_id=$(gh run list \
+              --workflow ci.yml \
+              --branch "$TAG" \
+              --commit "$SHA" \
+              --json databaseId,status,conclusion,headBranch \
+              -q '[.[] | select(.status=="completed" and .conclusion=="success" and .headBranch=="'"$TAG"'")] | .[0].databaseId // empty')
+            if [ -n "$run_id" ]; then
+              echo "Found ci.yml run $run_id (tag=$TAG, sha=$SHA)"
+              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            in_flight=$(gh run list \
+              --workflow ci.yml \
+              --branch "$TAG" \
+              --commit "$SHA" \
+              --json status,conclusion,headBranch \
+              -q '[.[] | select(.status!="completed" and .headBranch=="'"$TAG"'")] | length')
+            failed=$(gh run list \
+              --workflow ci.yml \
+              --branch "$TAG" \
+              --commit "$SHA" \
+              --json status,conclusion,headBranch \
+              -q '[.[] | select(.status=="completed" and .conclusion!="success" and .headBranch=="'"$TAG"'")] | length')
+            echo "Attempt $i: in_flight=$in_flight failed=$failed (no successful tag run yet)"
+            sleep 20
+          done
+          echo "::error::Timed out waiting for ci.yml success on tag $TAG ($SHA)"
+          exit 1
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: netferry-relay/netferry-tunnel-${{ matrix.goos }}-${{ matrix.goarch }}
-
-  build:
+  bundle-mac:
+    needs: wait-for-ci
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-14
             rust_target: aarch64-apple-darwin
-            bundle_glob: |
-              netferry-desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/*.pkg
+            stable_name: NetFerry_macos_silicon
           - os: macos-latest
             rust_target: x86_64-apple-darwin
-            bundle_glob: |
-              netferry-desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/*.pkg
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            bundle_glob: |
-              netferry-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            stable_name: NetFerry_macos_intel
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -93,46 +84,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set version from tag
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          BUILD_NUM: ${{ github.run_number }}
+      - name: Download desktop artifacts from ci.yml
+        uses: actions/download-artifact@v4
+        with:
+          name: netferry-desktop-${{ matrix.rust_target }}
+          path: ../ci-downloaded
+          run-id: ${{ needs.wait-for-ci.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Restore .app bundle and helper into expected layout
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json && rm package.json.bak
-          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
-          sed -i.bak "s/\"bundleVersion\": \"[^\"]*\"/\"bundleVersion\": \"$BUILD_NUM\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak
-          sed -i.bak "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
+          OUT="src-tauri/target/${{ matrix.rust_target }}/release"
+          mkdir -p "$OUT/bundle/macos"
+          tar -xf "$GITHUB_WORKSPACE/ci-downloaded/NetFerry.app.tar" \
+              -C "$OUT/bundle/macos"
+          cp "$GITHUB_WORKSPACE/ci-downloaded/netferry-helper" "$OUT/netferry-helper"
         shell: bash
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: netferry-desktop/package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: netferry-desktop/src-tauri -> target
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: netferry-relay/go.mod
-          cache-dependency-path: netferry-relay/go.sum
-
-      - name: Install deps
-        run: npm ci
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Import Apple certificates
-        if: startsWith(matrix.os, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -155,32 +129,15 @@ jobs:
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security import $INSTALLER_CERTIFICATE_PATH -P "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          # codesign: is required in addition to apple-tool:,apple: for codesign tool access
-          # productbuild: is required for productbuild signing access
           security set-key-partition-list -S "apple-tool:,apple:,codesign:,productbuild:" \
             -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-          # Import Apple Developer ID Certification Authority G2 intermediate cert.
-          # Our Developer ID cert is issued by G2, which may be absent from older runner images.
           curl -fsSL http://certs.apple.com/devidg2.der -o $RUNNER_TEMP/devidg2.der
           security import $RUNNER_TEMP/devidg2.der -A -t cert -k $KEYCHAIN_PATH || true
 
           security list-keychain -d user -s $KEYCHAIN_PATH
 
-      - name: Build sidecar
-        run: python ../scripts/build_sidecar.py --target ${{ matrix.rust_target }}
-
-      - name: Build bundle (app only, unsigned)
-        if: startsWith(matrix.os, 'macos')
-        # Do NOT pass APPLE_SIGNING_IDENTITY here. Tauri re-signs all binaries with
-        # codesign --force, which would override our custom entitlements on the sidecar
-        # and helper (tauri-apps/tauri#7381). We sign everything manually after assembly.
-        env:
-          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
-        run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles app
-
-      - name: Inject privileged helper into bundle (macOS)
-        if: startsWith(matrix.os, 'macos')
+      - name: Inject privileged helper into bundle
         run: |
           APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
           HELPER_DIR="$APP_PATH/Contents/Library/LaunchDaemons"
@@ -191,62 +148,52 @@ jobs:
              "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
           # Tauri bundles all [[bin]] entries into Contents/MacOS/; remove the
           # helper from there since its only home is Contents/Library/LaunchDaemons/.
-          # Leaving it unsigned in MacOS/ would cause codesign to fail on the bundle.
           rm -f "$APP_PATH/Contents/MacOS/netferry-helper"
 
-      - name: Sign bundle (macOS)
-        if: startsWith(matrix.os, 'macos')
+      - name: Sign bundle
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
 
-          # 1. Sign any frameworks/dylibs first (innermost → outermost)
           if [ -d "$APP_PATH/Contents/Frameworks" ]; then
             find "$APP_PATH/Contents/Frameworks" \( -name "*.dylib" -o -name "*.framework" \) \
               | sort -r \
               | xargs -I{} codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "{}" || true
           fi
 
-          # 2. Sign the privileged helper daemon
           codesign --force --options runtime \
             --entitlements src-tauri/helper-entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper"
 
-          # 3. Sign the sidecar (network client + server entitlements)
           codesign --force --options runtime \
             --entitlements src-tauri/sidecar-entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/MacOS/netferry-tunnel"
 
-          # 4. Sign the main executable
           codesign --force --options runtime \
             --entitlements src-tauri/entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/MacOS/netferry-desktop"
 
-          # 5. Sign the .app bundle
           codesign --force --options runtime \
             --entitlements src-tauri/entitlements.plist \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH"
 
-      - name: Create and sign PKG (macOS)
-        if: startsWith(matrix.os, 'macos')
+      - name: Create and sign PKG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ steps.version.outputs.version }}"
           APP_PATH="src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/NetFerry.app"
           PKG_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg"
           mkdir -p "$PKG_DIR"
 
-          # Derive installer identity if not explicitly set
           INSTALLER_ID="${APPLE_INSTALLER_IDENTITY:-${APPLE_SIGNING_IDENTITY/Application/Installer}}"
 
-          # Build component package from the signed .app
           pkgbuild \
             --component "$APP_PATH" \
             --install-location /Applications \
@@ -254,152 +201,124 @@ jobs:
             --version "$VERSION" \
             "$PKG_DIR/NetFerry-component.pkg"
 
-          # Build signed product archive
           productbuild \
             --package "$PKG_DIR/NetFerry-component.pkg" \
             --sign "$INSTALLER_ID" \
-            "$PKG_DIR/NetFerry_${VERSION}_bundle.pkg"
+            "$PKG_DIR/${{ matrix.stable_name }}.pkg"
           rm -f "$PKG_DIR/NetFerry-component.pkg"
 
-      - name: Build bundle (Windows)
-        if: matrix.os == 'windows-latest'
-        env:
-          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
-        run: npm run tauri build -- --target ${{ matrix.rust_target }} --bundles msi
-
-      - name: Rename bundle to stable name
-        run: |
-          case "${{ matrix.rust_target }}" in
-            aarch64-apple-darwin)
-              mv src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
-                 src-tauri/target/aarch64-apple-darwin/release/bundle/pkg/NetFerry_macos_silicon.pkg
-              ;;
-            x86_64-apple-darwin)
-              mv src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_*.pkg \
-                 src-tauri/target/x86_64-apple-darwin/release/bundle/pkg/NetFerry_macos_intel.pkg
-              ;;
-            x86_64-pc-windows-msvc)
-              mv src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi \
-                 src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/NetFerry_windows_x64.msi
-              ;;
-          esac
-        shell: bash
-
       - name: Clean up keychain
-        if: startsWith(matrix.os, 'macos') && always()
+        if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
 
-      - name: Upload artifacts
+      - name: Upload signed PKG
         uses: actions/upload-artifact@v4
         with:
-          name: netferry-${{ matrix.rust_target }}
-          path: ${{ matrix.bundle_glob }}
+          name: netferry-pkg-${{ matrix.rust_target }}
+          path: netferry-desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/pkg/${{ matrix.stable_name }}.pkg
+          if-no-files-found: error
 
-  build-android:
+  sign-android:
+    needs: wait-for-ci
     permissions:
       contents: read
+      actions: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - name: Download APK from ci.yml
+        uses: actions/download-artifact@v4
         with:
-          go-version-file: netferry-relay/go.mod
-          cache-dependency-path: netferry-relay/go.sum
+          name: netferry-android
+          path: ./downloaded
+          run-id: ${{ needs.wait-for-ci.outputs.run_id }}
+          github-token: ${{ github.token }}
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Android SDK
+      - name: Setup Android SDK (apksigner)
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK
-        run: sdkmanager --install "ndk;27.1.12297006"
-
-      - name: Install gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-
-      - name: Get version
-        id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build server binaries
-        working-directory: netferry-relay
-        run: make build-servers
-
-      - name: Copy server binaries for mobile
-        run: |
-          mkdir -p netferry-relay/mobile/binaries
-          cp netferry-relay/cmd/tunnel/binaries/server-linux-amd64 netferry-relay/mobile/binaries/
-          cp netferry-relay/cmd/tunnel/binaries/server-linux-arm64 netferry-relay/mobile/binaries/
-
-      - name: Build Go mobile AAR
-        working-directory: netferry-relay
-        env:
-          NETFERRY_EXPORT_KEY: ${{ secrets.NETFERRY_EXPORT_KEY }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.1.12297006
-        run: |
-          LDFLAGS="-X github.com/hoveychen/netferry/relay/mobile.version=${{ steps.version.outputs.version }} -s -w"
-          if [ -n "$NETFERRY_EXPORT_KEY" ]; then
-            LDFLAGS="$LDFLAGS -X github.com/hoveychen/netferry/relay/mobile.ExportKey=$NETFERRY_EXPORT_KEY"
-          fi
-          mkdir -p ../netferry-mobile/android/app/libs
-          gomobile bind \
-            -target=android/arm64 \
-            -androidapi 26 \
-            -ldflags="$LDFLAGS" \
-            -o ../netferry-mobile/android/app/libs/netferry-engine.aar \
-            ./mobile/
-
-      - name: Decode Android keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > netferry-mobile/android/app/release.keystore
-
-      - name: Build Android APK
-        working-directory: netferry-mobile/android
+      - name: Re-sign APK with prod keystore
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          NETFERRY_VERSION_NAME: ${{ steps.version.outputs.version }}
-          NETFERRY_VERSION_CODE: ${{ github.run_number }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          ./gradlew assembleRelease --no-daemon
+          KS="$RUNNER_TEMP/release.keystore"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
 
-      - name: Upload Android APK
+          INPUT=$(ls downloaded/*.apk | head -1)
+          if [ -z "$INPUT" ]; then
+            echo "::error::No APK found in downloaded artifact"
+            exit 1
+          fi
+
+          BUILDTOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          OUT="NetFerry_android_arm64.apk"
+
+          # apksigner replaces any existing signature block; the dev signature
+          # baked in during ci.yml is overwritten with the prod keystore here.
+          "${BUILDTOOLS}apksigner" sign \
+            --ks "$KS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --ks-key-alias netferry \
+            --out "$OUT" \
+            "$INPUT"
+
+          "${BUILDTOOLS}apksigner" verify --verbose "$OUT"
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: netferry-android
-          path: netferry-mobile/android/app/build/outputs/apk/release/*.apk
+          name: netferry-android-signed
+          path: NetFerry_android_arm64.apk
+          if-no-files-found: error
 
   publish:
-    needs: [build, build-tunnel-cli, build-android]
+    needs: [wait-for-ci, bundle-mac, sign-android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
-      - name: Download all artifacts
+      - name: Download signed PKGs and APK from this run
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
+          pattern: netferry-pkg-*
+
+      - name: Download signed APK from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: netferry-android-signed
+          path: release-artifacts/netferry-android-signed
+
+      - name: Download MSI and tunnel CLI from ci.yml
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: netferry-tunnel-linux-*
+          run-id: ${{ needs.wait-for-ci.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Windows MSI from ci.yml
+        uses: actions/download-artifact@v4
+        with:
+          name: netferry-desktop-x86_64-pc-windows-msvc
+          path: release-artifacts/netferry-desktop-x86_64-pc-windows-msvc
+          run-id: ${{ needs.wait-for-ci.outputs.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Collect stable-name release files
         run: |
           mkdir -p release-final
-          cp "$(find release-artifacts/netferry-aarch64-apple-darwin -name 'NetFerry_macos_silicon.pkg' -type f | head -1)" release-final/NetFerry_macos_silicon.pkg
-          cp "$(find release-artifacts/netferry-x86_64-apple-darwin -name 'NetFerry_macos_intel.pkg' -type f | head -1)" release-final/NetFerry_macos_intel.pkg
-          cp "$(find release-artifacts/netferry-x86_64-pc-windows-msvc -name 'NetFerry_windows_x64.msi' -type f | head -1)" release-final/NetFerry_windows_x64.msi
-          cp release-artifacts/netferry-tunnel-linux-amd64/netferry-tunnel-linux-amd64 release-final/netferry-tunnel-linux-amd64
-          cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-final/netferry-tunnel-linux-arm64
-          cp "$(find release-artifacts/netferry-android -name '*.apk' -type f | head -1)" release-final/NetFerry_android_arm64.apk
+          cp release-artifacts/netferry-pkg-aarch64-apple-darwin/NetFerry_macos_silicon.pkg release-final/
+          cp release-artifacts/netferry-pkg-x86_64-apple-darwin/NetFerry_macos_intel.pkg release-final/
+          cp release-artifacts/netferry-tunnel-linux-amd64/netferry-tunnel-linux-amd64 release-final/
+          cp release-artifacts/netferry-tunnel-linux-arm64/netferry-tunnel-linux-arm64 release-final/
+          cp release-artifacts/netferry-android-signed/NetFerry_android_arm64.apk release-final/
+          MSI=$(find release-artifacts/netferry-desktop-x86_64-pc-windows-msvc -name '*.msi' -type f | head -1)
+          cp "$MSI" release-final/NetFerry_windows_x64.msi
 
       - name: Generate release body with download links
         env:
