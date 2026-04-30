@@ -14,9 +14,9 @@ import (
 type groupsPaneMode int
 
 const (
-	groupBrowse groupsPaneMode = iota
-	groupRename        // entering a name (for new or rename-existing)
-	groupEditChildren  // multi-select children for the active group
+	groupBrowse       groupsPaneMode = iota
+	groupRename                      // entering a name (for new or rename-existing)
+	groupViewChildren                // read-only roster of the group's children
 	groupConfirmDelete
 )
 
@@ -29,10 +29,9 @@ type groupsModel struct {
 	renameID  string
 	renameBuf string
 
-	// editing children: target group + cursor + selection set on its profile list
-	editingID    string
-	childCursor  int
-	childChecked map[string]bool
+	// viewing children: which group's roster is on screen, plus its cursor
+	viewingID  string
+	viewCursor int
 }
 
 func newGroupsModel(root *rootModel) groupsModel {
@@ -51,8 +50,8 @@ func (g *groupsModel) update(msg tea.Msg) tea.Cmd {
 		return g.updateBrowse(km)
 	case groupRename:
 		return g.updateRename(km)
-	case groupEditChildren:
-		return g.updateChildren(km)
+	case groupViewChildren:
+		return g.updateViewChildren(km)
 	case groupConfirmDelete:
 		return g.updateConfirmDelete(km)
 	}
@@ -86,13 +85,9 @@ func (g *groupsModel) updateBrowse(km tea.KeyMsg) tea.Cmd {
 		if len(groups) == 0 {
 			return nil
 		}
-		g.editingID = groups[g.cursor].ID
-		g.childCursor = 0
-		g.childChecked = map[string]bool{}
-		for _, id := range groups[g.cursor].ChildrenIDs {
-			g.childChecked[id] = true
-		}
-		g.mode = groupEditChildren
+		g.viewingID = groups[g.cursor].ID
+		g.viewCursor = 0
+		g.mode = groupViewChildren
 	case "d":
 		if len(groups) == 0 {
 			return nil
@@ -167,45 +162,43 @@ func (g *groupsModel) updateRename(km tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (g *groupsModel) updateChildren(km tea.KeyMsg) tea.Cmd {
-	profiles := g.root.data.profiles
+// updateViewChildren handles the read-only roster page. Members are managed
+// from the Profiles tab (create-while-active to add, [r] to remove); this
+// page only lets you scroll the list and promote a child to default.
+func (g *groupsModel) updateViewChildren(km tea.KeyMsg) tea.Cmd {
+	grp := findGroupByID(g.root.data.groups, g.viewingID)
+	if grp == nil {
+		g.mode = groupBrowse
+		return nil
+	}
 	switch km.String() {
 	case "esc":
 		g.mode = groupBrowse
 		return nil
 	case "up", "k":
-		if g.childCursor > 0 {
-			g.childCursor--
+		if g.viewCursor > 0 {
+			g.viewCursor--
 		}
 	case "down", "j":
-		if g.childCursor+1 < len(profiles) {
-			g.childCursor++
+		if g.viewCursor+1 < len(grp.ChildrenIDs) {
+			g.viewCursor++
 		}
-	case " ", "x":
-		if len(profiles) == 0 {
+	case "p":
+		// Promote the selected child to default (childrenIds[0]).
+		if len(grp.ChildrenIDs) == 0 || g.viewCursor == 0 {
 			return nil
 		}
-		id := profiles[g.childCursor].ID
-		g.childChecked[id] = !g.childChecked[id]
-	case "ctrl+s", "enter":
-		// Save: rebuild ChildrenIDs in the order of the profiles list.
-		grp := findGroupByID(g.root.data.groups, g.editingID)
-		if grp == nil {
-			return g.root.setFlash(false, "group missing")
-		}
 		updated := *grp
-		updated.ChildrenIDs = updated.ChildrenIDs[:0]
-		for _, p := range profiles {
-			if g.childChecked[p.ID] {
-				updated.ChildrenIDs = append(updated.ChildrenIDs, p.ID)
-			}
-		}
+		ids := append([]string{}, grp.ChildrenIDs...)
+		picked := ids[g.viewCursor]
+		ids = append(ids[:g.viewCursor], ids[g.viewCursor+1:]...)
+		updated.ChildrenIDs = append([]string{picked}, ids...)
 		if err := store.SaveGroup(&updated); err != nil {
 			return g.root.setFlash(false, "save: "+err.Error())
 		}
 		g.root.reload()
-		g.mode = groupBrowse
-		return g.root.setFlash(true, fmt.Sprintf("saved %d child profile(s)", len(updated.ChildrenIDs)))
+		g.viewCursor = 0
+		return g.root.setFlash(true, "promoted to default")
 	}
 	return nil
 }
@@ -243,8 +236,8 @@ func (g *groupsModel) view(width, height int) string {
 	switch g.mode {
 	case groupRename:
 		return g.viewRename(width, height)
-	case groupEditChildren:
-		return g.viewChildren(width, height)
+	case groupViewChildren:
+		return g.viewViewChildren(width, height)
 	case groupConfirmDelete:
 		return g.viewConfirmDelete()
 	default:
@@ -293,7 +286,7 @@ func (g *groupsModel) viewBrowse(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [Enter/e] edit children  [n] new  [r] rename  [a] activate  [d] delete   ★ = active"))
+	b.WriteString(dimText.Render("[↑/↓] move  [Enter/e] view members  [n] new  [r] rename  [a] activate  [d] delete   ★ = active"))
 	return b.String()
 }
 
@@ -315,54 +308,65 @@ func (g *groupsModel) viewRename(width, height int) string {
 	return b.String()
 }
 
-func (g *groupsModel) viewChildren(width, height int) string {
+// viewViewChildren renders the active group's roster as a read-only list,
+// matching the desktop's group-scoped Profiles list. The first member is
+// flagged as the default profile (childrenIds[0]).
+func (g *groupsModel) viewViewChildren(width, height int) string {
 	var b strings.Builder
-	grp := findGroupByID(g.root.data.groups, g.editingID)
-	title := "Edit children"
+	grp := findGroupByID(g.root.data.groups, g.viewingID)
+	title := "Members"
 	if grp != nil {
-		title = "Children of: " + grp.Name
+		title = fmt.Sprintf("Members of %s  (%d)", grp.Name, len(grp.ChildrenIDs))
 	}
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
 	b.WriteByte('\n')
 
-	profiles := g.root.data.profiles
-	if len(profiles) == 0 {
+	if grp == nil || len(grp.ChildrenIDs) == 0 {
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("(no profiles available — create one in the Profiles tab first)"))
+		b.WriteString(dimText.Render("(no members — switch to this group in Settings, then add profiles from the Profiles tab)"))
+		b.WriteByte('\n')
 		b.WriteByte('\n')
 		b.WriteString(dimText.Render("[Esc] back"))
 		return b.String()
 	}
+
 	listHeight := height - 4
 	if listHeight < 3 {
 		listHeight = 3
 	}
-	start, end := windowedRange(len(profiles), g.childCursor, listHeight)
+	if g.viewCursor >= len(grp.ChildrenIDs) {
+		g.viewCursor = len(grp.ChildrenIDs) - 1
+	}
+	start, end := windowedRange(len(grp.ChildrenIDs), g.viewCursor, listHeight)
 	if start > 0 {
 		b.WriteString(dimText.Render(fmt.Sprintf("  ↑ %d more above", start)))
 		b.WriteByte('\n')
 	}
 	for i := start; i < end; i++ {
-		pr := profiles[i]
-		mark := "[ ]"
-		if g.childChecked[pr.ID] {
-			mark = "[x]"
+		id := grp.ChildrenIDs[i]
+		marker := "  "
+		if i == 0 {
+			marker = "★ "
 		}
-		row := fmt.Sprintf("%s %-30s  %s", mark, pr.Name, dimText.Render(pr.Remote))
-		if i == g.childCursor {
-			row = "▶ " + listSelected.Render(row)
+		var name, remote string
+		if pr := findProfileByID(g.root.data.profiles, id); pr != nil {
+			name, remote = pr.Name, pr.Remote
 		} else {
-			row = "  " + row
+			name, remote = "(missing profile)", id
+		}
+		row := fmt.Sprintf("%s%-30s  %s", marker, name, dimText.Render(remote))
+		if i == g.viewCursor {
+			row = listSelected.Render(row)
 		}
 		b.WriteString(row)
 		b.WriteByte('\n')
 	}
-	if end < len(profiles) {
-		b.WriteString(dimText.Render(fmt.Sprintf("  ↓ %d more below", len(profiles)-end)))
+	if end < len(grp.ChildrenIDs) {
+		b.WriteString(dimText.Render(fmt.Sprintf("  ↓ %d more below", len(grp.ChildrenIDs)-end)))
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [Space/x] toggle  [Enter/Ctrl+S] save  [Esc] cancel"))
+	b.WriteString(dimText.Render("[↑/↓] move  [p] promote to default  [Esc] back   ★ = default profile"))
 	return b.String()
 }
 

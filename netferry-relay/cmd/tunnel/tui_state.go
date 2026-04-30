@@ -94,6 +94,83 @@ func findGroupByID(gs []store.Group, id string) *store.Group {
 	return nil
 }
 
+// activeGroup returns a pointer into d.groups for the currently-active group,
+// or nil when no group is active. The desktop app treats this as the scope for
+// the Profiles list, so the TUI does the same.
+func (d *loadedData) activeGroup() *store.Group {
+	if d == nil || d.settings.ActiveGroupID == "" {
+		return nil
+	}
+	return findGroupByID(d.groups, d.settings.ActiveGroupID)
+}
+
+// scopedProfiles returns the profile list to show in the Profiles tab:
+//
+//   - When a group is active, the children of that group in childrenIds order
+//     (skipping any IDs whose profile no longer exists).
+//   - When no group is active, every profile in profiles.json.
+func (d *loadedData) scopedProfiles() []profile.Profile {
+	g := d.activeGroup()
+	if g == nil {
+		return d.profiles
+	}
+	out := make([]profile.Profile, 0, len(g.ChildrenIDs))
+	for _, id := range g.ChildrenIDs {
+		if pr := findProfileByID(d.profiles, id); pr != nil {
+			out = append(out, *pr)
+		}
+	}
+	return out
+}
+
+// attachToActiveGroup appends profileID to the active group's ChildrenIDs and
+// persists. No-op when no group is active or the profile is already a child.
+// Returns true when the group was modified.
+func (d *loadedData) attachToActiveGroup(profileID string) (bool, error) {
+	g := d.activeGroup()
+	if g == nil {
+		return false, nil
+	}
+	for _, id := range g.ChildrenIDs {
+		if id == profileID {
+			return false, nil
+		}
+	}
+	updated := *g
+	updated.ChildrenIDs = append(append([]string{}, g.ChildrenIDs...), profileID)
+	if err := store.SaveGroup(&updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// detachFromActiveGroup removes profileID from the active group's ChildrenIDs
+// (does NOT delete the profile). No-op when no group is active.
+func (d *loadedData) detachFromActiveGroup(profileID string) (bool, error) {
+	g := d.activeGroup()
+	if g == nil {
+		return false, nil
+	}
+	out := make([]string, 0, len(g.ChildrenIDs))
+	found := false
+	for _, id := range g.ChildrenIDs {
+		if id == profileID {
+			found = true
+			continue
+		}
+		out = append(out, id)
+	}
+	if !found {
+		return false, nil
+	}
+	updated := *g
+	updated.ChildrenIDs = out
+	if err := store.SaveGroup(&updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func loadAll() (*loadedData, error) {
 	ps, err := store.LoadProfiles()
 	if err != nil {

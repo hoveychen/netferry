@@ -97,6 +97,12 @@ func newProfilesModel(root *rootModel) profilesModel {
 
 func (p profilesModel) Init() tea.Cmd { return nil }
 
+// list returns the profiles visible in the Profiles tab — scoped to the active
+// group's children, or all profiles when no group is active.
+func (p *profilesModel) list() []profile.Profile {
+	return p.root.data.scopedProfiles()
+}
+
 func (p *profilesModel) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -117,13 +123,14 @@ func (p *profilesModel) update(msg tea.Msg) tea.Cmd {
 }
 
 func (p *profilesModel) updateBrowse(msg tea.KeyMsg) tea.Cmd {
+	list := p.list()
 	switch msg.String() {
 	case "up", "k":
 		if p.cursor > 0 {
 			p.cursor--
 		}
 	case "down", "j":
-		if p.cursor+1 < len(p.root.data.profiles) {
+		if p.cursor+1 < len(list) {
 			p.cursor++
 		}
 	case "n":
@@ -134,20 +141,43 @@ func (p *profilesModel) updateBrowse(msg tea.KeyMsg) tea.Cmd {
 		p.mode = profileEdit
 		p.cursor = 0
 	case "enter", "e":
-		if len(p.root.data.profiles) == 0 {
+		if len(list) == 0 {
 			return nil
 		}
-		ed := p.root.data.profiles[p.cursor]
+		ed := list[p.cursor]
 		p.editing = &ed
 		p.fillEditBufFrom(&ed)
 		p.mode = profileEdit
 		p.cursor = 0
 	case "d":
-		if len(p.root.data.profiles) == 0 {
+		if len(list) == 0 {
 			return nil
 		}
-		p.deleteID = p.root.data.profiles[p.cursor].ID
+		p.deleteID = list[p.cursor].ID
 		p.mode = profileConfirmDelete
+	case "r":
+		// Remove from active group (does NOT delete the profile). Only
+		// meaningful when a group is active; no-op otherwise.
+		if p.root.data.activeGroup() == nil {
+			return p.root.setFlash(false, "no active group — use [d] to delete the profile")
+		}
+		if len(list) == 0 {
+			return nil
+		}
+		removed := list[p.cursor].Name
+		ok, err := p.root.data.detachFromActiveGroup(list[p.cursor].ID)
+		if err != nil {
+			return p.root.setFlash(false, "remove: "+err.Error())
+		}
+		if !ok {
+			return nil
+		}
+		p.root.reload()
+		newList := p.list()
+		if p.cursor >= len(newList) {
+			p.cursor = max(0, len(newList)-1)
+		}
+		return p.root.setFlash(true, "removed "+removed+" from group")
 	case "i":
 		// Import an encrypted .nfprofile file.
 		p.importPath = ""
@@ -202,6 +232,9 @@ func (p *profilesModel) updateImportPath(msg tea.KeyMsg) tea.Cmd {
 		imported.Imported = true
 		if _, err := store.UpsertProfile(*imported); err != nil {
 			return p.root.setFlash(false, "save: "+err.Error())
+		}
+		if _, err := p.root.data.attachToActiveGroup(imported.ID); err != nil {
+			return p.root.setFlash(false, "attach: "+err.Error())
 		}
 		p.root.reload()
 		p.mode = profileBrowse
@@ -273,6 +306,9 @@ func (p *profilesModel) updateImportSSH(msg tea.KeyMsg) tea.Cmd {
 			if _, err := store.UpsertProfile(*pr); err != nil {
 				return p.root.setFlash(false, "save: "+err.Error())
 			}
+			if _, err := p.root.data.attachToActiveGroup(pr.ID); err != nil {
+				return p.root.setFlash(false, "attach: "+err.Error())
+			}
 			n++
 		}
 		p.root.reload()
@@ -338,12 +374,20 @@ func (p *profilesModel) updateConfirmDelete(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (p *profilesModel) commitEdit() tea.Cmd {
+	// Track whether we're creating a new profile (no prior ID) so we can
+	// auto-attach it to the active group, mirroring the desktop's behavior.
+	wasNew := p.editing != nil && p.editing.ID == ""
 	updated, err := p.profileFromBuf()
 	if err != nil {
 		return p.root.setFlash(false, err.Error())
 	}
 	if _, err := store.UpsertProfile(*updated); err != nil {
 		return p.root.setFlash(false, "save: "+err.Error())
+	}
+	if wasNew {
+		if _, err := p.root.data.attachToActiveGroup(updated.ID); err != nil {
+			return p.root.setFlash(false, "attach: "+err.Error())
+		}
 	}
 	p.root.reload()
 	p.mode = profileBrowse
@@ -552,37 +596,67 @@ func (p *profilesModel) view(width, height int) string {
 
 func (p *profilesModel) viewBrowse(width, height int) string {
 	var b strings.Builder
-	if len(p.root.data.profiles) == 0 {
-		b.WriteString(dimText.Render("(no profiles — press [n] to create one)"))
+	list := p.list()
+	g := p.root.data.activeGroup()
+
+	// Title — group-scoped or "all profiles" when no group is active.
+	var title string
+	if g != nil {
+		title = fmt.Sprintf("Profiles in %s  (%d)", g.Name, len(list))
+	} else {
+		title = fmt.Sprintf("All profiles  (%d, no active group)", len(list))
+	}
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
+	b.WriteByte('\n')
+
+	if len(list) == 0 {
+		if g != nil {
+			b.WriteString(dimText.Render("(group is empty — press [n] to create a profile in this group)"))
+		} else {
+			b.WriteString(dimText.Render("(no profiles — press [n] to create one)"))
+		}
 		b.WriteByte('\n')
 		b.WriteByte('\n')
 		b.WriteString(dimText.Render("[n] new  [i] import .nfprofile  [I] import ~/.ssh/config"))
 		return b.String()
 	}
-	listHeight := height - 2 // leave 2 lines for blank + footer
+
+	// Reserve title (1) + blank (1) + footer (1) = 3.
+	listHeight := height - 4
 	if listHeight < 3 {
 		listHeight = 3
 	}
-	start, end := windowedRange(len(p.root.data.profiles), p.cursor, listHeight)
+	if p.cursor >= len(list) {
+		p.cursor = len(list) - 1
+	}
+	start, end := windowedRange(len(list), p.cursor, listHeight)
 	if start > 0 {
 		b.WriteString(dimText.Render(fmt.Sprintf("  ↑ %d more above", start)))
 		b.WriteByte('\n')
 	}
 	for i := start; i < end; i++ {
-		pr := p.root.data.profiles[i]
-		row := fmt.Sprintf("%-30s  %s", pr.Name, dimText.Render(pr.Remote))
+		pr := list[i]
+		marker := "  "
+		if g != nil && i == 0 {
+			marker = "★ " // childrenIds[0] is the group's default profile
+		}
+		row := fmt.Sprintf("%s%-30s  %s", marker, pr.Name, dimText.Render(pr.Remote))
 		if i == p.cursor {
 			row = listSelected.Render(row)
 		}
 		b.WriteString(row)
 		b.WriteByte('\n')
 	}
-	if end < len(p.root.data.profiles) {
-		b.WriteString(dimText.Render(fmt.Sprintf("  ↓ %d more below", len(p.root.data.profiles)-end)))
+	if end < len(list) {
+		b.WriteString(dimText.Render(fmt.Sprintf("  ↓ %d more below", len(list)-end)))
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [Enter/e] edit  [n] new  [d] delete  [i] import .nfprofile  [I] import ~/.ssh/config"))
+	hint := "[↑/↓] move  [Enter/e] edit  [n] new  [d] delete  [i] .nfprofile  [I] .ssh/config"
+	if g != nil {
+		hint += "  [r] remove from group   ★ = default"
+	}
+	b.WriteString(dimText.Render(hint))
 	return b.String()
 }
 
