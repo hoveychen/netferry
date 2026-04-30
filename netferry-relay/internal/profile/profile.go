@@ -34,26 +34,32 @@ type JumpHost struct {
 // Booleans whose desktop default is true use *bool so a missing field does
 // not collapse to Go's false zero-value.
 type Profile struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Remote        string     `json:"remote"`
-	IdentityFile  string     `json:"identityFile"`
-	IdentityKey   string     `json:"identityKey,omitempty"`
-	JumpHosts     []JumpHost `json:"jumpHosts,omitempty"`
-	Subnets       []string   `json:"subnets"`
-	Dns           DnsMode    `json:"dns"`
-	ExcludeSubnets []string  `json:"excludeSubnets"`
-	AutoNets      bool       `json:"autoNets"`
-	DnsTarget     string     `json:"dnsTarget,omitempty"`
-	Method        string     `json:"method"`
-	ExtraSSHOpts  string     `json:"extraSshOptions,omitempty"`
-	DisableIPv6   bool       `json:"disableIpv6"`
-	EnableUDP     bool       `json:"enableUdp"`
-	BlockUDP      *bool      `json:"blockUdp,omitempty"`
-	AutoExcludeLAN *bool     `json:"autoExcludeLan,omitempty"`
-	PoolSize      int        `json:"poolSize,omitempty"`
-	SplitConn     bool       `json:"splitConn"`
-	TcpBalance    string     `json:"tcpBalanceMode,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	Remote            string     `json:"remote"`
+	IdentityFile      string     `json:"identityFile"`
+	IdentityKey       string     `json:"identityKey,omitempty"`
+	JumpHosts         []JumpHost `json:"jumpHosts,omitempty"`
+	Subnets           []string   `json:"subnets"`
+	Dns               DnsMode    `json:"dns"`
+	ExcludeSubnets    []string   `json:"excludeSubnets"`
+	AutoNets          bool       `json:"autoNets"`
+	DnsTarget         string     `json:"dnsTarget,omitempty"`
+	Method            string     `json:"method"`
+	ExtraSSHOpts      string     `json:"extraSshOptions,omitempty"`
+	DisableIPv6       bool       `json:"disableIpv6"`
+	EnableUDP         bool       `json:"enableUdp"`
+	BlockUDP          *bool      `json:"blockUdp,omitempty"`
+	AutoExcludeLAN    *bool      `json:"autoExcludeLan,omitempty"`
+	PoolSize          int        `json:"poolSize,omitempty"`
+	SplitConn         bool       `json:"splitConn"`
+	TcpBalance        string     `json:"tcpBalanceMode,omitempty"`
+	// Round-tripped on behalf of the desktop app — tunnel core ignores these,
+	// but storing them preserves user state across desktop/TUI co-edits.
+	Notes             string     `json:"notes,omitempty"`
+	RemotePython      string     `json:"remotePython,omitempty"`
+	LatencyBufferSize *uint32    `json:"latencyBufferSize,omitempty"`
+	Imported          bool       `json:"imported,omitempty"`
 }
 
 // BlockUDPOrDefault returns BlockUDP with the desktop default (true) when unset.
