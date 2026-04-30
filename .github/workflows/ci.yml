@@ -257,8 +257,22 @@ jobs:
             -o ../netferry-mobile/android/app/libs/netferry-engine.aar \
             ./mobile/
 
-      # The committed release.keystore (with default passwords) signs this APK.
-      # release.yml re-signs it with the prod keystore via apksigner before publish.
+      # Generate a throwaway dev keystore with the defaults baked into
+      # build.gradle.kts. release.yml re-signs the APK with the prod keystore
+      # via apksigner before publish, so this signature is just a placeholder.
+      - name: Generate dev keystore
+        working-directory: netferry-mobile/android/app
+        run: |
+          keytool -genkeypair \
+            -keystore release.keystore \
+            -alias netferry \
+            -storepass netferry123 \
+            -keypass netferry123 \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=NetFerry Dev, O=NetFerry, C=US"
+
       - name: Build Android APK (dev-signed)
         working-directory: netferry-mobile/android
         env:

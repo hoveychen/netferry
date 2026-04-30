@@ -159,19 +159,23 @@ func resolveNextTrace() (string, error) {
 
 func (d *diagnosticsModel) view(width, height int) string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Route Diagnostics (NextTrace)"))
+	b.WriteString(pageTitle(tabDiagnostics, "Route Diagnostics (NextTrace)"))
 	b.WriteByte('\n')
 	if d.editing {
 		b.WriteString("Target: ")
 		cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
 		b.WriteString(listSelected.Render(d.target) + cursor)
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("[Enter] run  [Esc] cancel"))
+		b.WriteString(kbdHints("Enter", "run", "Esc", "cancel"))
 		b.WriteByte('\n')
 	} else {
 		b.WriteString("Target: " + d.target)
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("[i] edit target  [s] stop  [c] clear"))
+		b.WriteString(kbdHints(
+			"i", "edit target",
+			"s", "stop",
+			"c", "clear",
+		))
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')

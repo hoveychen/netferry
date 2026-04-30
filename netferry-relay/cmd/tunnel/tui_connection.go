@@ -44,11 +44,29 @@ type connectionModel struct {
 	logSnapshot  []string
 	displayLines int
 
-	lastBytesAt   time.Time
-	lastRx        int64
-	lastTx        int64
-	rxRate        int64
-	txRate        int64
+	// Engine startup is async — connecting flips true the moment the user picks
+	// a profile/group, false once NewEngine returns success or failure.
+	connecting bool
+	spinFrame  int
+
+	lastBytesAt time.Time
+	lastRx      int64
+	lastTx      int64
+	rxRate      int64
+	txRate      int64
+}
+
+// spinnerTickMsg drives the connecting-state braille spinner. Self-rescheduled
+// every ~100ms while connecting; quiesces once connecting flips false.
+type spinnerTickMsg struct{}
+
+// Braille spinner frames (matches the bubbles default).
+var spinnerFrames = []string{
+	"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+}
+
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 func newConnectionModel(root *rootModel) connectionModel {
@@ -69,16 +87,27 @@ func (c *connectionModel) update(msg tea.Msg) tea.Cmd {
 			return c.updatePickGroup(m)
 		}
 	case connectionStartedMsg:
+		c.connecting = false
 		c.root.state.setActive(m.eng, m.profileID, m.groupID, m.stopCh, m.doneCh)
 		return waitForEngineDone(m.doneCh)
 	case connectionFailedMsg:
+		c.connecting = false
 		return c.root.setFlash(false, "connect: "+m.err.Error())
 	case connectionEndedMsg:
+		c.connecting = false
 		c.root.state.clearActive(m.err)
 		if m.err != nil && m.err != ErrExitForReconnect {
 			return c.root.setFlash(false, "engine ended: "+m.err.Error())
 		}
 		return c.root.setFlash(true, "tunnel stopped")
+	case spinnerTickMsg:
+		// Advance the spinner frame and reschedule only while still connecting,
+		// otherwise let the tick chain die so we don't burn CPU.
+		if c.connecting {
+			c.spinFrame++
+			return spinnerTickCmd()
+		}
+		return nil
 	}
 	return nil
 }
@@ -185,7 +214,9 @@ func (c *connectionModel) startProfile(profileID string) tea.Cmd {
 	if err != nil {
 		return c.root.setFlash(false, err.Error())
 	}
-	return startEngineCmd(cfg, profileID, "")
+	c.connecting = true
+	c.spinFrame = 0
+	return tea.Batch(startEngineCmd(cfg, profileID, ""), spinnerTickCmd())
 }
 
 func (c *connectionModel) startGroup(groupID string) tea.Cmd {
@@ -197,7 +228,9 @@ func (c *connectionModel) startGroup(groupID string) tea.Cmd {
 	if err != nil {
 		return c.root.setFlash(false, err.Error())
 	}
-	return startEngineCmd(cfg, "", groupID)
+	c.connecting = true
+	c.spinFrame = 0
+	return tea.Batch(startEngineCmd(cfg, "", groupID), spinnerTickCmd())
 }
 
 // startEngineCmd creates the engine off the UI thread and returns the result
@@ -231,11 +264,14 @@ func startEngineCmd(cfg *EngineConfig, profileID, groupID string) tea.Cmd {
 // ── view ─────────────────────────────────────────────────────────────────────
 
 var (
-	stateOnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	stateOffStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	statBoxStyle  = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("240")).
+	statLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorMuted)).
+			Bold(true)
+	statValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorTextFg))
+	statBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(colorDim)).
 			Padding(0, 1)
 )
 
@@ -251,10 +287,14 @@ func (c *connectionModel) view(width, height int) string {
 	connected := eng != nil
 
 	var b strings.Builder
-	if connected {
-		b.WriteString(stateOnStyle.Render("● CONNECTED"))
-	} else {
-		b.WriteString(stateOffStyle.Render("○ DISCONNECTED"))
+	switch {
+	case c.connecting:
+		frame := spinnerFrames[c.spinFrame%len(spinnerFrames)]
+		b.WriteString(statusPill("CONNECTING "+frame, "warn"))
+	case connected:
+		b.WriteString(statusPill("CONNECTED", "ok"))
+	default:
+		b.WriteString(statusPill("DISCONNECTED", "err"))
 	}
 	b.WriteByte('\n')
 
@@ -270,8 +310,10 @@ func (c *connectionModel) view(width, height int) string {
 				who = "group: " + g.Name
 			}
 		}
-		b.WriteString(dimText.Render(who))
-		b.WriteByte('\n')
+		if who != "" {
+			b.WriteString(dimText.Render(who))
+			b.WriteByte('\n')
+		}
 		b.WriteString(c.viewStats(eng.Counters()))
 		b.WriteByte('\n')
 	}
@@ -284,7 +326,7 @@ func (c *connectionModel) view(width, height int) string {
 	if logHeight < 4 {
 		logHeight = 4
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Log:"))
+	b.WriteString(pageTitle(tabConnection, "Log"))
 	b.WriteByte('\n')
 	logBody := tailLines(c.root.ring.Snapshot(), logHeight)
 	if logBody == "" {
@@ -294,13 +336,13 @@ func (c *connectionModel) view(width, height int) string {
 	b.WriteByte('\n')
 
 	if connected {
-		b.WriteString(dimText.Render("[s] stop tunnel"))
+		b.WriteString(kbdHints("s", "stop tunnel"))
 	} else {
-		hint := "[p] connect to profile"
+		pairs := []string{"p", "connect to profile"}
 		if len(c.root.data.groups) > 0 {
-			hint += "  [g] connect to group"
+			pairs = append(pairs, "g", "connect to group")
 		}
-		b.WriteString(dimText.Render(hint))
+		b.WriteString(kbdHints(pairs...))
 	}
 	return b.String()
 }
@@ -311,18 +353,23 @@ func (c *connectionModel) viewStats(co *stats.Counters) string {
 	active := co.ActiveTCP.Load()
 	total := co.TotalTCP.Load()
 	rttMs := co.LastKeepaliveRTT().Milliseconds()
+	stat := func(label, value string) string {
+		return statBoxStyle.Render(
+			statLabelStyle.Render(label) + "\n" + statValueStyle.Render(value),
+		)
+	}
 	cells := []string{
-		statBoxStyle.Render(fmt.Sprintf("RX %s @ %s/s", fmtBytes(rx), fmtBytes(c.rxRate))),
-		statBoxStyle.Render(fmt.Sprintf("TX %s @ %s/s", fmtBytes(tx), fmtBytes(c.txRate))),
-		statBoxStyle.Render(fmt.Sprintf("Active %d / Total %d", active, total)),
-		statBoxStyle.Render(fmt.Sprintf("RTT %d ms", rttMs)),
+		stat("RX", fmt.Sprintf("%s @ %s/s", fmtBytes(rx), fmtBytes(c.rxRate))),
+		stat("TX", fmt.Sprintf("%s @ %s/s", fmtBytes(tx), fmtBytes(c.txRate))),
+		stat("CONN", fmt.Sprintf("%d active · %d total", active, total)),
+		stat("RTT", fmt.Sprintf("%d ms", rttMs)),
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, cells...)
 }
 
 func (c *connectionModel) viewPickProfile() string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Select profile:"))
+	b.WriteString(pageTitle(tabConnection, "Select profile"))
 	b.WriteString("\n\n")
 	for i, p := range c.root.data.profiles {
 		row := fmt.Sprintf("  %-30s  %s", p.Name, dimText.Render(p.Remote))
@@ -339,7 +386,7 @@ func (c *connectionModel) viewPickProfile() string {
 
 func (c *connectionModel) viewPickGroup() string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Select group:"))
+	b.WriteString(pageTitle(tabConnection, "Select group"))
 	b.WriteString("\n\n")
 	for i, g := range c.root.data.groups {
 		row := fmt.Sprintf("  %-30s  (%d profiles)", g.Name, len(g.ChildrenIDs))

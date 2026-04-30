@@ -161,6 +161,13 @@ func (m *rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tickEvery(500*time.Millisecond))
 		return m, tea.Batch(cmds...)
+	case spinnerTickMsg, connectionStartedMsg, connectionFailedMsg, connectionEndedMsg:
+		// Engine lifecycle + spinner animation must reach the Connection tab
+		// regardless of which tab is currently focused, otherwise switching
+		// away during a connect would drop the success/failure transition and
+		// freeze the spinner.
+		cmd := m.connection.update(msg)
+		return m, cmd
 	}
 
 	// Route to active tab's Update.
@@ -182,24 +189,9 @@ func (m *rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// View styles
 var (
-	tabActive = lipgloss.NewStyle().
-			Background(lipgloss.Color("63")).
-			Foreground(lipgloss.Color("230")).
-			Bold(true).
-			Padding(0, 2)
-	tabInactive = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Padding(0, 2)
-	headerLine = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render(strings.Repeat("─", 200))
-	flashOKStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	flashErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	footer        = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
-			Render("[Tab] next  [1-6] jump  [?] tab help  [Ctrl+C] quit")
+	flashOKStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Bold(true)
+	flashErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorErr)).Bold(true)
 )
 
 func (m *rootModel) View() string {
@@ -211,56 +203,79 @@ func (m *rootModel) View() string {
 	}
 	var b strings.Builder
 
-	// Header tabs
-	chips := make([]string, 0, int(tabCount))
-	for i := tabIndex(0); i < tabCount; i++ {
-		t := fmt.Sprintf("%d %s", i+1, i.title())
-		if i == m.tab {
-			chips = append(chips, tabActive.Render(t))
-		} else {
-			chips = append(chips, tabInactive.Render(t))
-		}
+	// 1. Header banner: full ASCII logo on tall+wide terminals, compact
+	//    wordmark otherwise. May be empty on tiny terminals.
+	subtitle := "relay tunnel · v" + Version
+	if m.state.connected() {
+		subtitle += "  ·  ● tunnel up"
 	}
-	b.WriteString(strings.Join(chips, " "))
-	b.WriteByte('\n')
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
-		Render(strings.Repeat("─", max(m.width, 1))))
+	header := renderHeader(m.width, m.height, subtitle)
+	headerLines := 0
+	if header != "" {
+		b.WriteString(header)
+		b.WriteByte('\n')
+		headerLines = strings.Count(header, "\n") + 1
+	}
+
+	// 2. Tab bar.
+	b.WriteString(renderTabBar(m.tab))
 	b.WriteByte('\n')
 
-	bodyHeight := m.height - 5 // header (2) + flash (1) + footer (1) + buffer
-	if bodyHeight < 5 {
-		bodyHeight = 5
+	// 3. Body panel: rounded border tinted by active tab's accent color.
+	//    Fixed height so flash + footer always sit at the same row.
+	footerStr := renderFooter()
+	// Reserved rows: header + tabBar (1) + panel border (2) + flash (1) + footer (1).
+	reserved := headerLines + 1 + 2 + 1 + 1
+	innerHeight := m.height - reserved
+	if innerHeight < 6 {
+		innerHeight = 6
+	}
+	innerWidth := m.width - 4 // border (2) + horizontal padding (2)
+	if innerWidth < 20 {
+		innerWidth = 20
 	}
 
 	var body string
 	switch m.tab {
 	case tabProfiles:
-		body = m.profiles.view(m.width, bodyHeight)
+		body = m.profiles.view(innerWidth, innerHeight)
 	case tabGroups:
-		body = m.groups.view(m.width, bodyHeight)
+		body = m.groups.view(innerWidth, innerHeight)
 	case tabConnection:
-		body = m.connection.view(m.width, bodyHeight)
+		body = m.connection.view(innerWidth, innerHeight)
 	case tabDestinations:
-		body = m.destination.view(m.width, bodyHeight)
+		body = m.destination.view(innerWidth, innerHeight)
 	case tabDiagnostics:
-		body = m.diagnostics.view(m.width, bodyHeight)
+		body = m.diagnostics.view(innerWidth, innerHeight)
 	case tabSettings:
-		body = m.settings.view(m.width, bodyHeight)
+		body = m.settings.view(innerWidth, innerHeight)
 	}
-	// Hard clip: no tab is allowed to push the header off-screen.
-	b.WriteString(clipLines(body, bodyHeight))
-
+	body = padLines(body, innerHeight)
+	panel := panelBorder(m.tab).Width(m.width - 2).Render(body)
+	b.WriteString(panel)
 	b.WriteByte('\n')
+
+	// 4. Flash status (always one line, blank when no flash to keep layout stable).
 	if m.flash != "" {
 		if m.flashOK {
-			b.WriteString(flashOKStyle.Render("✓ " + m.flash))
+			b.WriteString(flashOKStyle.Render(" ✓ " + m.flash))
 		} else {
-			b.WriteString(flashErrStyle.Render("✗ " + m.flash))
+			b.WriteString(flashErrStyle.Render(" ✗ " + m.flash))
 		}
-		b.WriteByte('\n')
 	}
-	b.WriteString(footer)
+	b.WriteByte('\n')
+
+	// 5. Footer keyboard hints.
+	b.WriteString(footerStr)
 	return b.String()
+}
+
+func renderFooter() string {
+	return " " + kbdHints(
+		"Tab", "next",
+		"1-6", "jump",
+		"Ctrl+C", "quit",
+	)
 }
 
 // clipLines truncates s to at most n lines, preserving the leading content.

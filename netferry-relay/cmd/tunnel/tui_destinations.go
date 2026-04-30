@@ -131,9 +131,9 @@ func (d *destinationsModel) view(width, height int) string {
 	var b strings.Builder
 	g := d.activeGroup()
 	if g != nil {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Group: " + g.Name))
+		b.WriteString(pageTitle(tabDestinations, "Group: "+g.Name))
 	} else {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Solo (routes.json)"))
+		b.WriteString(pageTitle(tabDestinations, "Solo (routes.json)"))
 	}
 	b.WriteByte('\n')
 	hosts := d.hosts()
@@ -169,7 +169,13 @@ func (d *destinationsModel) view(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [t] tunnel  [d] direct  [b] blocked  (toggle off when same)"))
+	b.WriteString(kbdHints(
+		"↑/↓", "move",
+		"t", "tunnel",
+		"d", "direct",
+		"b", "blocked",
+	))
+	b.WriteString(dimText.Render("  (toggle off when same)"))
 	return b.String()
 }
 

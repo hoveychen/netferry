@@ -250,11 +250,14 @@ func (g *groupsModel) viewBrowse(width, height int) string {
 	groups := g.root.data.groups
 	active := g.root.data.settings.ActiveGroupID
 
+	b.WriteString(pageTitle(tabGroups, fmt.Sprintf("Groups  (%d)", len(groups))))
+	b.WriteByte('\n')
+
 	if len(groups) == 0 {
 		b.WriteString(dimText.Render("(no groups — press [n] to create one)"))
 		b.WriteByte('\n')
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("[n] new"))
+		b.WriteString(kbdHints("n", "new"))
 		return b.String()
 	}
 
@@ -286,7 +289,15 @@ func (g *groupsModel) viewBrowse(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [Enter/e] view members  [n] new  [r] rename  [a] activate  [d] delete   ★ = active"))
+	b.WriteString(kbdHints(
+		"↑/↓", "move",
+		"Enter/e", "view members",
+		"n", "new",
+		"r", "rename",
+		"a", "activate",
+		"d", "delete",
+	))
+	b.WriteString(dimText.Render("   ★ = active"))
 	return b.String()
 }
 
@@ -296,7 +307,7 @@ func (g *groupsModel) viewRename(width, height int) string {
 	if g.renameID != "" {
 		title = "Rename group"
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
+	b.WriteString(pageTitle(tabGroups, title))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
@@ -304,7 +315,7 @@ func (g *groupsModel) viewRename(width, height int) string {
 	b.WriteString(listSelected.Render(g.renameBuf) + cursor)
 	b.WriteByte('\n')
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[Enter] save  [Esc] cancel"))
+	b.WriteString(kbdHints("Enter", "save", "Esc", "cancel"))
 	return b.String()
 }
 
@@ -318,7 +329,7 @@ func (g *groupsModel) viewViewChildren(width, height int) string {
 	if grp != nil {
 		title = fmt.Sprintf("Members of %s  (%d)", grp.Name, len(grp.ChildrenIDs))
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
+	b.WriteString(pageTitle(tabGroups, title))
 	b.WriteByte('\n')
 
 	if grp == nil || len(grp.ChildrenIDs) == 0 {
@@ -326,7 +337,7 @@ func (g *groupsModel) viewViewChildren(width, height int) string {
 		b.WriteString(dimText.Render("(no members — switch to this group in Settings, then add profiles from the Profiles tab)"))
 		b.WriteByte('\n')
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("[Esc] back"))
+		b.WriteString(kbdHints("Esc", "back"))
 		return b.String()
 	}
 
@@ -366,7 +377,12 @@ func (g *groupsModel) viewViewChildren(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [p] promote to default  [Esc] back   ★ = default profile"))
+	b.WriteString(kbdHints(
+		"↑/↓", "move",
+		"p", "promote to default",
+		"Esc", "back",
+	))
+	b.WriteString(dimText.Render("   ★ = default profile"))
 	return b.String()
 }
 

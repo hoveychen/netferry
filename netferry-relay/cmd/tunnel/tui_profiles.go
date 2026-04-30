@@ -606,7 +606,7 @@ func (p *profilesModel) viewBrowse(width, height int) string {
 	} else {
 		title = fmt.Sprintf("All profiles  (%d, no active group)", len(list))
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
+	b.WriteString(pageTitle(tabProfiles, title))
 	b.WriteByte('\n')
 
 	if len(list) == 0 {
@@ -617,7 +617,11 @@ func (p *profilesModel) viewBrowse(width, height int) string {
 		}
 		b.WriteByte('\n')
 		b.WriteByte('\n')
-		b.WriteString(dimText.Render("[n] new  [i] import .nfprofile  [I] import ~/.ssh/config"))
+		b.WriteString(kbdHints(
+			"n", "new",
+			"i", "import .nfprofile",
+			"I", "import ~/.ssh/config",
+		))
 		return b.String()
 	}
 
@@ -652,17 +656,27 @@ func (p *profilesModel) viewBrowse(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	hint := "[↑/↓] move  [Enter/e] edit  [n] new  [d] delete  [i] .nfprofile  [I] .ssh/config"
-	if g != nil {
-		hint += "  [r] remove from group   ★ = default"
+	pairs := []string{
+		"↑/↓", "move",
+		"Enter/e", "edit",
+		"n", "new",
+		"d", "delete",
+		"i", ".nfprofile",
+		"I", ".ssh/config",
 	}
-	b.WriteString(dimText.Render(hint))
+	if g != nil {
+		pairs = append(pairs, "r", "remove from group")
+	}
+	b.WriteString(kbdHints(pairs...))
+	if g != nil {
+		b.WriteString(dimText.Render("   ★ = default"))
+	}
 	return b.String()
 }
 
 func (p *profilesModel) viewImportPath(width, height int) string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Import .nfprofile"))
+	b.WriteString(pageTitle(tabProfiles, "Import .nfprofile"))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	cursor := lipgloss.NewStyle().Reverse(true).Render(" ")
@@ -670,13 +684,14 @@ func (p *profilesModel) viewImportPath(width, height int) string {
 	b.WriteString(listSelected.Render(p.importPath) + cursor)
 	b.WriteByte('\n')
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("Tip: ~/ is expanded.  [Enter] import  [Esc] cancel"))
+	b.WriteString(dimText.Render("Tip: ~/ is expanded.  "))
+	b.WriteString(kbdHints("Enter", "import", "Esc", "cancel"))
 	return b.String()
 }
 
 func (p *profilesModel) viewImportSSH(width, height int) string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Import from ~/.ssh/config (%d hosts)", len(p.sshHosts))))
+	b.WriteString(pageTitle(tabProfiles, fmt.Sprintf("Import from ~/.ssh/config (%d hosts)", len(p.sshHosts))))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	for i, h := range p.sshHosts {
@@ -695,7 +710,13 @@ func (p *profilesModel) viewImportSSH(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [Space/x] toggle  [a] toggle all  [Enter] import selection  [Esc] cancel"))
+	b.WriteString(kbdHints(
+		"↑/↓", "move",
+		"Space/x", "toggle",
+		"a", "toggle all",
+		"Enter", "import selection",
+		"Esc", "cancel",
+	))
 	return b.String()
 }
 
@@ -705,7 +726,7 @@ func (p *profilesModel) viewEdit(width, height int) string {
 	if p.editing != nil && p.editing.ID == "" {
 		title = "New Profile"
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(title))
+	b.WriteString(pageTitle(tabProfiles, title))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	for f := profileField(0); f < pfFieldCount; f++ {
@@ -721,7 +742,13 @@ func (p *profilesModel) viewEdit(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[Tab/↓↑] field  [type to edit]  [Backspace] delete  [Ctrl+S] save  [Esc] cancel"))
+	b.WriteString(kbdHints(
+		"Tab/↓↑", "field",
+		"type", "edit",
+		"Backspace", "delete",
+		"Ctrl+S", "save",
+		"Esc", "cancel",
+	))
 	return b.String()
 }
 

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
@@ -124,7 +123,7 @@ func pickNext(opts []string, cur string, dir int) string {
 func (s *settingsModel) view(width, height int) string {
 	settings := s.root.data.settings
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Settings"))
+	b.WriteString(pageTitle(tabSettings, "Settings"))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 
@@ -163,6 +162,11 @@ func (s *settingsModel) view(width, height int) string {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	b.WriteString(dimText.Render("[↑/↓] move  [←/→] cycle value  [x] clear  [Enter] next"))
+	b.WriteString(kbdHints(
+		"↑/↓", "move",
+		"←/→", "cycle value",
+		"x", "clear",
+		"Enter", "next",
+	))
 	return b.String()
 }
