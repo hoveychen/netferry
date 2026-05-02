@@ -22,7 +22,7 @@ fn is_wildcard_host(host: &str) -> bool {
         .all(|p| p.contains('*') || p.contains('?'))
 }
 
-fn expand_tilde(path: &str, home: &Path) -> String {
+pub fn expand_tilde(path: &str, home: &Path) -> String {
     if path == "~" {
         return home.to_string_lossy().to_string();
     }

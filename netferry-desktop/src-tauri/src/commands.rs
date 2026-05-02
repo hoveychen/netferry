@@ -199,39 +199,65 @@ pub fn update_tray_info(
     tray::update_tray_title(&app, title.as_deref());
 }
 
-#[tauri::command]
-pub fn export_profile(profile: Profile) -> Result<String, String> {
-    // Verify the profile has all inline keys (exportable).
-    if profile.identity_key.as_ref().map_or(true, |k| k.trim().is_empty()) {
-        return Err("Profile must have an inline identity key to export".into());
+/// Inline any file-based identities into a clone of the profile so it is
+/// self-contained for export. For each slot whose `identity_key` is empty but
+/// whose `identity_file` is non-empty, the file is read (with `~` expanded)
+/// and its contents take over `identity_key`; the path is then cleared so the
+/// importer does not see a path that means nothing on their machine.
+fn inline_identities_for_export(profile: &mut Profile, home: &std::path::Path) -> Result<(), String> {
+    let needs_inline = |key: &Option<String>, file: &str| -> bool {
+        key.as_deref().map_or(true, |k| k.trim().is_empty()) && !file.trim().is_empty()
+    };
+
+    if needs_inline(&profile.identity_key, &profile.identity_file) {
+        let resolved = ssh_config::expand_tilde(profile.identity_file.trim(), home);
+        let pem = std::fs::read_to_string(&resolved)
+            .map_err(|e| format!("Failed to read identity file {resolved}: {e}"))?;
+        profile.identity_key = Some(pem);
+        profile.identity_file = String::new();
     }
-    for (i, jh) in profile.jump_hosts.iter().enumerate() {
-        if jh.identity_key.is_none()
-            && jh.identity_file.as_ref().map_or(false, |f| !f.trim().is_empty())
-        {
-            return Err(format!(
-                "Jump host {} uses a file-based identity; switch to inline PEM to export",
-                i + 1
-            ));
+
+    for (i, jh) in profile.jump_hosts.iter_mut().enumerate() {
+        let file = jh.identity_file.clone().unwrap_or_default();
+        if needs_inline(&jh.identity_key, &file) {
+            let resolved = ssh_config::expand_tilde(file.trim(), home);
+            let pem = std::fs::read_to_string(&resolved).map_err(|e| {
+                format!(
+                    "Failed to read jump host {} identity file {resolved}: {e}",
+                    i + 1
+                )
+            })?;
+            jh.identity_key = Some(pem);
+            jh.identity_file = None;
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn export_profile(app: AppHandle, profile: Profile) -> Result<String, String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("Failed to resolve home directory: {e}"))?;
+    let mut profile = profile;
+    inline_identities_for_export(&mut profile, &home)?;
     let json = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
     crypto::encrypt(json.as_bytes())
 }
 
 #[tauri::command]
-pub fn export_profile_to_file(profile: Profile, path: PathBuf) -> Result<(), String> {
-    if profile.identity_key.as_ref().map_or(true, |k| k.trim().is_empty()) {
-        return Err("Profile must have an inline identity key to export".into());
-    }
-    for (i, jh) in profile.jump_hosts.iter().enumerate() {
-        if jh.identity_key.is_none() && jh.identity_file.as_ref().map_or(false, |f| !f.trim().is_empty()) {
-            return Err(format!(
-                "Jump host {} uses a file-based identity; switch to inline PEM to export",
-                i + 1
-            ));
-        }
-    }
+pub fn export_profile_to_file(
+    app: AppHandle,
+    profile: Profile,
+    path: PathBuf,
+) -> Result<(), String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("Failed to resolve home directory: {e}"))?;
+    let mut profile = profile;
+    inline_identities_for_export(&mut profile, &home)?;
     let json = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
     let encrypted = crypto::encrypt(json.as_bytes())?;
     std::fs::write(&path, encrypted).map_err(|e| format!("Failed to write file: {e}"))
@@ -405,4 +431,173 @@ pub async fn lookup_geoip(host: String) -> Result<String, String> {
     let body = resp.text().await.map_err(|e| e.to_string())?;
     log::debug!("[geoip] body: {}", &body[..body.len().min(200)]);
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::JumpHost;
+    use std::path::{Path, PathBuf};
+
+    struct Scratch {
+        dir: PathBuf,
+    }
+
+    impl Scratch {
+        fn new() -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("netferry-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn write(&self, name: &str, contents: &str) -> PathBuf {
+            let p = self.dir.join(name);
+            std::fs::write(&p, contents).unwrap();
+            p
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn empty_home() -> &'static Path {
+        Path::new("/")
+    }
+
+    #[test]
+    fn inlines_top_level_file_and_clears_path() {
+        let s = Scratch::new();
+        let key_path = s.write("id_ed25519", "PEM-CONTENTS-A");
+
+        let mut p = Profile::default();
+        p.identity_file = key_path.to_string_lossy().to_string();
+        p.identity_key = None;
+
+        inline_identities_for_export(&mut p, empty_home()).unwrap();
+
+        assert_eq!(p.identity_key.as_deref(), Some("PEM-CONTENTS-A"));
+        assert_eq!(p.identity_file, "");
+    }
+
+    #[test]
+    fn keeps_existing_inline_key_untouched() {
+        let mut p = Profile::default();
+        p.identity_key = Some("ALREADY-INLINE".to_string());
+        p.identity_file = "/some/path/that/should/not/be/read".to_string();
+
+        inline_identities_for_export(&mut p, empty_home()).unwrap();
+
+        assert_eq!(p.identity_key.as_deref(), Some("ALREADY-INLINE"));
+        assert_eq!(p.identity_file, "/some/path/that/should/not/be/read");
+    }
+
+    #[test]
+    fn both_empty_passes_through() {
+        let mut p = Profile::default();
+        // identity_file defaults to "" and identity_key to None.
+        inline_identities_for_export(&mut p, empty_home()).unwrap();
+        assert!(p.identity_key.is_none());
+        assert_eq!(p.identity_file, "");
+    }
+
+    #[test]
+    fn jump_host_file_inlined_and_path_cleared() {
+        let s = Scratch::new();
+        let jh_path = s.write("jump_id", "JUMP-PEM");
+
+        let mut p = Profile::default();
+        p.identity_key = Some("MAIN-INLINE".to_string());
+        p.jump_hosts = vec![JumpHost {
+            remote: "user@bastion".to_string(),
+            identity_file: Some(jh_path.to_string_lossy().to_string()),
+            identity_key: None,
+        }];
+
+        inline_identities_for_export(&mut p, empty_home()).unwrap();
+
+        assert_eq!(p.jump_hosts[0].identity_key.as_deref(), Some("JUMP-PEM"));
+        assert!(p.jump_hosts[0].identity_file.is_none());
+    }
+
+    #[test]
+    fn multiple_jump_hosts_only_file_based_inlined() {
+        let s = Scratch::new();
+        let path1 = s.write("jh1", "PEM-1");
+
+        let mut p = Profile::default();
+        p.identity_key = Some("MAIN".to_string());
+        p.jump_hosts = vec![
+            JumpHost {
+                remote: "user@a".to_string(),
+                identity_file: Some(path1.to_string_lossy().to_string()),
+                identity_key: None,
+            },
+            JumpHost {
+                remote: "user@b".to_string(),
+                identity_file: None,
+                identity_key: Some("INLINE-2".to_string()),
+            },
+            JumpHost {
+                remote: "user@c".to_string(),
+                identity_file: None,
+                identity_key: None,
+            },
+        ];
+
+        inline_identities_for_export(&mut p, empty_home()).unwrap();
+
+        assert_eq!(p.jump_hosts[0].identity_key.as_deref(), Some("PEM-1"));
+        assert!(p.jump_hosts[0].identity_file.is_none());
+        assert_eq!(p.jump_hosts[1].identity_key.as_deref(), Some("INLINE-2"));
+        assert_eq!(p.jump_hosts[2].identity_key, None);
+        assert_eq!(p.jump_hosts[2].identity_file, None);
+    }
+
+    #[test]
+    fn missing_file_returns_error_mentioning_path() {
+        let mut p = Profile::default();
+        p.identity_file = "/definitely/does/not/exist/netferry-test-key".to_string();
+
+        let err = inline_identities_for_export(&mut p, empty_home()).unwrap_err();
+        assert!(
+            err.contains("/definitely/does/not/exist/netferry-test-key"),
+            "error should mention the path that failed: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_jump_host_file_error_mentions_index() {
+        let mut p = Profile::default();
+        p.identity_key = Some("MAIN".to_string());
+        p.jump_hosts = vec![JumpHost {
+            remote: "user@x".to_string(),
+            identity_file: Some("/no/such/jump/key".to_string()),
+            identity_key: None,
+        }];
+
+        let err = inline_identities_for_export(&mut p, empty_home()).unwrap_err();
+        assert!(err.contains("jump host 1"), "error should name jump host 1: {err}");
+    }
+
+    #[test]
+    fn tilde_expanded_against_home() {
+        let s = Scratch::new();
+        // Place the key inside a synthetic "home" with a .ssh subdir.
+        let home = s.dir.join("fakehome");
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        let key_path = home.join(".ssh").join("id_rsa");
+        std::fs::write(&key_path, "TILDE-PEM").unwrap();
+
+        let mut p = Profile::default();
+        p.identity_file = "~/.ssh/id_rsa".to_string();
+
+        inline_identities_for_export(&mut p, &home).unwrap();
+
+        assert_eq!(p.identity_key.as_deref(), Some("TILDE-PEM"));
+        assert_eq!(p.identity_file, "");
+    }
 }

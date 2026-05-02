@@ -81,9 +81,13 @@ function ProfileAvatar({ profile, region }: { profile: Profile; region?: RegionI
 
 /** A profile is exportable when all identity material is inline (no file paths). */
 function isExportable(profile: Profile): boolean {
-  if (!profile.identityKey?.trim()) return false;
+  const hasMainCred =
+    !!profile.identityKey?.trim() || !!profile.identityFile?.trim();
+  if (!hasMainCred) return false;
   for (const jh of profile.jumpHosts ?? []) {
-    if (jh.identityFile?.trim() && !jh.identityKey?.trim()) return false;
+    const hasJumpCred =
+      !!jh.identityKey?.trim() || !!jh.identityFile?.trim();
+    if (!hasJumpCred) return false;
   }
   return true;
 }
