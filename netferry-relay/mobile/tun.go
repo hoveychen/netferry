@@ -181,6 +181,9 @@ func (tf *tunForwarder) handleTCP(r *tcp.ForwarderRequest) {
 	defer localConn.Close()
 
 	// Open mux channel directly (bypasses SOCKS5 — more efficient).
+	// The mux client increments ActiveTCP/TotalTCP in OpenTCP and decrements
+	// ActiveTCP in ClientConn.Close, and counts bytes in ClientConn.Read/Write,
+	// so we must NOT touch tf.counters for those here — it would double-count.
 	muxConn, err := tf.tunnel.OpenTCP(family, dstIP, dstPort, stats.DefaultPriority)
 	if err != nil {
 		log.Printf("tun: mux open %s:%d: %v", dstIP, dstPort, err)
@@ -188,32 +191,18 @@ func (tf *tunForwarder) handleTCP(r *tcp.ForwarderRequest) {
 	}
 	defer muxConn.Close()
 
-	if tf.counters != nil {
-		tf.counters.ActiveTCP.Add(1)
-		tf.counters.TotalTCP.Add(1)
-		defer tf.counters.ActiveTCP.Add(-1)
-	}
-
 	// Bidirectional copy.
 	const idleTimeout = 2 * time.Minute
 	done := make(chan struct{}, 2)
 
 	go func() {
-		copyWithStats(muxConn, localConn, idleTimeout, func(n int) {
-			if tf.counters != nil {
-				tf.counters.AddTx(int64(n))
-			}
-		})
+		copyWithStats(muxConn, localConn, idleTimeout, nil)
 		muxConn.CloseWrite()
 		done <- struct{}{}
 	}()
 
 	go func() {
-		copyWithStats(localConn, muxConn, idleTimeout, func(n int) {
-			if tf.counters != nil {
-				tf.counters.AddRx(int64(n))
-			}
-		})
+		copyWithStats(localConn, muxConn, idleTimeout, nil)
 		done <- struct{}{}
 	}()
 
