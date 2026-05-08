@@ -61,8 +61,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
 
-            let socksPort = self.engine?.getSOCKSPort() ?? 0
-            let dnsPort = self.engine?.getDNSPort() ?? 0
+            // If stopTunnel was invoked while engine.start was blocking on the
+            // SSH dial, the framework has already received our stop completion
+            // and self.engine has been nilled out. Calling
+            // setTunnelNetworkSettings on a tunnel the framework treats as
+            // stopped tears down the extension; bail out instead so the caller
+            // sees a clean cancellation.
+            guard let eng = self.engine else {
+                let cancelError = NSError(
+                    domain: "com.netferry.app.PacketTunnel",
+                    code: -999,
+                    userInfo: [NSLocalizedDescriptionKey: "Tunnel start cancelled by stop"]
+                )
+                NSLog("PacketTunnel: start raced with stop; aborting setup")
+                completionHandler(cancelError)
+                return
+            }
+
+            let socksPort = eng.getSOCKSPort()
+            let dnsPort = eng.getDNSPort()
 
             let settings = self.buildNetworkSettings(
                 configJSON: configJSON,

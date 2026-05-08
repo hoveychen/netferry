@@ -10,7 +10,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.VpnService
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.netferry.app.AppLog
 import com.netferry.app.MainActivity
@@ -26,7 +25,7 @@ import mobile.PlatformCallback
 class NetFerryVpnService : VpnService() {
 
     private var engine: mobile.Engine? = null
-    private var vpnInterface: ParcelFileDescriptor? = null
+    private var tunFd: Int = -1
     private var currentProfileName: String = ""
 
     // Tracks the device's current default network so we can ask the engine to
@@ -118,14 +117,23 @@ class NetFerryVpnService : VpnService() {
             }
 
             AppLog.d(TAG, "Calling builder.establish()...")
-            vpnInterface = builder.establish() ?: run {
+            val pfd = builder.establish() ?: run {
                 AppLog.e(TAG, "builder.establish() returned null")
                 _lastError.value = "VpnService.builder.establish() returned null (revoked or permission lost)"
                 _vpnState.value = VpnState.ERROR
                 stopSelf()
                 return START_NOT_STICKY
             }
-            AppLog.d(TAG, "VPN interface established, fd=${vpnInterface!!.fd}")
+            // Detach the fd so the Go engine becomes its sole owner. Holding the
+            // ParcelFileDescriptor and also handing its fd to os.NewFile in Go
+            // results in two independent closers for the same kernel fd; if the
+            // Java side closes first during disconnect, the kernel can recycle
+            // the fd before Engine.Stop's tunFile.Close runs, and that second
+            // close lands on whatever socket got the recycled number — easy to
+            // crash mid-handshake when the SSH dial is still racing.
+            tunFd = pfd.detachFd()
+            pfd.close() // cheap no-op after detachFd; releases the wrapper.
+            AppLog.d(TAG, "VPN interface established, fd=$tunFd")
 
             val callback = object : PlatformCallback {
                 override fun protectSocket(fd: Int): Boolean {
@@ -211,12 +219,12 @@ class NetFerryVpnService : VpnService() {
             //
             // Engine.Start() blocks until the tunnel is established, so run
             // on a background thread to avoid freezing the UI.
-            val tunFd = vpnInterface!!.fd
+            val startFd = tunFd
             AppLog.d(TAG, "Starting engine on background thread...")
             Thread {
                 try {
-                    eng.startWithTUN(configJson, tunFd)
-                    AppLog.d(TAG, "Engine started successfully with TUN fd=$tunFd")
+                    eng.startWithTUN(configJson, startFd)
+                    AppLog.d(TAG, "Engine started successfully with TUN fd=$startFd")
                     registerNetworkCallback()
                 } catch (e: Exception) {
                     // Only handle if we haven't been disconnected already
@@ -245,18 +253,15 @@ class NetFerryVpnService : VpnService() {
         _connectedProfileId.value = null
         unregisterNetworkCallback()
         val eng = engine
-        val vpnFd = vpnInterface
         engine = null
-        vpnInterface = null
+        tunFd = -1
 
-        // Close VPN interface FIRST on the main thread to tear down VPN routing
-        // immediately. Engine.Stop() also closes the underlying fd (no-op double
-        // close), so this is safe even if the background thread races.
-        try {
-            vpnFd?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error closing VPN interface", e)
-        }
+        // The Go engine owns the TUN fd (transferred via detachFd at establish
+        // time). Engine.Stop closes it eagerly before waiting for goroutines,
+        // so VPN routing tears down promptly even though Stop runs off the
+        // main thread. We deliberately do NOT close the fd here — doing so
+        // races Engine.Stop's tunFile.Close on the same kernel fd, which can
+        // close a recycled socket if the SSH dial is still in flight.
 
         // engine.stop() blocks (waits for Go goroutines), run off main thread
         Thread {
