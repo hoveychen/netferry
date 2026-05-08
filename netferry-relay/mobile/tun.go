@@ -249,9 +249,17 @@ func (tf *tunForwarder) handleUDP(r *udp.ForwarderRequest) {
 // the same fd can be reused across reconnections.
 func (tf *tunForwarder) Close() {
 	tf.cancel()
+	// A past read deadline forces the in-flight tunFile.Read in readFromTUN
+	// to return immediately so the goroutine can observe ctx.Done and exit.
+	// Without this, wg.Wait() below would block forever and the engine's
+	// reconnect watcher would never reach StateReconnecting.
+	_ = tf.tunFile.SetReadDeadline(time.Unix(1, 0))
 	tf.ep.Close()
 	tf.s.Close()
 	tf.wg.Wait()
+	// Restore an empty deadline so the next tunForwarder created on reconnect
+	// (sharing this fd) doesn't inherit our past-deadline state.
+	_ = tf.tunFile.SetReadDeadline(time.Time{})
 }
 
 // copyWithStats copies from src to dst with idle timeout and byte counting.

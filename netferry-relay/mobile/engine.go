@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/sshconn"
@@ -145,6 +146,13 @@ func (e *Engine) Start(configJSON string) error {
 // Use this on Android where VpnService.establish() returns a TUN fd.
 // On iOS, use Start() instead — traffic is routed via NEProxySettings.
 func (e *Engine) StartWithTUN(configJSON string, tunFD int32) error {
+	// Switch the fd to non-blocking BEFORE NewFile so the runtime registers
+	// it as pollable. Without this, tunForwarder.Close()'s SetReadDeadline
+	// silently no-ops and the readFromTUN goroutine never exits, deadlocking
+	// the engine's auto-reconnect path.
+	if err := syscall.SetNonblock(int(tunFD), true); err != nil {
+		return fmt.Errorf("set TUN fd non-blocking: %w", err)
+	}
 	// Wrap the fd in an os.File owned by the Engine. The Engine manages its
 	// lifecycle; tunForwarder borrows it without closing.
 	tunFile := os.NewFile(uintptr(tunFD), "tun")
@@ -246,6 +254,29 @@ func (e *Engine) GetDNSPort() int32 {
 		return 0
 	}
 	return int32(t.stack.DNSPort())
+}
+
+// NotifyNetworkChange is called by the platform (Android
+// ConnectivityManager.NetworkCallback) when the device's underlying
+// network changes (Wifi↔cellular, Wifi reconnect, etc.). The current
+// SSH connection is bound to the old interface and will hang silently
+// for up to ~30s before smux's KeepAliveTimeout notices.
+//
+// Closing the SSH clients here forces an immediate reconnect via the
+// existing reconnectWatcher path: AcceptStream errors, MuxClient.Run
+// returns, tunnelSession.Wait unblocks, and reconnectLoop dials a fresh
+// SSH on whatever interface is now primary.
+//
+// Safe to call when not connected — it's a no-op.
+func (e *Engine) NotifyNetworkChange() {
+	e.mu.Lock()
+	session := e.tunnel
+	e.mu.Unlock()
+	if session == nil {
+		return
+	}
+	log.Println("network change reported by platform; forcing SSH reconnect")
+	session.closeSSH()
 }
 
 // GetStats returns current tunnel statistics as a JSON string.

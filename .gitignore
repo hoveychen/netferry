@@ -5,6 +5,7 @@
 *~
 .vscode/
 .idea/
+TASKS.md
 
 # Python
 __pycache__/

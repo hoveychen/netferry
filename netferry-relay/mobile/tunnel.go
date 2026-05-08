@@ -200,6 +200,17 @@ func (s *tunnelSession) Wait() {
 	s.doneWg.Wait()
 }
 
+// closeSSH closes the underlying SSH clients without tearing down the
+// tunForwarder/stack. The next AcceptStream on the smux session errors,
+// MuxClient.Run() returns, doneWg drains, and reconnectWatcher's Wait()
+// unblocks — driving the existing reconnect path on demand instead of
+// waiting for the smux KeepAliveTimeout to fire.
+func (s *tunnelSession) closeSSH() {
+	for _, sc := range s.sshClients {
+		sc.Close()
+	}
+}
+
 // Stats returns a snapshot of current tunnel statistics.
 // Rate fields are computed as deltas since the last call.
 func (s *tunnelSession) Stats() statsSnapshot {

@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -26,6 +28,31 @@ class NetFerryVpnService : VpnService() {
     private var engine: mobile.Engine? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var currentProfileName: String = ""
+
+    // Tracks the device's current default network so we can ask the engine to
+    // reconnect proactively when it changes (Wifi↔cellular, Wifi reconnect,
+    // etc.). Without this the engine waits for smux's 30s KeepAliveTimeout
+    // before noticing the underlying interface died.
+    private var lastDefaultNetwork: Network? = null
+    private var networkCallbackRegistered = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val previous = lastDefaultNetwork
+            lastDefaultNetwork = network
+            if (previous != null && previous != network) {
+                AppLog.d(TAG, "default network changed ($previous -> $network); forcing SSH reconnect")
+                engine?.notifyNetworkChange()
+            }
+        }
+
+        override fun onLost(network: Network) {
+            if (lastDefaultNetwork == network) {
+                lastDefaultNetwork = null
+                AppLog.d(TAG, "default network lost ($network); forcing SSH reconnect")
+                engine?.notifyNetworkChange()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -190,6 +217,7 @@ class NetFerryVpnService : VpnService() {
                 try {
                     eng.startWithTUN(configJson, tunFd)
                     AppLog.d(TAG, "Engine started successfully with TUN fd=$tunFd")
+                    registerNetworkCallback()
                 } catch (e: Exception) {
                     // Only handle if we haven't been disconnected already
                     if (engine != null) {
@@ -215,6 +243,7 @@ class NetFerryVpnService : VpnService() {
     fun disconnect() {
         _vpnState.value = VpnState.DISCONNECTED
         _connectedProfileId.value = null
+        unregisterNetworkCallback()
         val eng = engine
         val vpnFd = vpnInterface
         engine = null
@@ -305,6 +334,30 @@ class NetFerryVpnService : VpnService() {
     private fun updateNotification(text: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        try {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            cm?.registerDefaultNetworkCallback(networkCallback)
+            networkCallbackRegistered = true
+            AppLog.d(TAG, "registered default network callback")
+        } catch (e: Exception) {
+            AppLog.e(TAG, "registerDefaultNetworkCallback failed", e)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        if (!networkCallbackRegistered) return
+        try {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            cm?.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            AppLog.e(TAG, "unregisterNetworkCallback failed", e)
+        }
+        networkCallbackRegistered = false
+        lastDefaultNetwork = null
     }
 
     private fun parseSubnets(json: String): List<String> {
