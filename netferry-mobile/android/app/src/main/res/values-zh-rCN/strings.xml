@@ -9,6 +9,10 @@
     <string name="action_connect">连接</string>
     <string name="action_disconnect">断开连接</string>
     <string name="action_disconnecting">断开中…</string>
+    <string name="action_undo">撤销</string>
+    <string name="disconnect_dialog_title">断开 VPN？</string>
+    <string name="disconnect_dialog_message">这将关闭当前活动的隧道。</string>
+    <string name="profile_deleted_snackbar">已删除配置「%s」</string>
     <string name="action_new_profile">新建配置</string>
     <string name="action_scan_qr">扫描二维码</string>
     <string name="action_settings">设置</string>
@@ -158,4 +162,8 @@
 
     <string name="vpn_notification_channel">VPN 状态</string>
     <string name="vpn_notification_title">NetFerry VPN</string>
+
+    <!-- Debug -->
+    <string name="settings_debug_logs">调试日志</string>
+    <string name="settings_no_logs_hint">还没有日志。试试连接一个配置。</string>
 </resources>

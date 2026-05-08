@@ -1,11 +1,17 @@
 package com.netferry.app.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +42,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,7 +54,10 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,6 +76,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netferry.app.R
@@ -73,6 +85,7 @@ import com.netferry.app.service.NetFerryVpnService
 import com.netferry.app.ui.theme.StatusGreen
 import com.netferry.app.ui.theme.StatusOrange
 import com.netferry.app.ui.theme.StatusRed
+import com.netferry.app.util.formatSpeedShort
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,6 +98,17 @@ fun ConnectionScreen(
     onDisconnect: () -> Unit,
     onBack: () -> Unit
 ) {
+    var showDisconnectConfirm by remember { mutableStateOf(false) }
+    if (showDisconnectConfirm) {
+        DisconnectConfirmDialog(
+            onConfirm = {
+                showDisconnectConfirm = false
+                onDisconnect()
+            },
+            onDismiss = { showDisconnectConfirm = false }
+        )
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -208,12 +232,21 @@ fun ConnectionScreen(
                 }
             }
 
-            Box(
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    val direction = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(animationSpec = tween(220)) { full -> direction * full } + fadeIn(tween(180)))
+                        .togetherWith(
+                            slideOutHorizontally(animationSpec = tween(220)) { full -> -direction * full } + fadeOut(tween(150))
+                        )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-            ) {
-                when (selectedTab) {
+                    .weight(1f),
+                label = "tab_content"
+            ) { tab ->
+                when (tab) {
                     0 -> {
                         // Speed chart
                         Box(
@@ -329,7 +362,7 @@ fun ConnectionScreen(
 
             // Disconnect button
             OutlinedButton(
-                onClick = onDisconnect,
+                onClick = { showDisconnectConfirm = true },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
@@ -356,6 +389,32 @@ fun ConnectionScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
+}
+
+@Composable
+internal fun DisconnectConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.disconnect_dialog_title)) },
+        text = { Text(stringResource(R.string.disconnect_dialog_message)) },
+        confirmButton = {
+            TextButton(onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onConfirm()
+            }) {
+                Text(
+                    stringResource(R.string.action_disconnect),
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }
 
 @Composable
@@ -469,12 +528,14 @@ internal fun StatCard(
                 text = value,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (subtitle.isNotEmpty()) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -507,6 +568,8 @@ internal fun StatsRow(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.End,
             color = MaterialTheme.colorScheme.onSurface
         )
     }
@@ -613,12 +676,3 @@ private fun niceYMax(maxBytes: Long): Float {
     return (maxBytes * 1.2f)
 }
 
-/** Format bytes/sec as a short label for Y-axis (e.g. "1 KB", "5 MB"). */
-private fun formatSpeedShort(bytesPerSec: Long): String {
-    return when {
-        bytesPerSec < 1024 -> "${bytesPerSec}B"
-        bytesPerSec < 1_048_576 -> "${bytesPerSec / 1024}K"
-        bytesPerSec < 1_073_741_824 -> "${bytesPerSec / 1_048_576}M"
-        else -> "${bytesPerSec / 1_073_741_824}G"
-    }
-}

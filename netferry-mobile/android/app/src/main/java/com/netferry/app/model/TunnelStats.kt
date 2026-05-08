@@ -2,6 +2,8 @@ package com.netferry.app.model
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.netferry.app.util.formatBytes
+import com.netferry.app.util.formatSpeed
 
 data class TunnelStats(
     @SerializedName("rxBytesPerSec")
@@ -27,24 +29,6 @@ data class TunnelStats(
                 gson.fromJson(json, TunnelStats::class.java) ?: TunnelStats()
             } catch (e: Exception) {
                 TunnelStats()
-            }
-        }
-
-        fun formatSpeed(bytesPerSec: Long): String {
-            return when {
-                bytesPerSec < 1024 -> "$bytesPerSec B/s"
-                bytesPerSec < 1024 * 1024 -> "%.1f KB/s".format(bytesPerSec / 1024.0)
-                bytesPerSec < 1024L * 1024 * 1024 -> "%.1f MB/s".format(bytesPerSec / (1024.0 * 1024))
-                else -> "%.2f GB/s".format(bytesPerSec / (1024.0 * 1024 * 1024))
-            }
-        }
-
-        fun formatBytes(bytes: Long): String {
-            return when {
-                bytes < 1024 -> "$bytes B"
-                bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-                bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
-                else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
             }
         }
     }

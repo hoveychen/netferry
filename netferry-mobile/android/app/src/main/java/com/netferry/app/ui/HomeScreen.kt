@@ -65,8 +65,8 @@ import androidx.compose.ui.unit.sp
 import com.netferry.app.R
 import com.netferry.app.model.Profile
 import com.netferry.app.model.TunnelStats
-import com.netferry.app.model.TunnelStats.Companion.formatBytes
 import com.netferry.app.service.NetFerryVpnService
+import com.netferry.app.util.formatBytes
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -355,7 +355,17 @@ private fun ConnectingHome(
                 )
             }
         } else {
-            // Indeterminate progress (no deploy or already up-to-date)
+            // No deploy progress (server is up-to-date or hasn't started uploading).
+            // Show the generic "Connecting…" label so the user sees something concrete
+            // instead of a bare indeterminate bar.
+            Text(
+                text = stringResource(R.string.connection_connecting),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             LinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -398,6 +408,16 @@ private fun ConnectedHome(
     onDisconnect: () -> Unit
 ) {
     var logsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
+    if (showDisconnectConfirm) {
+        DisconnectConfirmDialog(
+            onConfirm = {
+                showDisconnectConfirm = false
+                onDisconnect()
+            },
+            onDismiss = { showDisconnectConfirm = false }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -566,7 +586,7 @@ private fun ConnectedHome(
 
         // Disconnect button
         OutlinedButton(
-            onClick = onDisconnect,
+            onClick = { showDisconnectConfirm = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),

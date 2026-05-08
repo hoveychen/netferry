@@ -5,6 +5,7 @@
 "delete" = "Delete";
 "done" = "Done";
 "ok" = "OK";
+"close" = "Close";
 
 /* Common errors */
 "error.unknown" = "Unknown error";
@@ -85,7 +86,10 @@
 "connection.connected" = "Connected";
 "connection.disconnected" = "Disconnected";
 "connection.error" = "Connection Error";
+"connection.connect" = "Connect";
 "connection.disconnect" = "Disconnect";
+"connection.disconnect.title" = "Disconnect VPN?";
+"connection.disconnect.message" = "This will close the active tunnel.";
 "connection.download" = "Download";
 "connection.upload" = "Upload";
 "connection.activeConns" = "Active";
@@ -125,6 +129,17 @@
 "qr.cameraPermission" = "Camera permission is required to scan QR codes.";
 "qr.invalidCode" = "Not a NetFerry QR code";
 "qr.importFailed" = "Import failed: %@";
+"qr.requesting" = "Requesting camera access…";
+"qr.scanError" = "Scan Error";
+"qr.imported.title" = "Profile Imported";
+"qr.imported.message" = "Successfully imported \"%@\".";
+"qr.imported.fallback" = "Profile imported successfully.";
+"qr.point.camera" = "Point camera at a NetFerry QR code";
+"qr.cameraRequired.title" = "Camera Access Required";
+"qr.cameraRequired.desc" = "NetFerry needs camera access to scan QR codes. Please enable it in Settings.";
+"qr.openSettings" = "Open Settings";
+
+"connection.speedHistory" = "Speed History";
 
 /* Navigation Tabs */
 "nav.home" = "Connection";

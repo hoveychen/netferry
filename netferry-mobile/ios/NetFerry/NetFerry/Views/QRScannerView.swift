@@ -27,32 +27,32 @@ struct QRScannerView: View {
                 } else if cameraPermission == .denied || cameraPermission == .restricted {
                     cameraPermissionDenied
                 } else {
-                    ProgressView("Requesting camera access...")
+                    ProgressView(L("qr.requesting"))
                 }
             }
-            .navigationTitle("Scan QR Code")
+            .navigationTitle(L("qr.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(L("cancel")) {
                         dismiss()
                     }
                 }
             }
-            .alert("Scan Error", isPresented: $showingError) {
-                Button("OK", role: .cancel) {}
+            .alert(L("qr.scanError"), isPresented: $showingError) {
+                Button(L("ok"), role: .cancel) {}
             } message: {
-                Text(errorMessage ?? "Unknown error")
+                Text(errorMessage ?? L("error.unknown"))
             }
-            .alert("Profile Imported", isPresented: $showingSuccess) {
-                Button("OK") {
+            .alert(L("qr.imported.title"), isPresented: $showingSuccess) {
+                Button(L("ok")) {
                     dismiss()
                 }
             } message: {
                 if let profile = importedProfile {
-                    Text("Successfully imported \"\(profile.displayName)\".")
+                    Text(String(format: L("qr.imported.message"), profile.displayName))
                 } else {
-                    Text("Profile imported successfully.")
+                    Text(L("qr.imported.fallback"))
                 }
             }
             .task {
@@ -78,7 +78,7 @@ struct QRScannerView: View {
             // Progress indicator
             VStack(spacing: 8) {
                 if totalChunks > 0 {
-                    Text("Scanned \(chunks.count)/\(totalChunks)")
+                    Text(String(format: L("qr.progress"), chunks.count, totalChunks))
                         .font(.headline)
                         .foregroundStyle(.white)
 
@@ -86,7 +86,7 @@ struct QRScannerView: View {
                         .tint(.white)
                         .frame(width: 200)
                 } else {
-                    Text("Point camera at a NetFerry QR code")
+                    Text(L("qr.point.camera"))
                         .font(.subheadline)
                         .foregroundStyle(.white)
                 }
@@ -102,11 +102,11 @@ struct QRScannerView: View {
 
     private var cameraPermissionDenied: some View {
         ContentUnavailableView {
-            Label("Camera Access Required", systemImage: "camera.fill")
+            Label(L("qr.cameraRequired.title"), systemImage: "camera.fill")
         } description: {
-            Text("NetFerry needs camera access to scan QR codes. Please enable it in Settings.")
+            Text(L("qr.cameraRequired.desc"))
         } actions: {
-            Button("Open Settings") {
+            Button(L("qr.openSettings")) {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +58,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -136,6 +140,7 @@ fun ProfileDetailScreen(
     }
 
     if (showDeleteDialog && onDelete != null) {
+        val haptic = LocalHapticFeedback.current
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text(stringResource(R.string.profile_delete_title)) },
@@ -143,6 +148,7 @@ fun ProfileDetailScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         showDeleteDialog = false
                         onDelete()
                     }
@@ -775,6 +781,7 @@ private fun SegmentedButtons(
                 options.lastIndex -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
                 else -> RoundedCornerShape(0.dp)
             }
+            val interactionSource = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -789,7 +796,10 @@ private fun SegmentedButtons(
                         if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                         else MaterialTheme.colorScheme.surface
                     )
-                    .clickable { onSelected(value) }
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = rememberRipple(bounded = true)
+                    ) { onSelected(value) }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {

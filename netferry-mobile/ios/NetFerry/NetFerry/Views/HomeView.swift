@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UIKit
 
 struct HomeView: View {
     @Environment(VPNManager.self) private var vpnManager
@@ -7,6 +8,7 @@ struct HomeView: View {
     @State private var selectedProfileID: UUID?
     @State private var speedHistory: [SpeedSample] = []
     @State private var showLogs = false
+    @State private var showDisconnectConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -84,7 +86,7 @@ struct HomeView: View {
                     Button {
                         connectSelected()
                     } label: {
-                        Label("Connect", systemImage: "bolt.shield.fill")
+                        Label(L("connection.connect"), systemImage: "bolt.shield.fill")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
@@ -133,9 +135,14 @@ struct HomeView: View {
                     .padding(.horizontal, 24)
                 }
             } else {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .padding()
+                VStack(spacing: 12) {
+                    Text(L("connection.connecting"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .controlSize(.large)
+                }
+                .padding()
             }
 
             Button {
@@ -204,6 +211,17 @@ struct HomeView: View {
                             .foregroundStyle(.purple)
                             .interpolationMethod(.catmullRom)
                         }
+                        .chartYAxis {
+                            AxisMarks(position: .leading) { value in
+                                AxisGridLine()
+                                AxisValueLabel {
+                                    if let kbs = value.as(Double.self) {
+                                        Text(ByteFormatter.speedShort(kbs * 1024))
+                                            .font(.caption2.monospacedDigit())
+                                    }
+                                }
+                            }
+                        }
                         .chartXAxis(.hidden)
                         .chartLegend(.visible)
                         .frame(height: 120)
@@ -223,18 +241,34 @@ struct HomeView: View {
 
                 // Collapsible logs
                 DisclosureGroup(L("home.logs"), isExpanded: $showLogs) {
-                    Text("Engine logs appear here when connected.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
+                    if vpnManager.logs.isEmpty {
+                        Text(L("connection.noLogs"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(vpnManager.logs.indices, id: \.self) { i in
+                                    Text(vpnManager.logs[i])
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 200)
+                        .padding(.vertical, 4)
+                    }
                 }
                 .padding()
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
                 // Disconnect
                 Button {
-                    vpnManager.disconnect()
+                    showDisconnectConfirm = true
                 } label: {
                     Label(L("connection.disconnect"), systemImage: "stop.circle.fill")
                         .font(.headline)
@@ -245,6 +279,19 @@ struct HomeView: View {
                 .tint(.red)
             }
             .padding()
+        }
+        .confirmationDialog(
+            L("connection.disconnect.title"),
+            isPresented: $showDisconnectConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(L("connection.disconnect"), role: .destructive) {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                vpnManager.disconnect()
+            }
+            Button(L("cancel"), role: .cancel) {}
+        } message: {
+            Text(L("connection.disconnect.message"))
         }
     }
 

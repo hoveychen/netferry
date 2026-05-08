@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProfileDetailView: View {
     @Environment(ProfileStore.self) private var store
@@ -7,6 +8,7 @@ struct ProfileDetailView: View {
     @State private var profile: Profile
     @State private var subnetsText: String
     @State private var excludeSubnetsText: String
+    @State private var showDeleteConfirm = false
 
     private let isNew: Bool
 
@@ -32,8 +34,7 @@ struct ProfileDetailView: View {
             if !isNew {
                 Section {
                     Button(L("profile.delete.confirm"), role: .destructive) {
-                        store.delete(profile)
-                        dismiss()
+                        showDeleteConfirm = true
                     }
                 }
             }
@@ -42,6 +43,20 @@ struct ProfileDetailView: View {
             ? L("profile.new")
             : L("profile.edit"))
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            L("profile.delete.title"),
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(L("profile.delete.confirm"), role: .destructive) {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                store.delete(profile)
+                dismiss()
+            }
+            Button(L("cancel"), role: .cancel) {}
+        } message: {
+            Text(String(format: L("profile.delete.message"), profile.name))
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button(L("cancel")) { dismiss() }

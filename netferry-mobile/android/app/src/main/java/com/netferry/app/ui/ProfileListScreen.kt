@@ -36,6 +36,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -43,7 +47,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,6 +101,30 @@ fun ProfileListScreen(
     val context = LocalContext.current
     val importSuccessMsg = stringResource(R.string.import_success)
     val importFailedMsg = stringResource(R.string.import_failed)
+    val snackbarHostState = remember { SnackbarHostState() }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    val visibleProfiles = profiles.filterNot { it.id == pendingDeleteId }
+    val deletedSnackbarTpl = stringResource(R.string.profile_deleted_snackbar)
+    val undoLabel = stringResource(R.string.action_undo)
+
+    LaunchedEffect(pendingDeleteId) {
+        val pendingId = pendingDeleteId ?: return@LaunchedEffect
+        val profile = profiles.firstOrNull { it.id == pendingId } ?: run {
+            pendingDeleteId = null
+            return@LaunchedEffect
+        }
+        val result = snackbarHostState.showSnackbar(
+            message = String.format(deletedSnackbarTpl, profile.name),
+            actionLabel = undoLabel,
+            duration = SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            pendingDeleteId = null
+        } else {
+            onDelete(profile)
+            pendingDeleteId = null
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -114,6 +147,7 @@ fun ProfileListScreen(
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -156,7 +190,7 @@ fun ProfileListScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        if (profiles.isEmpty()) {
+        if (visibleProfiles.isEmpty()) {
             // Empty state
             Box(
                 modifier = Modifier
@@ -228,7 +262,7 @@ fun ProfileListScreen(
             ) {
                 item { Spacer(modifier = Modifier.height(4.dp)) }
 
-                items(profiles, key = { it.id }) { profile ->
+                items(visibleProfiles, key = { it.id }) { profile ->
                     val isConnected = profile.id == connectedProfileId &&
                         vpnState == NetFerryVpnService.VpnState.CONNECTED
                     val isConnecting = profile.id == connectedProfileId &&
@@ -237,7 +271,7 @@ fun ProfileListScreen(
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = {
                             if (it == SwipeToDismissBoxValue.EndToStart) {
-                                onDelete(profile)
+                                pendingDeleteId = profile.id
                                 true
                             } else {
                                 false

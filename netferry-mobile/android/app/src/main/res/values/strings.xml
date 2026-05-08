@@ -11,6 +11,10 @@
     <string name="action_connect">Connect</string>
     <string name="action_disconnect">Disconnect</string>
     <string name="action_disconnecting">Disconnecting…</string>
+    <string name="action_undo">Undo</string>
+    <string name="disconnect_dialog_title">Disconnect VPN?</string>
+    <string name="disconnect_dialog_message">This will close the active tunnel.</string>
+    <string name="profile_deleted_snackbar">Profile \"%s\" deleted</string>
     <string name="action_new_profile">New Profile</string>
     <string name="action_scan_qr">Scan QR Code</string>
     <string name="action_settings">Settings</string>
@@ -169,4 +173,8 @@
     <!-- VPN Notification -->
     <string name="vpn_notification_channel">VPN Status</string>
     <string name="vpn_notification_title">NetFerry VPN</string>
+
+    <!-- Debug -->
+    <string name="settings_debug_logs">DEBUG LOGS</string>
+    <string name="settings_no_logs_hint">No logs yet. Try connecting to a profile.</string>
 </resources>

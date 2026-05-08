@@ -117,6 +117,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             } else {
                 completionHandler?(nil)
             }
+        case "logs":
+            let logs = tunnelCallback?.recentLogs ?? []
+            let data = (try? JSONSerialization.data(withJSONObject: logs)) ?? Data("[]".utf8)
+            completionHandler?(data)
         default:
             completionHandler?(nil)
         }
@@ -277,7 +281,28 @@ class TunnelCallback: NSObject, MobilePlatformCallbackProtocol {
     func onLog(_ msg: String?) {
         guard let msg else { return }
         NSLog("PacketTunnel: \(msg)")
+        let entry = "\(TunnelCallback.timeFormatter.string(from: Date())) \(msg)"
+        logLock.lock()
+        _recentLogs.append(entry)
+        if _recentLogs.count > 200 {
+            _recentLogs.removeFirst(_recentLogs.count - 200)
+        }
+        logLock.unlock()
     }
+
+    /// Snapshot of the most recent log lines, safe to read from any thread.
+    var recentLogs: [String] {
+        logLock.lock()
+        defer { logLock.unlock() }
+        return _recentLogs
+    }
+    private var _recentLogs: [String] = []
+    private let logLock = NSLock()
+    fileprivate static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     func onStats(_ statsJSON: String?) {
         // Stats are retrieved on demand via handleAppMessage.

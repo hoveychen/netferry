@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -183,7 +185,7 @@ fun SettingsScreen(
 
             // ── DEBUG LOGS (dev builds only) ───────────────────────────
             if (BuildConfig.DEBUG) {
-            SettingsSectionHeader("DEBUG LOGS")
+            SettingsSectionHeader(stringResource(R.string.settings_debug_logs))
 
             val debugLogs by AppLog.lines.collectAsState()
 
@@ -191,7 +193,7 @@ fun SettingsScreen(
                 Column(modifier = Modifier.padding(12.dp)) {
                     if (debugLogs.isEmpty()) {
                         Text(
-                            "No logs yet. Try connecting to a profile.",
+                            stringResource(R.string.settings_no_logs_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(4.dp)
@@ -295,6 +297,7 @@ private fun SettingsSegmentedButtons(
                 options.lastIndex -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
                 else -> RoundedCornerShape(0.dp)
             }
+            val interactionSource = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -309,7 +312,10 @@ private fun SettingsSegmentedButtons(
                         if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                         else MaterialTheme.colorScheme.surface
                     )
-                    .clickable { onSelected(value) }
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = rememberRipple(bounded = true)
+                    ) { onSelected(value) }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {

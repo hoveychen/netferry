@@ -32,16 +32,19 @@ struct ProfileListView: View {
                         } label: {
                             Image(systemName: "doc.badge.plus")
                         }
+                        .accessibilityLabel(L("import.file"))
                         Button {
                             showingQRScanner = true
                         } label: {
                             Image(systemName: "qrcode.viewfinder")
                         }
+                        .accessibilityLabel(L("profiles.scanQr"))
                         Button {
                             showingNewProfile = true
                         } label: {
                             Image(systemName: "plus")
                         }
+                        .accessibilityLabel(L("profiles.add"))
                     }
                 }
             }
@@ -226,6 +229,7 @@ private struct ProfileRow: View {
                 if isConnected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                        .accessibilityLabel(L("connection.connected"))
                 } else {
                     Button {
                         onConnect()
@@ -235,6 +239,7 @@ private struct ProfileRow: View {
                             .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(L("connection.connect"))
                 }
             }
             .padding(.vertical, 4)

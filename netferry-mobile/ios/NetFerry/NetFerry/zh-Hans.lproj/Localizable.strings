@@ -5,6 +5,7 @@
 "delete" = "删除";
 "done" = "完成";
 "ok" = "好";
+"close" = "关闭";
 
 /* Common errors */
 "error.unknown" = "未知错误";
@@ -85,7 +86,10 @@
 "connection.connected" = "已连接";
 "connection.disconnected" = "已断开";
 "connection.error" = "连接错误";
+"connection.connect" = "连接";
 "connection.disconnect" = "断开连接";
+"connection.disconnect.title" = "断开 VPN？";
+"connection.disconnect.message" = "这将关闭当前活动的隧道。";
 "connection.download" = "下载";
 "connection.upload" = "上传";
 "connection.activeConns" = "活跃";
@@ -125,6 +129,17 @@
 "qr.cameraPermission" = "扫描二维码需要相机权限。";
 "qr.invalidCode" = "不是 NetFerry 二维码";
 "qr.importFailed" = "导入失败：%@";
+"qr.requesting" = "正在请求相机权限…";
+"qr.scanError" = "扫描错误";
+"qr.imported.title" = "已导入配置";
+"qr.imported.message" = "已成功导入「%@」。";
+"qr.imported.fallback" = "配置导入成功。";
+"qr.point.camera" = "将相机对准 NetFerry 二维码";
+"qr.cameraRequired.title" = "需要相机权限";
+"qr.cameraRequired.desc" = "扫描二维码需要相机权限，请在「设置」中开启。";
+"qr.openSettings" = "打开设置";
+
+"connection.speedHistory" = "速度历史";
 
 /* Navigation Tabs */
 "nav.home" = "连接";

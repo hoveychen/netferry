@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UIKit
 
 struct ConnectionView: View {
     @Environment(VPNManager.self) private var vpnManager
@@ -7,6 +8,7 @@ struct ConnectionView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var speedHistory: [SpeedSample] = []
     @State private var showingLogs = false
+    @State private var showDisconnectConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -20,7 +22,7 @@ struct ConnectionView: View {
                 disconnectButton
             }
             .padding()
-            .navigationTitle("Connection")
+            .navigationTitle(L("connection.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -30,6 +32,7 @@ struct ConnectionView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityLabel(L("close"))
                 }
             }
             .onChange(of: vpnManager.stats) { _, newStats in
@@ -39,6 +42,19 @@ struct ConnectionView: View {
                 if newValue == .disconnected {
                     dismiss()
                 }
+            }
+            .confirmationDialog(
+                L("connection.disconnect.title"),
+                isPresented: $showDisconnectConfirm,
+                titleVisibility: .visible
+            ) {
+                Button(L("connection.disconnect"), role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    vpnManager.disconnect()
+                }
+                Button(L("cancel"), role: .cancel) {}
+            } message: {
+                Text(L("connection.disconnect.message"))
             }
         }
     }
@@ -94,14 +110,14 @@ struct ConnectionView: View {
     private var speedCards: some View {
         HStack(spacing: 16) {
             SpeedCard(
-                title: "Download",
+                title: L("connection.download"),
                 speed: vpnManager.stats.formattedRxSpeed,
                 total: vpnManager.stats.formattedTotalRx,
                 icon: "arrow.down.circle.fill",
                 color: .blue
             )
             SpeedCard(
-                title: "Upload",
+                title: L("connection.upload"),
                 speed: vpnManager.stats.formattedTxSpeed,
                 total: vpnManager.stats.formattedTotalTx,
                 icon: "arrow.up.circle.fill",
@@ -112,7 +128,7 @@ struct ConnectionView: View {
 
     private var speedChart: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Speed History")
+            Text(L("connection.speedHistory"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -133,7 +149,17 @@ struct ConnectionView: View {
                 .foregroundStyle(.purple)
                 .interpolationMethod(.catmullRom)
             }
-            .chartYAxisLabel("KB/s")
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let kbs = value.as(Double.self) {
+                            Text(ByteFormatter.speedShort(kbs * 1024))
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                }
+            }
             .chartXAxis(.hidden)
             .chartLegend(.visible)
             .frame(height: 120)
@@ -144,9 +170,9 @@ struct ConnectionView: View {
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            StatItem(title: "Active", value: "\(vpnManager.stats.activeConns)")
-            StatItem(title: "Total Conns", value: "\(vpnManager.stats.totalConns)")
-            StatItem(title: "DNS Queries", value: "\(vpnManager.stats.dnsQueries)")
+            StatItem(title: L("connection.activeConns"), value: "\(vpnManager.stats.activeConns)")
+            StatItem(title: L("connection.totalConns"), value: "\(vpnManager.stats.totalConns)")
+            StatItem(title: L("connection.dnsQueries"), value: "\(vpnManager.stats.dnsQueries)")
         }
         .padding()
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -154,9 +180,9 @@ struct ConnectionView: View {
 
     private var disconnectButton: some View {
         Button {
-            vpnManager.disconnect()
+            showDisconnectConfirm = true
         } label: {
-            Label("Disconnect", systemImage: "stop.circle.fill")
+            Label(L("connection.disconnect"), systemImage: "stop.circle.fill")
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)

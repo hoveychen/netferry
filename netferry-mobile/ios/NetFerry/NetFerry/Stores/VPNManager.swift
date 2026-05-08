@@ -18,12 +18,15 @@ final class VPNManager {
     /// Most recent tunnel-extension failure message read from the App Group.
     /// Consumers show an alert, then call `dismissLastError()` to clear.
     private(set) var lastError: String?
+    /// Recent engine log lines pulled from the PacketTunnel extension.
+    private(set) var logs: [String] = []
 
     private var manager: NETunnelProviderManager?
     // nonisolated(unsafe) allows deinit to access these for cleanup.
     nonisolated(unsafe) private var statusObserver: NSObjectProtocol?
     nonisolated(unsafe) private var statsTimer: Timer?
     nonisolated(unsafe) private var deployTimer: Timer?
+    nonisolated(unsafe) private var logTimer: Timer?
 
     init() {
         startObservingStatus()
@@ -38,6 +41,7 @@ final class VPNManager {
         }
         statsTimer?.invalidate()
         deployTimer?.invalidate()
+        logTimer?.invalidate()
     }
 
     var isConnected: Bool {
@@ -148,6 +152,12 @@ final class VPNManager {
                     self.stopDeployPolling()
                 }
 
+                if vpnStatus == .connecting || vpnStatus == .connected || vpnStatus == .reasserting {
+                    self.startLogPolling()
+                } else {
+                    self.stopLogPolling()
+                }
+
                 if vpnStatus == .connected {
                     self.startStatsPolling()
                     self.deployProgress = nil
@@ -228,6 +238,35 @@ final class VPNManager {
         }
     }
 
+    private func startLogPolling() {
+        stopLogPolling()
+        logTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollLogs()
+            }
+        }
+    }
+
+    private func stopLogPolling() {
+        logTimer?.invalidate()
+        logTimer = nil
+    }
+
+    private func pollLogs() {
+        guard let session = manager?.connection as? NETunnelProviderSession else { return }
+        do {
+            try session.sendProviderMessage("logs".data(using: .utf8)!) { [weak self] response in
+                guard let self, let data = response,
+                      let parsed = try? JSONSerialization.jsonObject(with: data) as? [String] else { return }
+                Task { @MainActor in
+                    self.logs = parsed
+                }
+            }
+        } catch {
+            // Extension may not be ready yet during early connecting phase.
+        }
+    }
+
     enum VPNError: LocalizedError {
         case invalidConfiguration
 
@@ -269,9 +308,6 @@ struct DeployProgress: Equatable {
     }
 
     static func formatBytes(_ bytes: Int64) -> String {
-        if bytes < 1024 { return "\(bytes) B" }
-        if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
-        if bytes < 1024 * 1024 * 1024 { return String(format: "%.1f MB", Double(bytes) / (1024 * 1024)) }
-        return String(format: "%.2f GB", Double(bytes) / (1024 * 1024 * 1024))
+        ByteFormatter.bytes(bytes)
     }
 }
