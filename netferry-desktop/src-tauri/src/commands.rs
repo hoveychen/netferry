@@ -323,6 +323,40 @@ pub fn register_helper() -> Result<bool, String> {
     }
 }
 
+/// Unregisters the macOS privileged helper daemon. Returns Ok(true) on
+/// success, Ok(false) if not applicable (non-macOS / OS too old), Err on
+/// SMAppService failure. Surface for the Settings "Uninstall" button.
+#[tauri::command]
+pub fn unregister_helper() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::helper_ipc::unregister_helper()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(false)
+    }
+}
+
+/// Opens the macOS "Login Items & Extensions" pane in System Settings so the
+/// user can manually toggle or grant permission to the helper. macOS 13+ only.
+#[tauri::command]
+pub fn open_login_items_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+            .status()
+            .map_err(|e| format!("Failed to open System Settings: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Only available on macOS".to_string())
+    }
+}
+
 /// Set the native window theme so the vibrancy effect matches the app's chosen theme.
 /// `theme` should be "light", "dark", or "system".
 #[tauri::command]

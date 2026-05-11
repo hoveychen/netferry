@@ -182,6 +182,8 @@ pub fn run() {
             commands::import_profile_from_file,
             commands::get_helper_status,
             commands::register_helper,
+            commands::unregister_helper,
+            commands::open_login_items_settings,
             commands::set_window_theme,
             commands::get_app_version,
             commands::get_tunnel_version,

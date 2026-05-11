@@ -323,7 +323,21 @@
     "trayNone": "Nothing",
     "about": "About",
     "appVersion": "App Version",
-    "tunnelVersion": "Engine Version"
+    "tunnelVersion": "Engine Version",
+    "privilegedHelper": "Privileged Helper",
+    "privilegedHelperDesc": "Background service that sets up VPN routes without per-connection password prompts. Uninstall reverts to sudo askpass on every connect.",
+    "helperStatus": "Status",
+    "helperStatusEnabled": "Enabled",
+    "helperStatusRequiresApproval": "Requires approval in Login Items",
+    "helperStatusNotRegistered": "Not registered",
+    "helperStatusNotFound": "Not found",
+    "helperRefresh": "Refresh",
+    "helperInstall": "Install",
+    "helperUninstall": "Uninstall",
+    "helperOpenLoginItems": "Open Login Items",
+    "helperUninstallConfirmTitle": "Uninstall the privileged helper?",
+    "helperUninstallConfirmBody": "The next connect will fall back to a sudo password prompt. You can reinstall here at any time.",
+    "helperWorking": "Working…"
   },
   "update": {
     "available": "A new version (v{{version}}) is available!",

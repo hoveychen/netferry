@@ -135,6 +135,14 @@ export function registerHelper() {
   return invoke<boolean>("register_helper");
 }
 
+export function unregisterHelper() {
+  return invoke<boolean>("unregister_helper");
+}
+
+export function openLoginItemsSettings() {
+  return invoke<void>("open_login_items_settings");
+}
+
 export function getAppVersion() {
   return invoke<string>("get_app_version");
 }

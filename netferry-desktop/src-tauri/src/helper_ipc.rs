@@ -36,6 +36,24 @@ pub enum HelperStatus {
     OsTooOld, // macOS < 13
 }
 
+/// Unregister the privileged helper daemon. Returns `Ok(true)` on success,
+/// `Ok(false)` when macOS is too old to support SMAppService, or `Err` when
+/// SMAppService reports a failure.
+///
+/// Surface for the Settings "Uninstall" button — restart_helper() already does
+/// this internally during recovery, but the Settings UI needs a one-shot.
+pub fn unregister_helper() -> Result<bool, String> {
+    match unsafe { netferry_unregister_helper() } {
+        0 => Ok(true),
+        -2 => Ok(false), // OS too old / SMAppService unavailable
+        _ => Err(
+            "Failed to unregister the privileged helper. \
+             Open System Settings → Login Items & Extensions and remove it manually."
+                .to_string(),
+        ),
+    }
+}
+
 pub fn helper_status() -> HelperStatus {
     match unsafe { netferry_helper_status() } {
         0 => HelperStatus::NotRegistered,

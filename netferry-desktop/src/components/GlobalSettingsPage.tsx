@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDownUp, Monitor, Moon, Sun, Unplug, EyeOff } from "lucide-react";
-import { getAppVersion, getTunnelVersion } from "@/api";
+import { ArrowDownUp, Monitor, Moon, Sun, Unplug, EyeOff, RotateCw, Download, Trash2, ExternalLink } from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
+import {
+  getAppVersion,
+  getTunnelVersion,
+  getHelperStatus,
+  registerHelper,
+  unregisterHelper,
+  openLoginItemsSettings,
+  type HelperStatus,
+} from "@/api";
 
 import type { GlobalSettings, Profile, TrayDisplayMode } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -23,11 +32,74 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   const [theme, setTheme] = useState<ThemeMode>(getThemeMode);
   const [appVersion, setAppVersion] = useState("");
   const [tunnelVersion, setTunnelVersion] = useState("");
+  const [helperStatus, setHelperStatus] = useState<HelperStatus | null>(null);
+  const [helperWorking, setHelperWorking] = useState(false);
 
   useEffect(() => {
     getAppVersion().then(setAppVersion).catch(() => {});
     getTunnelVersion().then(setTunnelVersion).catch(() => {});
+    getHelperStatus().then(setHelperStatus).catch(() => setHelperStatus(null));
   }, []);
+
+  const refreshHelperStatus = async () => {
+    try {
+      setHelperStatus(await getHelperStatus());
+    } catch {
+      setHelperStatus(null);
+    }
+  };
+
+  const handleHelperInstall = async () => {
+    setHelperWorking(true);
+    try {
+      await registerHelper();
+    } catch (e) {
+      console.error("helper install failed", e);
+    } finally {
+      await refreshHelperStatus();
+      setHelperWorking(false);
+    }
+  };
+
+  const handleHelperUninstall = async () => {
+    const ok = await ask(t("settings.helperUninstallConfirmBody"), {
+      title: t("settings.helperUninstallConfirmTitle"),
+      kind: "warning",
+    });
+    if (!ok) return;
+    setHelperWorking(true);
+    try {
+      await unregisterHelper();
+    } catch (e) {
+      console.error("helper uninstall failed", e);
+    } finally {
+      await refreshHelperStatus();
+      setHelperWorking(false);
+    }
+  };
+
+  const handleOpenLoginItems = async () => {
+    try {
+      await openLoginItemsSettings();
+    } catch (e) {
+      console.error("open login items failed", e);
+    }
+  };
+
+  const helperVisible =
+    helperStatus !== null && helperStatus !== "not_macos" && helperStatus !== "os_too_old";
+  const helperStatusLabel: Partial<Record<HelperStatus, string>> = {
+    enabled: t("settings.helperStatusEnabled"),
+    requires_approval: t("settings.helperStatusRequiresApproval"),
+    not_registered: t("settings.helperStatusNotRegistered"),
+    not_found: t("settings.helperStatusNotFound"),
+  };
+  const helperStatusTone =
+    helperStatus === "enabled"
+      ? "text-success"
+      : helperStatus === "requires_approval"
+        ? "text-warning"
+        : "text-t3";
 
   const save = async () => {
     setSaving(true);
@@ -179,6 +251,51 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
               </Select>
             </div>
           </div>
+
+          {helperVisible && (
+            <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+              <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+                {t("settings.privilegedHelper")}
+              </p>
+              <p className="mb-4 text-xs leading-relaxed text-t3">
+                {t("settings.privilegedHelperDesc")}
+              </p>
+              <div className="mb-4 flex items-center gap-2 text-sm">
+                <span className="text-t2">{t("settings.helperStatus")}:</span>
+                <span className={`font-medium ${helperStatusTone}`}>
+                  {helperStatusLabel[helperStatus!] ?? helperStatus}
+                </span>
+                <button
+                  type="button"
+                  className="ml-1 rounded p-1 text-t4 transition-colors hover:bg-ov-8 hover:text-t2 disabled:opacity-40"
+                  onClick={refreshHelperStatus}
+                  disabled={helperWorking}
+                  title={t("settings.helperRefresh")}
+                  aria-label={t("settings.helperRefresh")}
+                >
+                  <RotateCw className={`h-3.5 w-3.5 ${helperWorking ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleHelperInstall} disabled={helperWorking}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  {helperWorking ? t("settings.helperWorking") : t("settings.helperInstall")}
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleHelperUninstall}
+                  disabled={helperWorking || helperStatus === "not_registered"}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  {t("settings.helperUninstall")}
+                </Button>
+                <Button variant="outline" onClick={handleOpenLoginItems}>
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                  {t("settings.helperOpenLoginItems")}
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
             <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">

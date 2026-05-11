@@ -323,7 +323,21 @@
     "trayNone": "不显示",
     "about": "关于",
     "appVersion": "应用版本",
-    "tunnelVersion": "引擎版本"
+    "tunnelVersion": "引擎版本",
+    "privilegedHelper": "特权辅助服务",
+    "privilegedHelperDesc": "在后台运行的服务，用于建立 VPN 路由，免去每次连接的密码弹窗。卸载后，每次连接将改用 sudo 密码提示。",
+    "helperStatus": "状态",
+    "helperStatusEnabled": "已启用",
+    "helperStatusRequiresApproval": "需在「登录项」中授权",
+    "helperStatusNotRegistered": "未注册",
+    "helperStatusNotFound": "未找到",
+    "helperRefresh": "刷新",
+    "helperInstall": "安装",
+    "helperUninstall": "卸载",
+    "helperOpenLoginItems": "打开登录项",
+    "helperUninstallConfirmTitle": "卸载特权辅助服务？",
+    "helperUninstallConfirmBody": "下次连接将回退到 sudo 密码提示。你可以随时在此重新安装。",
+    "helperWorking": "处理中…"
   },
   "update": {
     "available": "发现新版本 (v{{version}})！",
