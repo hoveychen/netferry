@@ -162,8 +162,16 @@ jobs:
               | xargs -I{} codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "{}" || true
           fi
 
+          # --identifier is critical: without it codesign inherits the
+          # main app's bundle id (com.hoveychen.netferry) from the helper
+          # binary's mach-o metadata (Tauri builds both [[bin]]s in the same
+          # cargo package). The mismatched id makes SMAppService inject a
+          # LaunchConstraints block that launchd's plist importer rejects
+          # with "Unknown key for plist importer (key: SHA256 type: data)"
+          # + EX_CONFIG (78), so the daemon never spawns.
           codesign --force --options runtime \
             --entitlements src-tauri/helper-entitlements.plist \
+            --identifier com.hoveychen.netferry.helper \
             --sign "$APPLE_SIGNING_IDENTITY" \
             "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper"
 
