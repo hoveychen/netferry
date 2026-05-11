@@ -114,6 +114,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   connect: async (profile, group, children) => {
+    // Guard: a previous connection is still alive. Don't touch store/SSE —
+    // otherwise the in-flight tunnel becomes invisible to the UI while still
+    // running in the sidecar, and the user can't reach the disconnect button.
+    const current = get().status.state;
+    if (current === "connecting" || current === "connected" || current === "reconnecting") {
+      console.warn(`connect(${profile.id}) ignored: existing connection is ${current}`);
+      return;
+    }
+
     set({
       status: { state: "connecting", profileId: profile.id },
       logs: [],
@@ -130,11 +139,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const status = await connectProfile(profile, group, children);
       set({ status });
     } catch (e) {
+      const message = typeof e === "string" ? e : (e as Error)?.message ?? "Unknown error";
+      // Defensive: if the sidecar still holds a live tunnel we lost track of,
+      // pull the real status back from Rust instead of stranding the store in
+      // an "error" state with no profileId.
+      if (message.includes("already running")) {
+        await get().syncStatus();
+        return;
+      }
       set({
-        status: {
-          state: "error",
-          message: typeof e === "string" ? e : (e as Error)?.message ?? "Unknown error",
-        },
+        status: { state: "error", message },
       });
     }
   },

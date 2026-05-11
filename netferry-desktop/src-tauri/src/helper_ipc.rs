@@ -125,9 +125,22 @@ pub fn ensure_helper_running() -> Result<bool, String> {
     let rc = unsafe { netferry_register_helper() };
     match rc {
         0 => {} // ok (registered, already registered no-op, or silently updated)
-        -1 => return Err("Failed to register the privileged helper. \
-                          Check System Settings → Privacy & Security → \
-                          Login Items & Extensions.".to_string()),
+        -1 => {
+            // SMAppService.register() can return a transient error even though
+            // launchd already has the daemon enabled (observed in the wild:
+            // user's Login Items page shows it as Enabled but register() still
+            // reports failure). Only escalate to the "go to Settings" dead-end
+            // if the daemon is actually not authorised — otherwise fall through
+            // to wait_for_socket()/restart_helper() which can recover.
+            if helper_status() != HelperStatus::Enabled {
+                return Err(
+                    "Failed to register the privileged helper. \
+                     Check System Settings → Privacy & Security → \
+                     Login Items & Extensions.".to_string(),
+                );
+            }
+            log::warn!("register() returned -1 but status=Enabled — continuing");
+        }
         _ => return Ok(false), // -2 = OS too old
     }
 
@@ -175,10 +188,9 @@ fn wait_for_socket(timeout: Duration) -> Result<(), String> {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "Timed out waiting for the privileged helper at {SOCKET_PATH}. \
-                 Try restarting the app."
-            ));
+            return Err(
+                "Privileged helper did not start. Try restarting the app.".to_string(),
+            );
         }
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -196,8 +208,17 @@ pub fn start_tunnel(
     args: &[String],
     extra_env: &[(String, String)],
 ) -> Result<UnixStream, String> {
-    let mut stream =
-        UnixStream::connect(SOCKET_PATH).map_err(|e| format!("Helper socket: {e}"))?;
+    // Last-line liveness check: helper may have died between the caller's
+    // ensure_helper_running() and now (e.g. launchd is mid-restart). Re-check
+    // and let ensure_helper_running() restart the daemon if needed; this also
+    // turns "helper exited" into a clean error instead of a raw socket I/O
+    // error that the user reads as "sock file missing".
+    if !ensure_helper_running()? {
+        return Err("Privileged helper not available".to_string());
+    }
+
+    let mut stream = UnixStream::connect(SOCKET_PATH)
+        .map_err(|e| format!("Privileged helper is not reachable: {e}"))?;
 
     // Pass the real user's environment so the helper (running as root) uses the
     // correct SSH agent, known_hosts, and config from the actual user's HOME,

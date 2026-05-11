@@ -611,7 +611,7 @@ export function ProfileList({
                     ? "border-accent/30 bg-accent/[0.06] ring-1 ring-accent/20"
                     : "cursor-pointer border-accent/30 bg-gradient-to-br from-accent/[0.08] to-[#5e5ce6]/[0.08] hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-2xl hover:shadow-black/40"
                 }`}
-                onClick={() => !groupConnected && onConnectGroup()}
+                onClick={() => !groupConnected && !connectedProfileId && onConnectGroup()}
               >
                 <div className="mb-4 flex items-center gap-3">
                   <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5e5ce6] text-white shadow-lg">
@@ -660,7 +660,7 @@ export function ProfileList({
                       ? "border-accent/30 bg-accent/[0.06] ring-1 ring-accent/20"
                       : "cursor-pointer border-sep bg-ov-4 hover:-translate-y-0.5 hover:border-edge hover:bg-ov-6 hover:shadow-2xl hover:shadow-black/40"
                   }`}
-                  onClick={() => !isActive && onConnect(profile)}
+                  onClick={() => !isActive && !connectedProfileId && !groupConnected && onConnect(profile)}
                 >
                   {/* Action buttons */}
                   <div className="absolute right-3.5 top-3.5 flex gap-1 opacity-0 transition-all group-hover:opacity-100">
