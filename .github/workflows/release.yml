@@ -143,9 +143,9 @@ jobs:
           HELPER_DIR="$APP_PATH/Contents/Library/LaunchDaemons"
           mkdir -p "$HELPER_DIR"
           cp "src-tauri/target/${{ matrix.rust_target }}/release/netferry-helper" \
-             "$HELPER_DIR/com.hoveychen.netferry.helper"
-          cp "src-tauri/com.hoveychen.netferry.helper.plist" \
-             "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
+             "$HELPER_DIR/com.hoveychen.netferry.helper2"
+          cp "src-tauri/com.hoveychen.netferry.helper2.plist" \
+             "$HELPER_DIR/com.hoveychen.netferry.helper2.plist"
           # Tauri bundles all [[bin]] entries into Contents/MacOS/; remove the
           # helper from there since its only home is Contents/Library/LaunchDaemons/.
           rm -f "$APP_PATH/Contents/MacOS/netferry-helper"
@@ -169,11 +169,14 @@ jobs:
           # LaunchConstraints block that launchd's plist importer rejects
           # with "Unknown key for plist importer (key: SHA256 type: data)"
           # + EX_CONFIG (78), so the daemon never spawns.
+          # Label suffix is .helper2 (not .helper) so the daemon registers
+          # as a fresh BTM entry on users whose old .helper entry got stuck
+          # in launchd's penalty box after a crash.
           codesign --force --options runtime \
             --entitlements src-tauri/helper-entitlements.plist \
-            --identifier com.hoveychen.netferry.helper \
+            --identifier com.hoveychen.netferry.helper2 \
             --sign "$APPLE_SIGNING_IDENTITY" \
-            "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper"
+            "$APP_PATH/Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper2"
 
           codesign --force --options runtime \
             --entitlements src-tauri/sidecar-entitlements.plist \

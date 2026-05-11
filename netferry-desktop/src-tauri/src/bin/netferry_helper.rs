@@ -30,7 +30,7 @@ use std::process::{Command, Stdio};
 #[cfg(unix)]
 use std::sync::mpsc;
 
-pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
+pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper2.sock";
 
 /// Protocol version — bump this whenever the IPC wire format changes so the
 /// main app can detect stale helper daemons and force a restart.

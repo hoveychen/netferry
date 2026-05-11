@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper.sock";
+pub const SOCKET_PATH: &str = "/var/run/com.hoveychen.netferry.helper2.sock";
 
 /// Must match the value in netferry_helper.rs — bump both together.
 pub const PROTOCOL_VERSION: u32 = 2;

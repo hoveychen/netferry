@@ -26,7 +26,7 @@ int netferry_helper_status(void) {
     if (!isMacOS13OrLater()) return -1;
     SMAppService *svc =
         [SMAppService daemonServiceWithPlistName:
-            @"com.hoveychen.netferry.helper.plist"];
+            @"com.hoveychen.netferry.helper2.plist"];
     return svc ? (int)svc.status : -1;
 }
 
@@ -37,7 +37,7 @@ int netferry_register_helper(void) {
     if (!isMacOS13OrLater()) return -2;
     SMAppService *svc =
         [SMAppService daemonServiceWithPlistName:
-            @"com.hoveychen.netferry.helper.plist"];
+            @"com.hoveychen.netferry.helper2.plist"];
     if (!svc) return -2;
     NSError *err = nil;
     BOOL ok = [svc registerAndReturnError:&err];
@@ -50,7 +50,7 @@ int netferry_unregister_helper(void) {
     if (!isMacOS13OrLater()) return -2;
     SMAppService *svc =
         [SMAppService daemonServiceWithPlistName:
-            @"com.hoveychen.netferry.helper.plist"];
+            @"com.hoveychen.netferry.helper2.plist"];
     if (!svc) return -2;
     NSError *err = nil;
     BOOL ok = [svc unregisterAndReturnError:&err];

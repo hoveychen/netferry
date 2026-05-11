@@ -4,12 +4,15 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hoveychen.netferry.helper</string>
+    <string>com.hoveychen.netferry.helper2</string>
 
     <!-- Path to the helper binary relative to the app bundle root.
-         SMAppService copies the binary to the system location on registration. -->
+         SMAppService copies the binary to the system location on registration.
+         Label suffix bumped from .helper to .helper2 to bypass macOS BTM
+         entries that got stuck in launchd's penalty box after a crash —
+         a new Label forces SMAppService to create a fresh BTM record. -->
     <key>BundleProgram</key>
-    <string>Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper</string>
+    <string>Contents/Library/LaunchDaemons/com.hoveychen.netferry.helper2</string>
 
     <!-- Start the daemon as soon as it is registered. -->
     <key>RunAtLoad</key>
