@@ -144,6 +144,10 @@ jobs:
           mkdir -p "$HELPER_DIR"
           cp "src-tauri/target/${{ matrix.rust_target }}/release/netferry-helper" \
              "$HELPER_DIR/com.hoveychen.netferry.helper2"
+          # actions/upload-artifact@v4 strips the execute bit when zipping,
+          # which we restore here. Without +x, launchd can't exec the daemon
+          # and reports EX_CONFIG (78) - the daemon never spawns.
+          chmod 755 "$HELPER_DIR/com.hoveychen.netferry.helper2"
           cp "src-tauri/com.hoveychen.netferry.helper2.plist" \
              "$HELPER_DIR/com.hoveychen.netferry.helper2.plist"
           # Tauri bundles all [[bin]] entries into Contents/MacOS/; remove the
