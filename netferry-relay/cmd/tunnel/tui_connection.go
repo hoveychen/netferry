@@ -13,6 +13,8 @@ import (
 )
 
 // connectionStartedMsg is delivered when NewEngine returns successfully.
+// The engine is dialing/installing firewall rules in the background — the
+// caller must still wait for connectionReadyMsg before claiming CONNECTED.
 type connectionStartedMsg struct {
 	eng       *Engine
 	profileID string
@@ -20,6 +22,12 @@ type connectionStartedMsg struct {
 	stopCh    chan struct{}
 	doneCh    chan error
 }
+
+// connectionReadyMsg fires when the engine reaches its "Connected to server"
+// milestone (SSH+mux up, firewall rules installed, proxy listening). Until
+// this arrives the TUI keeps the CONNECTING spinner so we don't lie when pf
+// setup fails midway (e.g. running without sudo on macOS).
+type connectionReadyMsg struct{}
 
 // connectionFailedMsg is delivered when NewEngine fails before Run starts.
 type connectionFailedMsg struct{ err error }
@@ -87,9 +95,17 @@ func (c *connectionModel) update(msg tea.Msg) tea.Cmd {
 			return c.updatePickGroup(m)
 		}
 	case connectionStartedMsg:
-		c.connecting = false
+		// Engine struct exists, but firewall rules aren't installed yet —
+		// keep CONNECTING until connectionReadyMsg lands so a non-root pf
+		// failure doesn't briefly flash CONNECTED.
 		c.root.state.setActive(m.eng, m.profileID, m.groupID, m.stopCh, m.doneCh)
-		return waitForEngineDone(m.doneCh)
+		return tea.Batch(
+			waitForEngineReady(m.eng),
+			waitForEngineDone(m.doneCh),
+		)
+	case connectionReadyMsg:
+		c.connecting = false
+		return nil
 	case connectionFailedMsg:
 		c.connecting = false
 		return c.root.setFlash(false, "connect: "+m.err.Error())
@@ -116,6 +132,20 @@ func waitForEngineDone(doneCh <-chan error) tea.Cmd {
 	return func() tea.Msg {
 		err := <-doneCh
 		return connectionEndedMsg{err: err}
+	}
+}
+
+// waitForEngineReady blocks until the engine signals readiness. If the engine
+// returned early without reaching the operational milestone (e.g. firewall
+// setup failed), it emits a nil message — bubbletea ignores nil and the
+// parallel waitForEngineDone goroutine will deliver the actual error.
+func waitForEngineReady(eng *Engine) tea.Cmd {
+	return func() tea.Msg {
+		<-eng.ReadyCh()
+		if !eng.ReadyOK() {
+			return nil
+		}
+		return connectionReadyMsg{}
 	}
 }
 
@@ -284,21 +314,24 @@ func (c *connectionModel) view(width, height int) string {
 	}
 
 	eng, profileID, groupID, _ := c.root.state.snapshot()
-	connected := eng != nil
+	// connectedReady = engine running AND past the "Connected to server."
+	// milestone. We treat the connecting window separately so a non-root pf
+	// failure does not briefly render the CONNECTED layout.
+	connectedReady := eng != nil && !c.connecting
 
 	var b strings.Builder
 	switch {
 	case c.connecting:
 		frame := spinnerFrames[c.spinFrame%len(spinnerFrames)]
 		b.WriteString(statusPill("CONNECTING "+frame, "warn"))
-	case connected:
+	case connectedReady:
 		b.WriteString(statusPill("CONNECTED", "ok"))
 	default:
 		b.WriteString(statusPill("DISCONNECTED", "err"))
 	}
 	b.WriteByte('\n')
 
-	if connected {
+	if connectedReady {
 		who := ""
 		if profileID != "" {
 			if p := findProfileByID(c.root.data.profiles, profileID); p != nil {
@@ -320,7 +353,7 @@ func (c *connectionModel) view(width, height int) string {
 
 	// Log viewport — last N lines from the ring buffer
 	logHeight := height - 8
-	if connected {
+	if connectedReady {
 		logHeight -= 4
 	}
 	if logHeight < 4 {
@@ -335,9 +368,12 @@ func (c *connectionModel) view(width, height int) string {
 	b.WriteString(logBody)
 	b.WriteByte('\n')
 
-	if connected {
+	switch {
+	case c.connecting:
+		b.WriteString(kbdHints("s", "abort"))
+	case connectedReady:
 		b.WriteString(kbdHints("s", "stop tunnel"))
-	} else {
+	default:
 		pairs := []string{"p", "connect to profile"}
 		if len(c.root.data.groups) > 0 {
 			pairs = append(pairs, "g", "connect to group")

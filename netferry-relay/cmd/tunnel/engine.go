@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/firewall"
@@ -62,6 +64,15 @@ type Engine struct {
 
 	counters  *stats.Counters
 	statsPort int
+
+	// readyCh is closed exactly once when Run() either reaches the
+	// "Connected to server." milestone (firewall installed, proxy listening,
+	// mux up) or returns early. readyOK distinguishes the two cases: true
+	// means we actually made it operational; false means Run errored before
+	// the milestone (e.g. firewall setup failed because we're not root).
+	readyCh   chan struct{}
+	readyOnce sync.Once
+	readyOK   atomic.Bool
 }
 
 // NewEngine creates an engine and starts the stats HTTP/SSE server so the
@@ -90,6 +101,7 @@ func NewEngine(cfg *EngineConfig) (*Engine, error) {
 		cfg:       cfg,
 		counters:  counters,
 		statsPort: statsPort,
+		readyCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -99,12 +111,37 @@ func (e *Engine) StatsPort() int { return e.statsPort }
 // Counters returns the live stats counters (for in-process readers like the TUI).
 func (e *Engine) Counters() *stats.Counters { return e.counters }
 
+// ReadyCh returns a channel that closes when Run() either reaches the
+// "Connected to server." milestone or returns early. After it closes,
+// ReadyOK() reports which path was taken — readers waiting on the engine
+// should consult ReadyOK to tell "actually operational" from "ended early".
+func (e *Engine) ReadyCh() <-chan struct{} { return e.readyCh }
+
+// ReadyOK reports whether the engine reached the operational milestone. Only
+// meaningful after ReadyCh() has closed.
+func (e *Engine) ReadyOK() bool { return e.readyOK.Load() }
+
+// signalReady marks the engine operational and unblocks ReadyCh() listeners.
+// Safe to call multiple times; only the first call has effect.
+func (e *Engine) signalReady() {
+	e.readyOK.Store(true)
+	e.readyOnce.Do(func() { close(e.readyCh) })
+}
+
+// signalEnded unblocks ReadyCh() listeners without marking the engine
+// operational; used in the Run() defer so callers blocked on ReadyCh do not
+// leak when Run returns early.
+func (e *Engine) signalEnded() {
+	e.readyOnce.Do(func() { close(e.readyCh) })
+}
+
 // Run brings up the tunnel and blocks until shutdown.
 // stopCh, when closed, requests graceful shutdown (firewall + IPv6 are restored).
 // Returns ErrExitForReconnect when the caller should recreate the engine to
 // reconnect (firewall rules are intentionally kept in place in this case to
 // prevent traffic leaks during the reconnect window).
 func (e *Engine) Run(stopCh <-chan struct{}) error {
+	defer e.signalEnded()
 	cfg := e.cfg
 	cachedPorts := loadPortCache()
 
@@ -378,6 +415,7 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 
 	// ── Signal tunnel is ready (Tauri sidecar.rs watches for this exact line) ─
 	fmt.Fprintln(os.Stderr, "c : Connected to server.")
+	e.signalReady()
 
 	// Flush DNS cache BEFORE resetting TCP connections. Order matters:
 	// 1. FlushDNSCache — discard stale/poisoned DNS entries

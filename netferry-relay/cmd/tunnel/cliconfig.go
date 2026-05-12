@@ -53,6 +53,11 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		return nil, true
 	}
 	if *tuiMode {
+		// Profiles in the TUI default to method=auto (→ pf on darwin, nft/ipt
+		// on linux), so root is effectively required. Fail at TUI startup
+		// rather than letting the user pick a profile, see CONNECTING, then
+		// silently fall back to DISCONNECTED with a pf permission error.
+		requireRoot("netferry-tunnel --tui")
 		if err := runTUI(*verbose); err != nil {
 			fatalf("tui: %v", err)
 		}
@@ -297,6 +302,13 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 				excludeList = append(excludeList, c)
 			}
 		}
+	}
+
+	// All non-socks5 firewall methods require root on darwin/linux. Fail
+	// early here with a clear message instead of surfacing "permission
+	// denied" from the firewall layer once the connection is mid-flight.
+	if *method != "socks5" {
+		requireRoot("netferry-tunnel with firewall method " + *method)
 	}
 
 	cfg := &EngineConfig{
