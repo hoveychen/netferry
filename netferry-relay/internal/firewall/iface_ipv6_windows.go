@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 )
 
 // windowsIPv6State records which adapters had the ms_tcpip6 binding enabled
@@ -60,6 +61,15 @@ func restoreSystemIPv6() error {
 	}
 
 	for _, n := range state.Adapters {
+		if !isValidAdapterName(n) {
+			// State from an older buggy run that saved names in the console
+			// codepage; JSON marshalling replaced the non-UTF-8 bytes with
+			// U+FFFD, so the original name is unrecoverable. Skip rather
+			// than burn ~3-5s per adapter on a PowerShell call that is
+			// guaranteed to fail with exit status 1.
+			log.Printf("iface_ipv6: dropping corrupt restore entry %q (likely from a pre-fix run)", n)
+			continue
+		}
 		ps := fmt.Sprintf(`Enable-NetAdapterBinding -Name %q -ComponentID 'ms_tcpip6' -ErrorAction Stop`, n)
 		if out, err := runPowerShell(ps); err != nil {
 			log.Printf("iface_ipv6: enable binding on %q: %v\n%s", n, err, out)
@@ -68,6 +78,17 @@ func restoreSystemIPv6() error {
 	os.Remove(ifaceIPv6StateFile())
 	log.Printf("iface_ipv6: restored IPv6 binding on %d adapter(s)", len(state.Adapters))
 	return nil
+}
+
+// isValidAdapterName rejects names that round-tripped through a non-UTF-8
+// codepage. encoding/json silently substitutes invalid UTF-8 bytes with
+// U+FFFD, so a saved name like "以太网" written by a pre-fix run comes back
+// as "��太��" — useless for matching the live adapter.
+func isValidAdapterName(name string) bool {
+	if !utf8.ValidString(name) {
+		return false
+	}
+	return !strings.ContainsRune(name, utf8.RuneError)
 }
 
 // listWindowsIPv6EnabledAdapters returns names of adapters whose ms_tcpip6
@@ -90,7 +111,14 @@ func listWindowsIPv6EnabledAdapters() ([]string, error) {
 }
 
 func runPowerShell(script string) (string, error) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	// Force PowerShell to emit UTF-8 on stdout/stderr. Without this, on a
+	// non-English Windows (e.g. zh-CN where the console codepage is 936),
+	// adapter names like "以太网" come back as GBK bytes — not valid UTF-8 —
+	// and any name we feed back into PowerShell ends up mojibaked and fails
+	// to match a real adapter. The shim is pure ASCII so it is safe to
+	// concatenate regardless of the current console codepage.
+	const utf8Shim = "$OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", utf8Shim+script)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

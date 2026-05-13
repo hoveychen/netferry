@@ -8,7 +8,6 @@ import (
 	"os"
 	"runtime/debug"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/sshconn"
@@ -150,7 +149,7 @@ func (e *Engine) StartWithTUN(configJSON string, tunFD int32) error {
 	// it as pollable. Without this, tunForwarder.Close()'s SetReadDeadline
 	// silently no-ops and the readFromTUN goroutine never exits, deadlocking
 	// the engine's auto-reconnect path.
-	if err := syscall.SetNonblock(int(tunFD), true); err != nil {
+	if err := setNonblock(int(tunFD)); err != nil {
 		return fmt.Errorf("set TUN fd non-blocking: %w", err)
 	}
 	// Wrap the fd in an os.File owned by the Engine. The Engine manages its
