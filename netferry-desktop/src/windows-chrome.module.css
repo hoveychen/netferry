@@ -1,0 +1,82 @@
+/* Windows frameless chrome — resize handles + caption buttons.
+   Hidden everywhere except html.tauri-host.os-windows; macOS keeps its
+   native traffic lights via titleBarStyle:"Overlay" in tauri.conf.json. */
+
+/* ── Caption buttons (min / max / close) ─────────────────────── */
+
+.captionGroup {
+  display: none;
+}
+
+:global(html.tauri-host.os-windows) .captionGroup {
+  display: flex;
+  position: fixed;
+  top: 0;
+  /* Anchor to the OS window's true right edge so caption buttons stay
+     glued when an html-level scrollbar shrinks the viewport. */
+  right: calc(100% - 100vw);
+  height: 38px;
+  z-index: 200;
+  -webkit-app-region: no-drag;
+}
+
+.captionBtn {
+  width: 46px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  color: var(--t2);
+  cursor: default;
+  transition: background 120ms ease, color 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.captionBtn:hover {
+  background: var(--ov6);
+  color: var(--t1);
+}
+
+.captionBtn:active {
+  background: var(--ov10);
+}
+
+.captionClose:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.captionClose:active {
+  background: #b22a1c;
+  color: #ffffff;
+}
+
+/* ── Resize handles (8 directions) ────────────────────────────── */
+
+.resize {
+  display: none;
+}
+
+:global(html.tauri-host.os-windows) .resize {
+  display: block;
+  position: fixed;
+  z-index: 200;
+  background: transparent;
+}
+
+.resizeN  { top: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.resizeS  { bottom: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.resizeW  { top: 0; bottom: 0; left: 0; width: 4px; cursor: ew-resize; }
+/* `right: calc(100% - 100vw)` instead of `right: 0` so the east strip
+   stays glued to the OS window edge when an html-level scrollbar shrinks
+   the viewport. Same reasoning as .captionGroup above. */
+.resizeE  { top: 0; bottom: 0; right: calc(100% - 100vw); width: 4px; cursor: ew-resize; }
+.resizeNW { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.resizeNE { top: 0; right: calc(100% - 100vw); width: 8px; height: 8px; cursor: nesw-resize; }
+.resizeSW { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.resizeSE { bottom: 0; right: calc(100% - 100vw); width: 8px; height: 8px; cursor: nwse-resize; }

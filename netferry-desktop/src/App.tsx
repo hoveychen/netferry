@@ -13,6 +13,7 @@ import { NewProfileDialog } from "@/components/NewProfileDialog";
 import { ProfileDetailPage } from "@/components/ProfileDetailPage";
 import { ProfileList } from "@/components/ProfileList";
 import { SshConfigImporter } from "@/components/SshConfigImporter";
+import { WindowsChrome } from "@/components/WindowsChrome";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
@@ -281,10 +282,16 @@ function App() {
     prevStatusState.current = status.state;
   }, [status.state, status.message, status.profileId, tunnelErrors, profiles]);
 
-  // Drag bar for macOS overlay title bar — always present
-  // Empty div that receives mousedown → Tauri's drag.js detects data-tauri-drag-region → starts window drag.
-  // CSS Module preserves -webkit-app-region (Tailwind strips it).
-  const dragBar = <div className={`fixed top-0 left-0 right-0 h-[38px] z-[100] ${dragStyles.dragRegion}`} data-tauri-drag-region />;
+  // Drag bar (macOS Overlay title bar / Windows frameless top strip) +
+  // Windows-only resize handles and caption buttons. CSS Module preserves
+  // -webkit-app-region (Tailwind strips it). WindowsChrome self-gates on
+  // html.tauri-host.os-windows so it's a no-op on macOS.
+  const dragBar = (
+    <>
+      <div className={`fixed top-0 left-0 right-0 h-[38px] z-[100] ${dragStyles.dragRegion}`} data-tauri-drag-region />
+      <WindowsChrome />
+    </>
+  );
 
   // Show helper setup guide on first launch (macOS)
   if (showHelperSetup === null) {

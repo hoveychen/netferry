@@ -67,6 +67,14 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             sidecar::ensure_elevated(app.handle());
 
+            // Windows has no `Overlay` titleBarStyle equivalent, so remove
+            // decorations entirely and re-implement drag / resize / caption
+            // buttons in the frontend (see WindowsChrome.tsx).
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_decorations(false);
+            }
+
             // macOS 13+: register the privileged helper daemon via SMAppService.
             // On first launch this shows the native one-time authorisation dialog.
             // The call is idempotent on subsequent launches (returns immediately).

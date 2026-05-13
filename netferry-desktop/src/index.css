@@ -147,7 +147,7 @@ body {
   isolation: isolate;
 }
 
-/* Subtle scrollbar */
+/* Subtle scrollbar (descendant overflow regions) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -163,7 +163,42 @@ body {
   background: var(--scrollbar-hover);
 }
 
-/* Drag region styles are in drag.module.css (CSS Modules bypass Tailwind processing) */
+/* Rule 7 (tauri-frameless-window skill): WebView2 paints the document
+   scrollbar on <html> itself, which the descendant selector above misses.
+   Without this rule the chunky Win11 default scrollbar wins on the viewport.
+   Belt-and-braces with scrollbar-width: thin for non-Chromium engines. */
+html.tauri-host {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+html.tauri-host::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html.tauri-host::-webkit-scrollbar-track {
+  background: transparent;
+}
+html.tauri-host::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+html.tauri-host::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+  background-clip: padding-box;
+}
+
+/* Reserve a gutter on Windows so page headers' top-right actions don't
+   slide under the 3×46px caption buttons in the drag strip. macOS keeps
+   native traffic lights at top-left, far from page-action buttons, so no
+   gutter is needed there. */
+html.tauri-host.os-windows main {
+  padding-right: 138px;
+}
+
+/* Drag region + WindowsChrome styles are in their own CSS Modules
+   (CSS Modules bypass Tailwind preflight stripping of -webkit-app-region). */
 
 /* Green pulse animation for active connection */
 @keyframes pulse-glow {
