@@ -115,7 +115,7 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
   };
 
   return (
-    <div className="flex h-screen flex-col bg-surface pt-[38px]">
+    <div className="flex h-screen flex-col bg-surface pt-[38px]" data-page-shell>
       {/* Toolbar */}
       <div className="flex items-center gap-3 border-b border-sep px-6 py-3">
         <button

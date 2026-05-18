@@ -190,10 +190,15 @@ html.tauri-host::-webkit-scrollbar-thumb:hover {
 }
 
 /* Reserve a gutter on Windows so page headers' top-right actions don't
-   slide under the 3×46px caption buttons in the drag strip. macOS keeps
-   native traffic lights at top-left, far from page-action buttons, so no
-   gutter is needed there. */
-html.tauri-host.os-windows main {
+   slide under the 3×46px caption buttons in the drag strip. The gutter
+   only belongs on the page's top toolbar row — applied to <main> as a
+   whole it would waste the rightmost 138px of every page body. Pages
+   wrap as <main> > <page-wrapper> > <toolbar> + <body>; ProfileDetailPage
+   bypasses <main> and renders at the root with a data-page-shell marker
+   on its wrapper. macOS keeps native traffic lights at top-left, far from
+   page-action buttons, so no gutter is needed there. */
+html.tauri-host.os-windows main > *:first-child > :first-child,
+html.tauri-host.os-windows [data-page-shell] > :first-child {
   padding-right: 138px;
 }
 
