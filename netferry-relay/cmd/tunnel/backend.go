@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"time"
 
@@ -43,7 +44,15 @@ type backend struct {
 	cfg         *backendConfig
 	client      mux.TunnelClient // *MuxClient when poolSize==1, *MuxPool otherwise
 	firstClient *mux.MuxClient   // used by the primary backend to read CMD_ROUTES
-	sshServerIP string           // for firewall exclude
+	sshServerIP string           // for firewall exclude — final target server IP
+
+	// firstHopIP is the IP this process actually opened a raw TCP connection
+	// to (jumphost[0] when ProxyJump is in play, otherwise the target server
+	// itself). It MUST be added to the firewall exclude set on Windows when
+	// using WinDivert, otherwise the SSH carrier traffic gets DNATed into the
+	// local proxy and the mux session dies within seconds. May be nil for
+	// ProxyCommand and for hostnames whose dial did not yield an IP literal.
+	firstHopIP net.IP
 }
 
 // backendCfgFromProfile builds a backendConfig from a ProfileGroup child.
@@ -114,12 +123,15 @@ func connectBackend(
 	}
 
 	log.Printf("[%s] connecting to %s@%s:%d", cfg.profileID, hc.User, hc.HostName, hc.Port)
-	first, err := sshconn.Dial(hc, ac, cfg.jumpHosts...)
+	first, firstHopIP, err := sshconn.Dial(hc, ac, cfg.jumpHosts...)
 	if err != nil {
 		return nil, fmt.Errorf("ssh connect: %w", err)
 	}
 
 	sshServerIP := deploy.RemoteIP(first)
+	if firstHopIP != nil {
+		log.Printf("[%s] firstHop=%s sshServer=%s", cfg.profileID, firstHopIP, sshServerIP)
+	}
 
 	remotePath, err := deploy.EnsureServer(first, Version)
 	if err != nil {
@@ -140,7 +152,7 @@ func connectBackend(
 	sshClients := make([]*ssh.Client, n)
 	sshClients[0] = first
 	for i := 1; i < n; i++ {
-		extra, err := sshconn.Dial(hc, ac, cfg.jumpHosts...)
+		extra, _, err := sshconn.Dial(hc, ac, cfg.jumpHosts...)
 		if err != nil {
 			for j := 0; j < i; j++ {
 				sshClients[j].Close()
@@ -197,5 +209,6 @@ func connectBackend(
 		client:      pool,
 		firstClient: firstClient,
 		sshServerIP: sshServerIP,
+		firstHopIP:  firstHopIP,
 	}, nil
 }

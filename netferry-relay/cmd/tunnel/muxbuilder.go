@@ -101,7 +101,7 @@ func trySplitMuxClient(
 	}
 
 	// ── ctrl session ──────────────────────────────────────────────────────────
-	ctrlClient, err := sshconn.Dial(hc, ac, jumpHosts...)
+	ctrlClient, _, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {
 		return nil, fmt.Errorf("split ctrl SSH connect %d/%d: %w", member, total, err)
 	}
@@ -173,7 +173,7 @@ func connectPoolMember(
 	tc *stats.TunnelCounters,
 	member, total int,
 ) (*mux.MuxClient, error) {
-	sc, err := sshconn.Dial(hc, ac, jumpHosts...)
+	sc, _, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}

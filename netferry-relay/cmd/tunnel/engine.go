@@ -199,6 +199,13 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	}
 	for _, b := range backends {
 		addEx(b.sshServerIP + "/32")
+		// firstHopIP is the IP we actually opened raw TCP to (== sshServerIP
+		// for direct dials; the first jumphost for ProxyJump). Excluding it
+		// is what keeps WinDivert from DNATing the SSH carrier traffic into
+		// the local proxy and killing the mux session moments after setup.
+		if b.firstHopIP != nil {
+			addEx(b.firstHopIP.String() + "/32")
+		}
 		for _, x := range b.cfg.extraExcludes {
 			addEx(x)
 		}

@@ -69,7 +69,7 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 	// NOTE: Socket protection (SetDialFunc) must be set by the caller (Engine)
 	// before calling newTunnelSession so it persists across reconnections.
 
-	sshClient, err := sshconn.Dial(hc, ac, jumpHosts...)
+	sshClient, _, err := sshconn.Dial(hc, ac, jumpHosts...)
 	if err != nil {
 		return nil, fmt.Errorf("ssh connect: %w", err)
 	}
@@ -77,7 +77,7 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 
 	// Additional pool connections.
 	for i := 1; i < cfg.PoolSize; i++ {
-		extra, err := sshconn.Dial(hc, ac, jumpHosts...)
+		extra, _, err := sshconn.Dial(hc, ac, jumpHosts...)
 		if err != nil {
 			s.Close()
 			return nil, fmt.Errorf("ssh pool %d/%d: %w", i+1, cfg.PoolSize, err)
