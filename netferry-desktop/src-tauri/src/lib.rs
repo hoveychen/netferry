@@ -46,7 +46,11 @@ pub fn run() {
                         file_name: Some("netferry.log".into()),
                     },
                 ))
-                .max_file_size(1_000_000) // 1 MB per log file
+                // Headroom for tunnel stderr (debug target "tunnel"): a single
+                // spam burst (e.g. `mux: client closed` on Windows/WinDivert)
+                // can write thousands of lines/sec, so keep ~10× the cap to
+                // preserve the diagnostic background before rotation.
+                .max_file_size(10_000_000) // 10 MB per log file
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .level(log::LevelFilter::Debug)
                 .build(),

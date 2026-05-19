@@ -805,6 +805,9 @@ fn spawn_helper_event_thread(
                     let stream_name = ev["stream"].as_str().unwrap_or("stderr");
                     let log_line = ev["line"].as_str().unwrap_or("").to_string();
 
+                    // Mirror to disk via tauri-plugin-log before any filtering.
+                    log::debug!(target: "tunnel", "{stream_name}: {log_line}");
+
                     if handle_stats_port_line(&app, &log_line) {
                         continue;
                     }
@@ -1241,6 +1244,7 @@ pub fn connect(
         std::thread::spawn(move || {
             let reader = BufReader::new(out);
             for line in reader.lines().map_while(Result::ok) {
+                log::debug!(target: "tunnel", "stdout: {line}");
                 let _ = app_clone.emit(LOG_EVENT, format!("stdout: {line}"));
             }
         });
@@ -1254,6 +1258,12 @@ pub fn connect(
             let reader = BufReader::new(err);
             let mut tunnel_connected = false;
             for line in reader.lines().map_while(Result::ok) {
+                // Persist every stderr line via tauri-plugin-log before any
+                // routing/filtering — guarantees spam-class issues like a mux
+                // pool collapse leave a forensic trail in netferry.log even
+                // when the in-memory 500-line UI buffer rolls over.
+                log::debug!(target: "tunnel", "stderr: {line}");
+
                 if handle_stats_port_line(&app_clone, &line) {
                     continue;
                 }

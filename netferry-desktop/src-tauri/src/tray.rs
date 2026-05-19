@@ -4,6 +4,7 @@ use crate::sidecar::{self, AppState};
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
     let current_status = app
@@ -20,6 +21,10 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
     let all_profiles = profiles::load_profiles(app).unwrap_or_default();
 
     let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
+    // Mirrors menu.rs "Help → Open Log File". Windows frameless removes the
+    // native menu bar, so the tray is the only always-available entry point
+    // for surfacing the log file (which now also holds tunnel stderr).
+    let open_log_item = MenuItemBuilder::with_id("open_log", "Open Log File").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let is_active = matches!(current_status.state.as_str(), "connected" | "connecting");
@@ -38,6 +43,7 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
             .item(&toggle)
             .separator()
             .item(&show_item)
+            .item(&open_log_item)
             .separator()
             .item(&quit_item)
             .build()
@@ -80,6 +86,7 @@ fn build_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::E
         builder
             .separator()
             .item(&show_item)
+            .item(&open_log_item)
             .separator()
             .item(&quit_item)
             .build()
@@ -110,6 +117,18 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                }
+            }
+            "open_log" => {
+                if let Ok(log_dir) = app.path().app_log_dir() {
+                    let log_file = log_dir.join("netferry.log");
+                    if log_file.exists() {
+                        let _ = app.opener().reveal_item_in_dir(log_file);
+                    } else {
+                        let _ = app
+                            .opener()
+                            .open_path(log_dir.to_string_lossy().as_ref(), None::<&str>);
+                    }
                 }
             }
             "toggle" => {
