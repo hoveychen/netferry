@@ -330,6 +330,29 @@ func destKey(dstAddr, host string) string {
 	return dstAddr
 }
 
+// wildcardCandidates returns the wildcard rule keys that could match host,
+// ordered most-specific first. For "a.b.eastmoney.com" it yields
+// "*.b.eastmoney.com", "*.eastmoney.com", "*.com". A wildcard key "*.suffix"
+// matches any host ending in ".suffix" with at least one leading label, across
+// any number of sub-levels. The apex itself ("eastmoney.com") is intentionally
+// NOT matched by "*.eastmoney.com" — set an exact rule for that. Returns nil
+// for keys that can't host a wildcard match (empty, single-label, or a
+// wildcard pattern itself).
+func wildcardCandidates(host string) []string {
+	if host == "" || strings.HasPrefix(host, "*.") {
+		return nil
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return nil
+	}
+	out := make([]string, 0, len(labels)-1)
+	for i := 1; i < len(labels); i++ {
+		out = append(out, "*."+strings.Join(labels[i:], "."))
+	}
+	return out
+}
+
 // ConnOpen records a new TCP connection and queues an SSE "open" notification.
 // Returns the connection ID that must be passed to ConnClose later.
 // The host parameter is the resolved hostname (from SNI, HTTP Host header, or
@@ -512,12 +535,23 @@ const DefaultPriority = 3
 func (c *Counters) LookupPriority(dstAddr, host string) int {
 	dk := destKey(dstAddr, host)
 	c.mu.Lock()
-	p, ok := c.priorities[dk]
-	c.mu.Unlock()
-	if !ok {
-		return DefaultPriority
+	defer c.mu.Unlock()
+	return c.lookupPriorityLocked(dk)
+}
+
+// lookupPriorityLocked resolves a priority for key: exact match first, then the
+// most specific matching wildcard rule, then DefaultPriority. Caller must hold
+// c.mu.
+func (c *Counters) lookupPriorityLocked(key string) int {
+	if p, ok := c.priorities[key]; ok {
+		return p
 	}
-	return p
+	for _, cand := range wildcardCandidates(key) {
+		if p, ok := c.priorities[cand]; ok {
+			return p
+		}
+	}
+	return DefaultPriority
 }
 
 // SetPriorities replaces all destination priorities at once.
@@ -560,21 +594,23 @@ func (c *Counters) Priorities() map[string]int {
 func (c *Counters) LookupRouteMode(dstAddr, host string) RouteMode {
 	dk := destKey(dstAddr, host)
 	c.mu.Lock()
-	m := c.routeModes[dk]
-	c.mu.Unlock()
-	if m.Kind == "" {
-		return RouteMode{Kind: RouteTunnel}
-	}
-	return m
+	defer c.mu.Unlock()
+	return c.lookupRouteModeLocked(dk)
 }
 
-// lookupRouteModeLocked returns the route mode; caller must hold c.mu.
+// lookupRouteModeLocked resolves the route mode for key: exact match first,
+// then the most specific matching wildcard rule, then {Kind: RouteTunnel}.
+// Caller must hold c.mu.
 func (c *Counters) lookupRouteModeLocked(key string) RouteMode {
-	m := c.routeModes[key]
-	if m.Kind == "" {
-		return RouteMode{Kind: RouteTunnel}
+	if m, ok := c.routeModes[key]; ok && m.Kind != "" {
+		return m
 	}
-	return m
+	for _, cand := range wildcardCandidates(key) {
+		if m, ok := c.routeModes[cand]; ok && m.Kind != "" {
+			return m
+		}
+	}
+	return RouteMode{Kind: RouteTunnel}
 }
 
 // SetRouteModes replaces all route modes at once.
@@ -894,10 +930,7 @@ func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elap
 			rxPerSec = int64(float64(ds.rxBytes-prevRx[key]) / elapsed)
 			txPerSec = int64(float64(ds.txBytes-prevTx[key]) / elapsed)
 		}
-		prio := c.priorities[key]
-		if prio == 0 {
-			prio = DefaultPriority
-		}
+		prio := c.lookupPriorityLocked(key)
 		rm := c.lookupRouteModeLocked(key)
 		snaps = append(snaps, DestinationSnapshot{
 			Host:              ds.host,
