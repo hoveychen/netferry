@@ -49,6 +49,46 @@ function sameRoute(a: RouteModeV2, b: RouteModeV2): boolean {
   return true;
 }
 
+/**
+ * Wildcard rule keys that could match `host`, most-specific first. Mirrors the
+ * relay's `wildcardCandidates` (netferry-relay/internal/stats/stats.go): a key
+ * `*.suffix` matches any host ending in `.suffix` across sub-levels; the apex
+ * is not matched. Returns [] for empty/single-label hosts or wildcard patterns.
+ */
+function wildcardCandidates(host: string): string[] {
+  if (!host || host.startsWith("*.")) return [];
+  const labels = host.split(".");
+  if (labels.length < 2) return [];
+  const out: string[] = [];
+  for (let i = 1; i < labels.length; i++) out.push("*." + labels.slice(i).join("."));
+  return out;
+}
+
+/** Effective route for a host: exact rule, else the most specific wildcard. */
+function resolveRoute(
+  host: string,
+  routes: Record<string, RouteModeV2>,
+): { mode: RouteModeV2; via: string | null } {
+  const exact = routes[host];
+  if (exact) return { mode: exact, via: null };
+  for (const c of wildcardCandidates(host)) {
+    if (routes[c]) return { mode: routes[c], via: c };
+  }
+  return { mode: { kind: "default" }, via: null };
+}
+
+/** Effective priority for a host: exact rule, else the most specific wildcard. */
+function resolvePriority(
+  host: string,
+  priorities: Record<string, number>,
+): { value: number; via: string | null } {
+  if (priorities[host] != null) return { value: priorities[host], via: null };
+  for (const c of wildcardCandidates(host)) {
+    if (priorities[c] != null) return { value: priorities[c], via: c };
+  }
+  return { value: 3, via: null };
+}
+
 function RouteBadge({
   route,
   children,
@@ -235,6 +275,103 @@ export function DestinationsPage() {
 
   const noGroup = !activeGroup;
 
+  // Draft-rule creation: when the user types something that looks like a rule
+  // target (a hostname or a `*.x` wildcard) that isn't already in the list,
+  // surface a row that lets them assign a route/priority to it directly.
+  const query = filter.trim();
+  const knownSet = useMemo(() => new Set(sorted), [sorted]);
+  const looksLikeTarget = query.startsWith("*.") || query.includes(".");
+  const showDraft = !noGroup && query !== "" && looksLikeTarget && !knownSet.has(query);
+  // Nudge a bare domain toward its wildcard form (wildcard the typed host's parent).
+  const wildcardSuggestion = useMemo(() => {
+    if (!query || query.startsWith("*.")) return null;
+    const labels = query.split(".");
+    if (labels.length < 2) return null;
+    const suffix = labels.length >= 3 ? labels.slice(1).join(".") : query;
+    const candidate = "*." + suffix;
+    return candidate !== query && !knownSet.has(candidate) ? candidate : null;
+  }, [query, knownSet]);
+
+  const renderRow = (host: string, draft: boolean) => {
+    const { mode: route, via: routeVia } = resolveRoute(host, routes);
+    const { value: priority } = resolvePriority(host, priorities);
+    const isBlocked = route.kind === "blocked";
+    const isDirect = route.kind === "direct";
+
+    // Live attribution: only show in multi-profile mode, only for hosts that
+    // are currently routing through the tunnel (skip direct/blocked since those
+    // bypass the profile dispatcher). The pinned-profile case is already
+    // covered by RouteBadge's "Tunnel: X" label, so this badge is purely a
+    // "where is traffic *actually* going right now" hint.
+    let liveProfileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
+    if (!draft && isMultiProfile && !isBlocked && !isDirect) {
+      const live = liveDestMap.get(host);
+      const pid = live?.activeProfileId;
+      const idx = pid ? children.findIndex((c) => c.id === pid) : -1;
+      if (idx >= 0) {
+        liveProfileBadge = { name: children[idx].name, color: tunnelColor(idx + 1) };
+      }
+    }
+
+    return (
+      <div
+        key={draft ? `draft:${host}` : host}
+        className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
+          draft
+            ? "border-accent/40 bg-accent/[0.06]"
+            : isBlocked
+              ? "border-danger/15 bg-danger/[0.04] opacity-60"
+              : isDirect
+                ? "border-success/15 bg-success/[0.04]"
+                : "border-sep bg-ov-2"
+        }`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            {!draft && isBlocked ? (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+            ) : !draft && isDirect ? (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+            ) : null}
+            <span className={`truncate text-sm font-medium ${
+              !draft && isBlocked ? "text-t4 line-through" : "text-t3"
+            }`}>
+              {host}
+            </span>
+            {draft ? (
+              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-accent/15 text-accent">
+                {t("destinationsPage.draftBadge")}
+              </span>
+            ) : routeVia ? (
+              <span
+                className="shrink-0 truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-medium bg-ov-8 text-t4"
+                title={t("destinationsPage.inheritedVia", { pattern: routeVia })}
+              >
+                {t("destinationsPage.inheritedVia", { pattern: routeVia })}
+              </span>
+            ) : null}
+            {liveProfileBadge && (
+              <span
+                className={`shrink-0 truncate max-w-[10rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${liveProfileBadge.color.bg} ${liveProfileBadge.color.text}`}
+                title={t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
+              >
+                {t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            <RouteBadge
+              route={route}
+              children={children}
+              onChange={(r) => setRule(host, r)}
+            />
+            <PriorityBadge priority={priority} onChange={(p) => setPriority(host, p)} />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -244,7 +381,7 @@ export function DestinationsPage() {
       </div>
 
       {/* Filter bar */}
-      {!noGroup && sorted.length > 0 && (
+      {!noGroup && (
         <div className="px-4 pt-2 pb-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t4" />
@@ -266,9 +403,23 @@ export function DestinationsPage() {
               </button>
             )}
           </div>
-          <p className="mt-1.5 text-[11px] text-t4">
-            {t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}
-          </p>
+          <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[11px] text-t4">
+            {sorted.length > 0 && (
+              <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}</span>
+            )}
+            {wildcardSuggestion && (
+              <button
+                type="button"
+                onClick={() => setFilter(wildcardSuggestion)}
+                className="rounded px-1.5 py-0.5 font-mono text-accent ring-1 ring-accent/30 transition-colors hover:bg-accent/10"
+              >
+                {t("destinationsPage.wildcardSuggest", { pattern: wildcardSuggestion })}
+              </button>
+            )}
+            {!wildcardSuggestion && sorted.length === 0 && (
+              <span>{t("destinationsPage.wildcardHint")}</span>
+            )}
+          </div>
         </div>
       )}
 
@@ -276,80 +427,17 @@ export function DestinationsPage() {
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs">
         {noGroup ? (
           <p className="text-t4">{t("destinationsPage.noGroup")}</p>
-        ) : sorted.length === 0 ? (
-          <p className="text-t4">{t("destinationsPage.noHosts")}</p>
-        ) : filtered.length === 0 ? (
-          <p className="text-t4">{t("destinationsPage.noMatches")}</p>
         ) : (
-          filtered.map((host) => {
-            const priority = priorities[host] ?? 3;
-            const route: RouteModeV2 = routes[host] ?? { kind: "default" };
-            const isBlocked = route.kind === "blocked";
-            const isDirect = route.kind === "direct";
-
-            // Live attribution: only show in multi-profile mode, only for
-            // hosts that are currently routing through the tunnel (skip
-            // direct/blocked since those bypass the profile dispatcher).
-            // The pinned-profile case is already covered by RouteBadge's
-            // "Tunnel: X" label, so this badge is purely a "where is traffic
-            // *actually* going right now" hint.
-            let liveProfileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
-            if (isMultiProfile && !isBlocked && !isDirect) {
-              const live = liveDestMap.get(host);
-              const pid = live?.activeProfileId;
-              const idx = pid ? children.findIndex((c) => c.id === pid) : -1;
-              if (idx >= 0) {
-                liveProfileBadge = {
-                  name: children[idx].name,
-                  color: tunnelColor(idx + 1),
-                };
-              }
-            }
-
-            return (
-              <div
-                key={host}
-                className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
-                  isBlocked
-                    ? "border-danger/15 bg-danger/[0.04] opacity-60"
-                    : isDirect
-                      ? "border-success/15 bg-success/[0.04]"
-                      : "border-sep bg-ov-2"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {isBlocked ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
-                    ) : isDirect ? (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-                    ) : null}
-                    <span className={`truncate text-sm font-medium ${
-                      isBlocked ? "text-t4 line-through" : "text-t3"
-                    }`}>
-                      {host}
-                    </span>
-                    {liveProfileBadge && (
-                      <span
-                        className={`shrink-0 truncate max-w-[10rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${liveProfileBadge.color.bg} ${liveProfileBadge.color.text}`}
-                        title={t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
-                      >
-                        {t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-3">
-                    <RouteBadge
-                      route={route}
-                      children={children}
-                      onChange={(r) => setRule(host, r)}
-                    />
-                    <PriorityBadge priority={priority} onChange={(p) => setPriority(host, p)} />
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          <>
+            {showDraft && renderRow(query, true)}
+            {filtered.map((host) => renderRow(host, false))}
+            {!showDraft && sorted.length === 0 && (
+              <p className="text-t4">{t("destinationsPage.noHosts")}</p>
+            )}
+            {!showDraft && sorted.length > 0 && filtered.length === 0 && (
+              <p className="text-t4">{t("destinationsPage.noMatches")}</p>
+            )}
+          </>
         )}
       </div>
     </div>
