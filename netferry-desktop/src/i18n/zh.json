@@ -259,7 +259,11 @@
     "countLabel": "显示 {{shown}} / {{total}} 个主机",
     "route": "路由",
     "priority": "优先级",
-    "liveVia": "实时：{{name}}"
+    "liveVia": "实时：{{name}}",
+    "draftBadge": "新建规则",
+    "inheritedVia": "继承自 {{pattern}}",
+    "wildcardSuggest": "新建 {{pattern}}",
+    "wildcardHint": "提示：输入 *.example.com 可为所有子域批量设置规则。"
   },
   "groups": {
     "title": "配置组",

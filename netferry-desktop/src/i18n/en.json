@@ -259,7 +259,11 @@
     "countLabel": "{{shown}} / {{total}} hosts",
     "route": "Route",
     "priority": "Priority",
-    "liveVia": "live: {{name}}"
+    "liveVia": "live: {{name}}",
+    "draftBadge": "New rule",
+    "inheritedVia": "via {{pattern}}",
+    "wildcardSuggest": "Create {{pattern}}",
+    "wildcardHint": "Tip: type *.example.com to set one rule for all subdomains."
   },
   "groups": {
     "title": "Profile Groups",
