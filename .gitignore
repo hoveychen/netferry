@@ -6,6 +6,7 @@
 .vscode/
 .idea/
 TASKS.md
+.worktrees/
 
 # Python
 __pycache__/
