@@ -66,12 +66,12 @@ func Watch(done <-chan struct{}) error {
 		// Parse the routing message type (offset 3 in the rt_msghdr).
 		msgType := buf[3]
 		if isRelevantChange(msgType) {
-			// Let the burst settle, then compare the network fingerprint. A
-			// screen-lock Wi-Fi power-save flap settles back to the same
-			// network (fingerprint unchanged) and is ignored; a real switch
-			// or connectivity loss changes it and triggers a reconnect.
-			time.Sleep(settleDelay)
-			if cur := currentFingerprint(); cur != baseline {
+			// Wait until the network settles before judging. A screen-lock
+			// Wi-Fi power-save flap removes the address for several seconds
+			// and then restores it — that settles back to the baseline
+			// fingerprint and is ignored. Only a *stable, different* network
+			// (real switch) or a window-long outage triggers a reconnect.
+			if waitForStableFingerprint(baseline, currentFingerprint, time.Sleep, done) {
 				log.Printf("netmon: network changed (type=%d), signalling reconnect", msgType)
 				return nil
 			}

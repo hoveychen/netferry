@@ -74,12 +74,11 @@ func Watch(done <-chan struct{}) error {
 		// Parse netlink message header.
 		hdr := (*syscall.NlMsghdr)(unsafe.Pointer(&buf[0]))
 		if isRelevantChange(hdr.Type) {
-			// Let the burst settle, then compare the network fingerprint. A
-			// transient flap settles back to the same network (fingerprint
-			// unchanged) and is ignored; a real switch or connectivity loss
-			// changes it and triggers a reconnect.
-			time.Sleep(settleDelay)
-			if cur := currentFingerprint(); cur != baseline {
+			// Wait until the network settles before judging. A transient flap
+			// settles back to the baseline fingerprint and is ignored; only a
+			// *stable, different* network (real switch) or a window-long
+			// outage triggers a reconnect.
+			if waitForStableFingerprint(baseline, currentFingerprint, time.Sleep, done) {
 				log.Printf("netmon: network changed (type=%d), signalling reconnect", hdr.Type)
 				return nil
 			}
