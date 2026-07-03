@@ -25,6 +25,12 @@ func Watch(done <-chan struct{}) error {
 	// avoid reacting to route changes caused by our own firewall setup.
 	startup := time.Now()
 
+	// Fingerprint of the network we started on. A relevant routing event only
+	// warrants a reconnect if the *settled* network differs from this — which
+	// filters out macOS Wi-Fi power-save flaps on screen lock (the radio drops
+	// and re-adds the same address on the same network).
+	baseline := currentFingerprint()
+
 	buf := make([]byte, 4096)
 	for {
 		// Check if we should stop before blocking on read.
@@ -60,8 +66,16 @@ func Watch(done <-chan struct{}) error {
 		// Parse the routing message type (offset 3 in the rt_msghdr).
 		msgType := buf[3]
 		if isRelevantChange(msgType) {
-			log.Printf("netmon: network change detected (type=%d), signalling reconnect", msgType)
-			return nil
+			// Let the burst settle, then compare the network fingerprint. A
+			// screen-lock Wi-Fi power-save flap settles back to the same
+			// network (fingerprint unchanged) and is ignored; a real switch
+			// or connectivity loss changes it and triggers a reconnect.
+			time.Sleep(settleDelay)
+			if cur := currentFingerprint(); cur != baseline {
+				log.Printf("netmon: network changed (type=%d), signalling reconnect", msgType)
+				return nil
+			}
+			log.Printf("netmon: transient network flap (type=%d), same network — ignoring", msgType)
 		}
 	}
 }

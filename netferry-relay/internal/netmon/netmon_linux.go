@@ -36,6 +36,11 @@ func Watch(done <-chan struct{}) error {
 	// avoid reacting to route changes caused by our own firewall setup.
 	startup := time.Now()
 
+	// Fingerprint of the network we started on. A relevant event only warrants
+	// a reconnect if the *settled* network differs from this — filtering out
+	// transient interface/address flaps on the same network.
+	baseline := currentFingerprint()
+
 	buf := make([]byte, 4096)
 	for {
 		select {
@@ -69,8 +74,16 @@ func Watch(done <-chan struct{}) error {
 		// Parse netlink message header.
 		hdr := (*syscall.NlMsghdr)(unsafe.Pointer(&buf[0]))
 		if isRelevantChange(hdr.Type) {
-			log.Printf("netmon: network change detected (type=%d), signalling reconnect", hdr.Type)
-			return nil
+			// Let the burst settle, then compare the network fingerprint. A
+			// transient flap settles back to the same network (fingerprint
+			// unchanged) and is ignored; a real switch or connectivity loss
+			// changes it and triggers a reconnect.
+			time.Sleep(settleDelay)
+			if cur := currentFingerprint(); cur != baseline {
+				log.Printf("netmon: network changed (type=%d), signalling reconnect", hdr.Type)
+				return nil
+			}
+			log.Printf("netmon: transient network flap (type=%d), same network — ignoring", hdr.Type)
 		}
 	}
 }
