@@ -53,6 +53,49 @@ type backend struct {
 	// local proxy and the mux session dies within seconds. May be nil for
 	// ProxyCommand and for hostnames whose dial did not yield an IP literal.
 	firstHopIP net.IP
+
+	// redialNeedsDNS is true when reconnecting to this backend requires
+	// system DNS (its SSH host, ProxyJump, or any jump host is a hostname
+	// rather than an IP literal). When every backend is IP-only, the
+	// exit-for-reconnect path keeps the DNS redirect in place, closing the
+	// window where applications resolve via the local resolver and cache
+	// region-local geo-DNS answers (which then 403 behind the tunnel exit).
+	redialNeedsDNS bool
+}
+
+// sshHostPart extracts the host from a [user@]host[:port] remote spec. A
+// trailing ":port" is only stripped when the host contains exactly one colon,
+// so bare IPv6 literals (multiple colons, no brackets) pass through intact —
+// matching sshconn.splitUserHost's user/@ handling.
+func sshHostPart(remote string) string {
+	if idx := strings.LastIndex(remote, "@"); idx >= 0 {
+		remote = remote[idx+1:]
+	}
+	if strings.Count(remote, ":") == 1 {
+		if idx := strings.LastIndex(remote, ":"); idx >= 0 {
+			remote = remote[:idx]
+		}
+	}
+	return remote
+}
+
+// reconnectNeedsDNS reports whether re-dialing an SSH endpoint requires
+// system DNS resolution: true when the resolved SSH host, an ssh_config
+// ProxyJump, or any explicit jump host is specified by name rather than as
+// an IP literal.
+func reconnectNeedsDNS(hostName, proxyJump string, jumpRemotes []string) bool {
+	if net.ParseIP(hostName) == nil {
+		return true
+	}
+	if proxyJump != "" && net.ParseIP(sshHostPart(proxyJump)) == nil {
+		return true
+	}
+	for _, j := range jumpRemotes {
+		if net.ParseIP(sshHostPart(j)) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // backendCfgFromProfile builds a backendConfig from a ProfileGroup child.
@@ -204,11 +247,17 @@ func connectBackend(
 		go reconnectPoolMember(pool, idx, n, clients[idx], hc, ac, cfg.jumpHosts, remoteCmd, cfg.splitConn, counters, tunnelCounters[idx], muxErrCh)
 	}
 
+	jumpRemotes := make([]string, len(cfg.jumpHosts))
+	for i, j := range cfg.jumpHosts {
+		jumpRemotes[i] = j.Remote
+	}
+
 	return &backend{
-		cfg:         cfg,
-		client:      pool,
-		firstClient: firstClient,
-		sshServerIP: sshServerIP,
-		firstHopIP:  firstHopIP,
+		cfg:            cfg,
+		client:         pool,
+		firstClient:    firstClient,
+		sshServerIP:    sshServerIP,
+		firstHopIP:     firstHopIP,
+		redialNeedsDNS: reconnectNeedsDNS(hc.HostName, hc.ProxyJump, jumpRemotes),
 	}, nil
 }
