@@ -465,18 +465,37 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 		netChangeCh <- netmon.Watch(netmonDone)
 	}()
 
+	// prepareReconnectExit keeps TCP redirect rules in place so traffic is
+	// blocked rather than leaking during the reconnect window. DNS redirect
+	// rules are removed ONLY when re-dialing actually requires system DNS
+	// (some SSH endpoint is a hostname). With IP-only endpoints the DNS
+	// redirect stays up, closing the window where applications resolve via
+	// the local resolver mid-reconnect and cache region-local geo-DNS answers
+	// that then 403 behind the tunnel exit IP.
+	prepareReconnectExit := func() {
+		needDNS := false
+		for _, b := range backends {
+			if b.redialNeedsDNS {
+				needDNS = true
+				break
+			}
+		}
+		if needDNS {
+			firewall.DisableDNSRedirect(fw)
+		} else {
+			log.Printf("keeping DNS redirect during reconnect (all SSH endpoints are IP literals)")
+		}
+		skipFWRestore = true
+		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
+	}
+
 	select {
 	case err := <-muxErrCh:
 		if err != nil {
 			log.Printf("mux closed: %v", err)
 		}
-		// Mux dying means the SSH connection dropped — keep TCP redirect
-		// rules so traffic is blocked rather than leaking during reconnect,
-		// but remove DNS redirect rules so the reconnecting tunnel process
-		// can resolve the SSH server hostname via normal system DNS.
-		firewall.DisableDNSRedirect(fw)
-		skipFWRestore = true
-		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
+		// Mux dying means the SSH connection dropped.
+		prepareReconnectExit()
 		return ErrExitForReconnect
 	case err := <-proxyErrCh:
 		if err != nil {
@@ -490,12 +509,7 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 		} else {
 			log.Printf("network change detected, exiting for reconnect")
 		}
-		// Network change — keep TCP redirect rules during reconnect window,
-		// but remove DNS redirect rules so the reconnecting tunnel process
-		// can resolve the SSH server hostname via normal system DNS.
-		firewall.DisableDNSRedirect(fw)
-		skipFWRestore = true
-		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
+		prepareReconnectExit()
 		return ErrExitForReconnect
 	case <-stopCh:
 		log.Printf("stop requested, cleaning up")
