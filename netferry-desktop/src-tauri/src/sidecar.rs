@@ -773,6 +773,31 @@ fn is_error_line(line: &str) -> bool {
     KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
+/// Returns true for the tunnel's high-frequency, per-connection chatter — one
+/// line per TCP accept, per DNS query, per closed connection, plus the periodic
+/// health tick. Under load this is ~1k lines/minute.
+///
+/// These lines are logged at TRACE (below the plugin's Debug level) so they
+/// stay out of the persisted app log (netferry.log), where their volume would
+/// otherwise roll lifecycle events — tunnel exit, reconnect, netmon network
+/// changes — out of the size-capped file within an hour. The full firehose is
+/// still persisted by the tunnel itself in
+/// ~/Library/Caches/netferry/logs/client.log and still streamed to the in-app
+/// log view via LOG_EVENT, so nothing is lost for deep debugging.
+fn is_high_frequency_tunnel_line(line: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "conn summary",     // one per closed connection
+        "Accept TCP",       // one per accepted connection
+        "proxy: direct",    // one per connection (bypass path)
+        "proxy: relay",     // one per connection (tunneled path)
+        "health: active=",  // periodic health tick
+        "s: TCP",           // server-side per-connection trace
+        "s: DNS",           // server-side per-query trace
+        "s: UDP",           // server-side per-datagram trace
+    ];
+    MARKERS.iter().any(|m| line.contains(m))
+}
+
 // ── macOS: helper-IPC event thread ────────────────────────────────────────────
 
 /// Spawn a thread that reads JSON events from the helper socket and translates
@@ -805,8 +830,17 @@ fn spawn_helper_event_thread(
                     let stream_name = ev["stream"].as_str().unwrap_or("stderr");
                     let log_line = ev["line"].as_str().unwrap_or("").to_string();
 
-                    // Mirror to disk via tauri-plugin-log before any filtering.
-                    log::debug!(target: "tunnel", "{stream_name}: {log_line}");
+                    // Mirror to disk via tauri-plugin-log. High-frequency
+                    // per-connection chatter goes to TRACE (dropped from the
+                    // persisted log so it can't roll lifecycle events out of
+                    // netferry.log); everything else stays at DEBUG. The full
+                    // firehose is still in the tunnel's own client.log and
+                    // still streamed to the UI below.
+                    if is_high_frequency_tunnel_line(&log_line) && !is_error_line(&log_line) {
+                        log::trace!(target: "tunnel", "{stream_name}: {log_line}");
+                    } else {
+                        log::debug!(target: "tunnel", "{stream_name}: {log_line}");
+                    }
 
                     if handle_stats_port_line(&app, &log_line) {
                         continue;
@@ -1258,11 +1292,17 @@ pub fn connect(
             let reader = BufReader::new(err);
             let mut tunnel_connected = false;
             for line in reader.lines().map_while(Result::ok) {
-                // Persist every stderr line via tauri-plugin-log before any
-                // routing/filtering — guarantees spam-class issues like a mux
-                // pool collapse leave a forensic trail in netferry.log even
-                // when the in-memory 500-line UI buffer rolls over.
-                log::debug!(target: "tunnel", "stderr: {line}");
+                // Persist stderr via tauri-plugin-log. High-frequency
+                // per-connection chatter goes to TRACE (dropped from the
+                // persisted log) so lifecycle events — mux pool collapse,
+                // reconnect, netmon network changes, tunnel exit — survive in
+                // netferry.log instead of being rolled out by the flood. The
+                // full firehose remains in the tunnel's own client.log.
+                if is_high_frequency_tunnel_line(&line) && !is_error_line(&line) {
+                    log::trace!(target: "tunnel", "stderr: {line}");
+                } else {
+                    log::debug!(target: "tunnel", "stderr: {line}");
+                }
 
                 if handle_stats_port_line(&app_clone, &line) {
                     continue;
@@ -1558,5 +1598,46 @@ fn clean_stale_pf_anchors() {
             let _ = Command::new("pfctl").args(["-X", token]).output();
         }
         let _ = std::fs::remove_file(&token_path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn high_frequency_lines_are_detected() {
+        // Real samples of the per-connection / per-packet chatter that floods
+        // netferry.log (leading "c :" / " s:" prefixes are the tunnel's own).
+        let spam = [
+            "c : conn summary: kind=tcp-direct id=7678 src=10.0.1.71:59310 dst=1.2.3.4:443 dur=465ms upload=897B download=13553B host=\"a.example\"",
+            "c : c : Accept TCP: 10.0.1.71:59310 -> 1.2.3.4:443 (a.example).",
+            "c : proxy: direct 10.0.1.71:59310 -> 1.2.3.4:443 (a.example)",
+            " s: TCP → 160.79.104.10:443",
+            " s: DNS len=32 → 127.0.0.53:53",
+            "c : health: active=11 peak=48 total=503 opened/30s=9 dns/30s=5 rx=4.6KiB/s tx=3.1KiB/s idle=0s keepalive_rtt=559ms keepalive_rtt_max=559ms",
+        ];
+        for line in spam {
+            assert!(is_high_frequency_tunnel_line(line), "should be high-frequency: {line}");
+        }
+    }
+
+    #[test]
+    fn lifecycle_lines_are_kept() {
+        // Low-frequency lines whose survival in netferry.log is the whole point:
+        // netmon decisions, mux pool churn, connect/exit, signals.
+        let keep = [
+            "netmon: network changed (type=14), signalling reconnect",
+            "netmon: transient network flap (type=14), same network — ignoring",
+            "c : exit-for-reconnect",
+            "mux pool member 1/4 closed: EOF",
+            "mux pool member 1/4: reconnected successfully",
+            "[home] connecting to tom@1.2.3.4:22",
+            "received signal terminated, cleaning up",
+            "c : Connected to server.",
+        ];
+        for line in keep {
+            assert!(!is_high_frequency_tunnel_line(line), "should be kept: {line}");
+        }
     }
 }
