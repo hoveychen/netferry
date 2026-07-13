@@ -1,7 +1,6 @@
 package mobile
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -97,16 +96,4 @@ func (ts *tunStack) Close() {
 		ts.dnsConn.Close()
 	}
 	ts.wg.Wait()
-}
-
-// buildDNSServFail creates a minimal DNS SERVFAIL response for the given query.
-func buildDNSServFail(query []byte) []byte {
-	if len(query) < 12 {
-		return nil
-	}
-	resp := make([]byte, 12)
-	copy(resp, query[:2])                                                     // Transaction ID.
-	binary.BigEndian.PutUint16(resp[2:], 0x8182)                              // Response, SERVFAIL.
-	binary.BigEndian.PutUint16(resp[4:], binary.BigEndian.Uint16(query[4:6])) // QDCOUNT.
-	return resp
 }

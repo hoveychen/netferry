@@ -53,7 +53,7 @@ func ServeDNS(conn net.PacketConn, client mux.TunnelClient, counters *stats.Coun
 				log.Printf("proxy: DNS request: %v", err)
 				// Send a SERVFAIL response so the client retries quickly
 				// instead of waiting for a full timeout.
-				if fail := buildDNSServFail(q); fail != nil {
+				if fail := BuildDNSServFail(q); fail != nil {
 					conn.WriteTo(fail, srcAddr)
 				}
 				return
@@ -148,9 +148,9 @@ func ListenDNS(port int, client mux.TunnelClient, counters *stats.Counters) erro
 	return ServeDNS(conn, client, counters)
 }
 
-// buildDNSServFail creates a minimal DNS SERVFAIL response for the given query.
+// BuildDNSServFail creates a minimal DNS SERVFAIL response for the given query.
 // Returns nil if the query is too short to be a valid DNS packet.
-func buildDNSServFail(query []byte) []byte {
+func BuildDNSServFail(query []byte) []byte {
 	if len(query) < 12 {
 		return nil // too short for a DNS header
 	}

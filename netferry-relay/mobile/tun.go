@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/proxy"
 	"github.com/hoveychen/netferry/relay/internal/stats"
 
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -225,23 +226,62 @@ func (tf *tunForwarder) handleUDP(r *udp.ForwarderRequest) {
 	conn := gonet.NewUDPConn(&wq, ep)
 	defer conn.Close()
 
+	serveDNSFlow(conn, tf.tunnel, tf.counters)
+}
+
+// dnsResolver is the subset of mux.TunnelClient needed by serveDNSFlow.
+type dnsResolver interface {
+	DNSRequest(data []byte) ([]byte, error)
+}
+
+// dnsFlowIdleTimeout is how long a DNS flow handler keeps reading after the
+// last datagram. It must cover the OS resolver's retry window (~5s intervals)
+// so retries sent on the same socket reach the tunnel instead of piling up
+// unread in the endpoint queue.
+const dnsFlowIdleTimeout = 15 * time.Second
+
+// serveDNSFlow serves DNS queries arriving on one intercepted UDP flow.
+//
+// The OS resolver retries on the same socket (same 4-tuple), so keep reading
+// until the flow goes idle instead of serving only the first datagram —
+// otherwise every retry is silently swallowed. Queries are forwarded
+// concurrently, and a failed or empty tunnel response is answered with
+// SERVFAIL so the resolver fails fast instead of waiting out its timeout.
+func serveDNSFlow(conn net.PacketConn, tunnel dnsResolver, counters *stats.Counters) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	buf := make([]byte, 4096)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, srcAddr, err := conn.ReadFrom(buf)
-	if err != nil {
-		return
-	}
+	for {
+		conn.SetReadDeadline(time.Now().Add(dnsFlowIdleTimeout))
+		n, srcAddr, err := conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
 
-	if tf.counters != nil {
-		tf.counters.AddDNS()
-	}
+		if counters != nil {
+			counters.AddDNS()
+		}
 
-	resp, err := tf.tunnel.DNSRequest(buf[:n])
-	if err != nil {
-		log.Printf("tun: dns: %v", err)
-		return
+		query := make([]byte, n)
+		copy(query, buf[:n])
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := tunnel.DNSRequest(query)
+			if err != nil {
+				log.Printf("tun: dns: %v", err)
+				resp = nil
+			}
+			if len(resp) == 0 {
+				resp = proxy.BuildDNSServFail(query)
+				if resp == nil {
+					return // query too short to even echo a header
+				}
+			}
+			conn.WriteTo(resp, srcAddr)
+		}()
 	}
-	conn.WriteTo(resp, srcAddr)
 }
 
 // Close shuts down the gVisor stack and goroutines but does NOT close the
