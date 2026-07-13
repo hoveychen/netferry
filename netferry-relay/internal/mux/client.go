@@ -229,7 +229,9 @@ func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("mux: open stream: %w", err)
 	}
 	defer stream.Close()
-	stream.SetDeadline(time.Now().Add(30 * time.Second))
+	// The OS resolver gives up after ~5s per query; waiting longer only ties
+	// up the flow handler after the answer has stopped mattering.
+	stream.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Header + length-prefixed query in one write.
 	hdr := "DNS\n"
@@ -240,7 +242,17 @@ func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 	if _, err := stream.Write(msg); err != nil {
 		return nil, fmt.Errorf("mux: dns write: %w", err)
 	}
-	return readMsg(stream)
+	resp, err := readMsg(stream)
+	if err != nil {
+		return nil, fmt.Errorf("mux: dns read: %w", err)
+	}
+	// A zero-length message is the server's stream-rejection signal (e.g.
+	// concurrency limit reached) — surface it as an error, not a bogus empty
+	// DNS answer.
+	if len(resp) == 0 {
+		return nil, fmt.Errorf("mux: dns: empty response (stream rejected by server)")
+	}
+	return resp, nil
 }
 
 // OpenUDP opens a smux stream for UDP datagram forwarding.
