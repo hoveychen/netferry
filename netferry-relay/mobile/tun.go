@@ -224,9 +224,15 @@ func (tf *tunForwarder) handleUDP(r *udp.ForwarderRequest) {
 		return
 	}
 	conn := gonet.NewUDPConn(&wq, ep)
-	defer conn.Close()
 
-	serveDNSFlow(conn, tf.tunnel, tf.counters)
+	// gVisor's udp.Forwarder invokes this handler synchronously on the
+	// packet-dispatch path (unlike tcp.Forwarder, which spawns a goroutine
+	// per request). Serving the flow inline would stall ALL inbound packets
+	// — TCP included — for as long as the flow lives, so hand it off.
+	go func() {
+		defer conn.Close()
+		serveDNSFlow(conn, tf.tunnel, tf.counters)
+	}()
 }
 
 // dnsResolver is the subset of mux.TunnelClient needed by serveDNSFlow.
