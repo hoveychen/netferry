@@ -9,7 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoveychen/netferry/relay/internal/mux"
 	"github.com/hoveychen/netferry/relay/internal/stats"
+
+	"gvisor.dev/gvisor/pkg/buffer"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 // TestTunForwarderCloseUnblocksReader verifies that Close() returns even when
@@ -212,5 +218,90 @@ func TestServeDNSFlowServesAllQueries(t *testing.T) {
 	}
 	if got := counters.DNSTotal.Load(); got != 2 {
 		t.Fatalf("expected DNS counter 2, got %d", got)
+	}
+}
+
+// ── dispatch-path blocking test ───────────────────────────────────────────────
+
+// blockingTunnel is a mux.TunnelClient whose DNSRequest blocks until release
+// is closed.
+type blockingTunnel struct {
+	release chan struct{}
+}
+
+func (b *blockingTunnel) OpenTCP(int, string, int, int) (*mux.ClientConn, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *blockingTunnel) OpenUDP(int) (*mux.UDPChannel, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *blockingTunnel) DNSRequest([]byte) ([]byte, error) {
+	<-b.release
+	return nil, errors.New("released")
+}
+
+// buildDNSUDPPacket builds an IPv4+UDP packet carrying a DNS query.
+// The UDP checksum is left zero (valid for IPv4: "no checksum").
+func buildDNSUDPPacket(srcPort uint16, payload []byte) []byte {
+	udpLen := header.UDPMinimumSize + len(payload)
+	buf := make([]byte, header.IPv4MinimumSize+udpLen)
+	ip := header.IPv4(buf)
+	ip.Encode(&header.IPv4Fields{
+		TotalLength: uint16(len(buf)),
+		TTL:         64,
+		Protocol:    uint8(header.UDPProtocolNumber),
+		SrcAddr:     tcpip.AddrFrom4([4]byte{10, 0, 0, 1}),
+		DstAddr:     tcpip.AddrFrom4([4]byte{10, 0, 0, 2}),
+	})
+	ip.SetChecksum(^ip.CalculateChecksum())
+	u := header.UDP(buf[header.IPv4MinimumSize:])
+	u.Encode(&header.UDPFields{
+		SrcPort: srcPort,
+		DstPort: 53,
+		Length:  uint16(udpLen),
+	})
+	copy(buf[header.IPv4MinimumSize+header.UDPMinimumSize:], payload)
+	return buf
+}
+
+// TestHandleUDPDoesNotBlockDispatch verifies that a DNS flow whose upstream
+// request hangs does NOT stall packet dispatch. gVisor's udp.Forwarder calls
+// the handler synchronously on the dispatch path (unlike tcp.Forwarder, which
+// spawns a goroutine), so if handleUDP serves the flow inline, one slow DNS
+// query freezes the entire TUN: no TCP, no further DNS — the v0.7.18 "VPN
+// totally dead" regression.
+func TestHandleUDPDoesNotBlockDispatch(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	bt := &blockingTunnel{release: make(chan struct{})}
+	tf, err := newTunForwarder(r, 1500, bt, stats.NewCounters())
+	if err != nil {
+		t.Fatalf("newTunForwarder: %v", err)
+	}
+	defer tf.Close()
+	defer close(bt.release) // unblock DNSRequest before tf.Close
+
+	pkt := buildDNSUDPPacket(5555, dnsQuery(0x0042))
+	injected := make(chan struct{})
+	go func() {
+		pkb := stack.NewPacketBuffer(stack.PacketBufferOptions{
+			Payload: buffer.MakeWithData(pkt),
+		})
+		tf.ep.InjectInbound(header.IPv4ProtocolNumber, pkb)
+		pkb.DecRef()
+		close(injected)
+	}()
+
+	select {
+	case <-injected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("InjectInbound blocked >2s: DNS flow is served synchronously on the packet-dispatch path")
 	}
 }
