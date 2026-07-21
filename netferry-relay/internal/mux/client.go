@@ -26,9 +26,16 @@ type MuxClient struct {
 	done       atomic.Bool
 	splitConn  *SplitConn    // non-nil in split mode
 	fairWriter *FairWriter   // non-nil in non-split mode
+	ctrlCloser io.Closer            // split-mode ctrl SSH connection; closed on teardown (nil otherwise)
 	tunnelIdx  int                  // 1-based pool member index; 0 = single-tunnel mode
 	tunnelCtrs *stats.TunnelCounters // nil when not in pool mode
 }
+
+// SetCtrlCloser registers the split-mode ctrl SSH connection so it is closed
+// when this client's session ends (member death / reconnect / teardown).
+// Without this the ctrl connection leaks each time a split pool member
+// reconnects. No-op cleanup target for non-split clients (leave nil).
+func (c *MuxClient) SetCtrlCloser(cl io.Closer) { c.ctrlCloser = cl }
 
 // rwConn adapts separate io.Reader / io.Writer into the io.ReadWriteCloser
 // that smux requires.
@@ -125,6 +132,11 @@ func (c *MuxClient) Run() error {
 	defer func() {
 		if c.fairWriter != nil {
 			c.fairWriter.Close()
+		}
+		// Close the split-mode ctrl SSH connection so it does not leak when the
+		// member dies or reconnects.
+		if c.ctrlCloser != nil {
+			c.ctrlCloser.Close()
 		}
 	}()
 	for {

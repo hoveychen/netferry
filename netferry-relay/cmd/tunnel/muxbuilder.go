@@ -157,7 +157,11 @@ func trySplitMuxClient(
 		return nil, fmt.Errorf("split ctrl handshake %d/%d: %w", member, total, syncErr[1])
 	}
 
-	return mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin), nil
+	mc := mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin)
+	// Hand the ctrl SSH connection to the client so it is closed when the member
+	// dies or reconnects, instead of leaking one ctrl connection per reconnect.
+	mc.SetCtrlCloser(ctrlClient)
+	return mc, nil
 }
 
 // connectPoolMember dials a fresh SSH connection and creates a MuxClient.
