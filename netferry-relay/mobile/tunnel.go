@@ -1,9 +1,12 @@
 package mobile
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,9 +111,24 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 	}
 
 	// ── Start mux clients ───────────────────────────────────────────────────
+	// Snapshot the data connections: in split mode each one spawns an extra
+	// ctrl SSH connection that is appended to s.sshClients below, so we must
+	// not range over the slice while it grows.
+	dataClients := s.sshClients
 	muxErrCh := make(chan error, 1)
-	for _, sc := range s.sshClients {
-		mc, err := startMuxClient(sc, remoteCmd)
+	for _, sc := range dataClients {
+		var mc *mux.MuxClient
+		if cfg.SplitConn {
+			var ctrlClient *ssh.Client
+			mc, ctrlClient, err = startSplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd)
+			if err == nil {
+				// Track the ctrl connection so Close() tears it down.
+				// Its keepalive is already started inside startSplitMuxClient.
+				s.sshClients = append(s.sshClients, ctrlClient)
+			}
+		} else {
+			mc, err = startMuxClient(sc, remoteCmd)
+		}
 		if err != nil {
 			s.Close()
 			return nil, fmt.Errorf("mux client: %w", err)
@@ -254,4 +272,99 @@ func startMuxClient(sc *ssh.Client, remoteCmd string) (*mux.MuxClient, error) {
 		return nil, fmt.Errorf("handshake: %w", err)
 	}
 	return mux.NewMuxClient(stdout, stdin), nil
+}
+
+// startSplitMuxClient opens a split-conn MuxClient: bulk data (PSH/FIN) travels
+// on a session over the existing connection sc, while control frames
+// (SYN/NOP/UPD) plus fully-ctrl-routed streams (DNS) travel on a second,
+// freshly-dialed SSH connection.  Separating them keeps DNS resolution and new
+// stream setup responsive even while a bulk transfer saturates the data
+// connection.  Mirrors the desktop tunnel's trySplitMuxClient.
+//
+// Returns the ctrl SSH client so the caller can track it for teardown; its
+// keepalive is started here.
+func startSplitMuxClient(sc *ssh.Client, hc *sshconn.HostConfig, ac sshconn.AuthConfig, jumpHosts []sshconn.JumpHostSpec, remoteCmd string) (*mux.MuxClient, *ssh.Client, error) {
+	sid, err := newSplitSessionID()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// ── data session (bulk PSH/FIN) over the existing connection ──────────────
+	dataSess, err := sc.NewSession()
+	if err != nil {
+		return nil, nil, fmt.Errorf("split data session: %w", err)
+	}
+	dataStdin, err := dataSess.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("split data stdin: %w", err)
+	}
+	dataStdout, err := dataSess.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("split data stdout: %w", err)
+	}
+	dataSess.Stderr = os.Stderr
+	if err := dataSess.Start(remoteCmd + " --session-id " + sid + " --role main"); err != nil {
+		return nil, nil, fmt.Errorf("split data start: %w", err)
+	}
+
+	// ── ctrl session (SYN/NOP/UPD + DNS) over a fresh SSH connection ──────────
+	ctrlClient, _, err := sshconn.Dial(hc, ac, jumpHosts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("split ctrl dial: %w", err)
+	}
+	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second, nil)
+
+	ctrlSess, err := ctrlClient.NewSession()
+	if err != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split ctrl session: %w", err)
+	}
+	ctrlStdin, err := ctrlSess.StdinPipe()
+	if err != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split ctrl stdin: %w", err)
+	}
+	ctrlStdout, err := ctrlSess.StdoutPipe()
+	if err != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split ctrl stdout: %w", err)
+	}
+	ctrlSess.Stderr = os.Stderr
+	// The ctrl relay only needs the server binary path — strip data-role args.
+	ctrlCmd := remoteCmd
+	if i := strings.IndexByte(remoteCmd, ' '); i >= 0 {
+		ctrlCmd = remoteCmd[:i]
+	}
+	if err := ctrlSess.Start(ctrlCmd + " --session-id " + sid + " --role ctrl"); err != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split ctrl start: %w", err)
+	}
+
+	// ── read both sync headers concurrently ───────────────────────────────────
+	var syncErr [2]error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); syncErr[0] = mux.ReadSyncHeader(dataStdout) }()
+	go func() { defer wg.Done(); syncErr[1] = mux.ReadSyncHeader(ctrlStdout) }()
+	wg.Wait()
+	if syncErr[0] != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split data handshake: %w", syncErr[0])
+	}
+	if syncErr[1] != nil {
+		ctrlClient.Close()
+		return nil, nil, fmt.Errorf("split ctrl handshake: %w", syncErr[1])
+	}
+
+	return mux.NewMuxClientSplit(dataStdout, dataStdin, ctrlStdout, ctrlStdin), ctrlClient, nil
+}
+
+// newSplitSessionID returns a short random hex ID used to pair the data and
+// ctrl SSH sessions of a split-conn mux client.
+func newSplitSessionID() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("rand: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
