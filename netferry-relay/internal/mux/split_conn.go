@@ -21,11 +21,11 @@ const (
 // (as opposed to session-level NOP/UPD).
 //
 // Note: although SYN is classified as a data command by this function,
-// splitWriter fast-paths ALL SYN frames through the ctrl channel for low
-// latency.  This is ordering-safe because ctrl is at least as fast as data,
-// so SYN always arrives before any PSH for the same stream.  PSH and FIN
+// splitWriter sends every regular SYN through the ctrl channel for low latency
+// AND mirrors it onto the data channel for ordering (see Write).  PSH and FIN
 // continue to travel on the data channel (unless the stream is explicitly
-// registered for full ctrl routing, e.g. DNS).
+// registered for full ctrl routing, e.g. DNS, in which case all of its frames
+// travel on ctrl).
 func isDataCmd(cmd byte) bool {
 	return cmd == smuxCmdSYN || cmd == smuxCmdPSH || cmd == smuxCmdFIN
 }
@@ -97,6 +97,7 @@ type splitWriter struct {
 	data   io.Writer
 	ctrl   io.Writer
 	sc     *SplitConn    // back-pointer for ctrlStreams & routeNextSYN
+	synCh  chan []byte    // top-priority queue for SYN mirrors (ordering)
 	dataCh chan []byte    // async queue for PSH data frames
 	finCh  chan []byte    // high-priority queue for FIN frames
 	done   chan struct{}  // closed on fatal data-write error
@@ -120,11 +121,19 @@ const dataChSize = 4
 // FIN (stuck behind PSH in dataCh) takes ages to close them.
 const finChSize = 64
 
+// synChSize is the capacity of the SYN mirror queue.  SYN mirrors are tiny
+// (8 bytes, header only) and are drained at the highest priority, so this only
+// needs to absorb bursts of new connections while the data TCP is momentarily
+// stalled.  A generous buffer keeps SYN Write instant (never starved by a
+// congested dataCh), preserving the low-latency-new-connection property.
+const synChSize = 64
+
 func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter {
 	sw := &splitWriter{
 		data:   data,
 		ctrl:   ctrl,
 		sc:     sc,
+		synCh:  make(chan []byte, synChSize),
 		dataCh: make(chan []byte, dataChSize),
 		finCh:  make(chan []byte, finChSize),
 		done:   make(chan struct{}),
@@ -134,22 +143,45 @@ func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter 
 }
 
 // drainData writes queued data frames to the data TCP connection.
-// FIN frames are prioritized: when a FIN is ready, all pending PSH frames
-// are drained first (to preserve per-stream PSH→FIN ordering), then the
-// FIN is written.  This prevents FIN from being blocked behind bulk PSH
-// frames from other streams.
+//
+// Priority order: SYN mirrors > FIN > PSH.
+//
+//   - SYN mirrors are written first so the receiver opens the stream (on this
+//     ordered data connection) before any PSH for it arrives.  This is what
+//     prevents the cross-connection reorder bug: without it, a lossy link can
+//     deliver a data-channel PSH before the ctrl-channel SYN, and smux
+//     silently drops data for a not-yet-open stream.
+//   - FIN is prioritized over bulk PSH: when a FIN is ready, all pending PSH
+//     frames are drained first (to preserve per-stream PSH→FIN ordering),
+//     then the FIN is written.
 func (sw *splitWriter) drainData() {
 	for {
+		// SYN mirrors have the highest priority — flush them before blocking.
+		if !sw.drainSyn() {
+			return
+		}
 		select {
+		case frame := <-sw.synCh:
+			if !sw.writeDataFrame(frame) {
+				return
+			}
 		case frame := <-sw.dataCh:
+			// A SYN may have raced in just before this PSH; flush it first so
+			// the SYN precedes the PSH on the wire.
+			if !sw.drainSyn() {
+				return
+			}
 			if !sw.writeDataFrame(frame) {
 				return
 			}
 		case frame := <-sw.finCh:
-			// Drain all pending PSH frames before writing FIN.
+			// Drain any pending SYN mirrors and PSH before writing FIN.
 			// This preserves ordering: by the time smux writes FIN(stream X),
-			// all PSH(stream X) frames are already in dataCh.  Draining
-			// dataCh first ensures they hit the wire before FIN.
+			// all PSH(stream X) frames are already in dataCh.  Draining first
+			// ensures they hit the wire before FIN.
+			if !sw.drainSyn() {
+				return
+			}
 			if !sw.drainPendingData() {
 				return
 			}
@@ -162,10 +194,30 @@ func (sw *splitWriter) drainData() {
 	}
 }
 
+// drainSyn writes all currently queued SYN mirror frames from synCh.
+// SYN mirrors must precede any PSH for the same stream on the data connection,
+// so they are flushed before every PSH/FIN write.  Returns false on write error.
+func (sw *splitWriter) drainSyn() bool {
+	for {
+		select {
+		case frame := <-sw.synCh:
+			if !sw.writeDataFrame(frame) {
+				return false
+			}
+		default:
+			return true
+		}
+	}
+}
+
 // drainPendingData writes all currently queued PSH frames from dataCh.
+// Any SYN mirror that raced in is flushed first so it precedes the PSH.
 // Returns false if a write error occurred.
 func (sw *splitWriter) drainPendingData() bool {
 	for {
+		if !sw.drainSyn() {
+			return false
+		}
 		select {
 		case frame := <-sw.dataCh:
 			if !sw.writeDataFrame(frame) {
@@ -215,21 +267,39 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 	if isDataCmd(b[1]) {
 		sid := streamID(b)
 
-		// SYN frames always travel via ctrl for low latency.  They are
-		// header-only (8 bytes) and must not queue behind bulk PSH frames
-		// in dataCh — otherwise a single congested download can starve new
-		// stream creation for tens of seconds.
+		// SYN frames travel via ctrl for low latency — they are header-only
+		// (8 bytes) and must not queue behind bulk PSH frames in dataCh,
+		// otherwise a single congested download can starve new stream
+		// creation for tens of seconds.
 		//
-		// Ordering is safe: ctrl is at least as fast as data, so SYN
-		// always arrives before any PSH for the same stream.
+		// For a regular stream we ALSO mirror the SYN onto the data channel
+		// (top-priority synCh).  The ctrl and data channels are independent
+		// TCP connections: a lossy/reordering link can deliver the data PSH
+		// before the ctrl SYN, and smux silently drops data for a not-yet-open
+		// stream.  Mirroring the SYN onto the (ordered) data connection ahead
+		// of the stream's PSH guarantees the receiver opens the stream first.
+		// The mirror is idempotent — smux ignores a duplicate SYN.
 		//
-		// If routeNextSYN is set, the stream is additionally registered
-		// for full ctrl routing (e.g. DNS) so that subsequent PSH/FIN
-		// also bypass the data channel.
+		// If routeNextSYN is set, the stream is registered for full ctrl
+		// routing (e.g. DNS): SYN+PSH+FIN all travel on ctrl (a single ordered
+		// connection), so no data mirror is needed and none is sent.
 		if b[1] == smuxCmdSYN {
 			if sw.sc.routeNextSYN {
 				sw.sc.routeNextSYN = false
 				sw.sc.ctrlStreams.Store(sid, struct{}{})
+				return sw.ctrl.Write(b)
+			}
+			// Mirror onto the data channel (top priority) before returning via
+			// ctrl.  synCh is generously buffered so this stays non-blocking.
+			frame := make([]byte, len(b))
+			copy(frame, b)
+			select {
+			case sw.synCh <- frame:
+			case <-sw.done:
+				if sw.wErr != nil {
+					return 0, sw.wErr
+				}
+				return 0, io.ErrClosedPipe
 			}
 			return sw.ctrl.Write(b)
 		}

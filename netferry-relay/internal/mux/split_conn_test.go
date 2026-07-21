@@ -175,6 +175,75 @@ func TestSplitWriterDNSFullCtrlRouting(t *testing.T) {
 	}
 }
 
+// TestSplitWriterRegularSYNMirroredToData verifies the fix for cross-connection
+// SYN/PSH reordering: a regular (non-DNS) stream's SYN is written to BOTH the
+// ctrl channel (low latency) AND the data channel (ordering).  Without the data
+// mirror, a lossy/reordering link can deliver the data-channel PSH before the
+// ctrl-channel SYN, and smux silently drops the PSH (data loss).
+func TestSplitWriterRegularSYNMirroredToData(t *testing.T) {
+	dataW := &chanWriter{ch: make(chan []byte, 100)} // buffered → drains fast
+	ctrlW := &chanWriter{ch: make(chan []byte, 100)}
+
+	sc := &SplitConn{}
+	sw := newSplitWriter(dataW, ctrlW, sc)
+	defer sw.close()
+
+	sid := uint32(7)
+	sw.Write(buildFrame(smuxCmdSYN, sid, nil))
+
+	// ctrl must receive the SYN (low-latency path, unchanged by the fix).
+	select {
+	case f := <-ctrlW.ch:
+		if f[1] != smuxCmdSYN || streamID(f) != sid {
+			t.Fatalf("ctrl: got cmd=%d sid=%d, want SYN sid=%d", f[1], streamID(f), sid)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SYN not delivered on ctrl")
+	}
+
+	// data must ALSO receive the SYN (the fix).  Before the fix the data
+	// channel never sees the SYN and this times out.
+	select {
+	case f := <-dataW.ch:
+		if f[1] != smuxCmdSYN || streamID(f) != sid {
+			t.Fatalf("data: got cmd=%d sid=%d, want SYN sid=%d", f[1], streamID(f), sid)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIX MISSING: regular SYN was not mirrored to the data channel")
+	}
+}
+
+// TestSplitWriterSYNMirrorPrecedesPSH verifies the data-channel SYN mirror is
+// written before the stream's first PSH, so the receiver's smux opens the
+// stream before any data for it arrives on the (ordered) data connection.
+func TestSplitWriterSYNMirrorPrecedesPSH(t *testing.T) {
+	dataW := &chanWriter{ch: make(chan []byte, 100)}
+	ctrlW := &chanWriter{ch: make(chan []byte, 100)}
+
+	sc := &SplitConn{}
+	sw := newSplitWriter(dataW, ctrlW, sc)
+	defer sw.close()
+
+	sid := uint32(5)
+	sw.Write(buildFrame(smuxCmdSYN, sid, nil))
+	sw.Write(buildFrame(smuxCmdPSH, sid, []byte("first")))
+	time.Sleep(100 * time.Millisecond) // let drainData flush both
+
+	var order []byte
+	for {
+		select {
+		case f := <-dataW.ch:
+			order = append(order, f[1])
+			continue
+		default:
+		}
+		break
+	}
+	if len(order) < 2 || order[0] != smuxCmdSYN || order[1] != smuxCmdPSH {
+		t.Fatalf("data frame order = %v, want [SYN(%d), PSH(%d)]", order, smuxCmdSYN, smuxCmdPSH)
+	}
+}
+
 // TestSplitWriterFINBypassesCongestedDataCh verifies that FIN frames are
 // written promptly via the high-priority finCh even when dataCh is full,
 // and that ordering is preserved (PSH before FIN on the wire).
@@ -303,22 +372,35 @@ func TestSplitWriterNonDNSSYNDoesNotRegisterCtrl(t *testing.T) {
 
 	tcpSID := uint32(7)
 
-	// SYN goes to ctrl (fix), but does NOT register in ctrlStreams.
+	// SYN goes to ctrl (low latency) AND is mirrored to data (ordering), but
+	// does NOT register the stream for full ctrl routing.
 	sw.Write(buildFrame(smuxCmdSYN, tcpSID, nil))
 	if _, ok := sc.ctrlStreams.Load(tcpSID); ok {
 		t.Fatal("non-DNS stream should not be registered in ctrlStreams after SYN")
 	}
 
-	// Drain the SYN from ctrlW so it doesn't interfere with the PSH check.
+	// Drain the ctrl-channel SYN.
 	select {
-	case <-ctrlW.ch:
+	case f := <-ctrlW.ch:
+		if f[1] != smuxCmdSYN {
+			t.Fatalf("ctrl: expected SYN, got cmd %d", f[1])
+		}
 	default:
 		t.Fatal("SYN not found on ctrl")
 	}
 
+	// Drain the data-channel SYN mirror (written ahead of any PSH).
+	select {
+	case f := <-dataW.ch:
+		if f[1] != smuxCmdSYN {
+			t.Fatalf("data: expected SYN mirror, got cmd %d", f[1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SYN mirror not found on data")
+	}
+
 	// PSH should go to dataCh (eventually written to dataW), NOT ctrl.
 	sw.Write(buildFrame(smuxCmdPSH, tcpSID, []byte("http request")))
-	time.Sleep(50 * time.Millisecond) // let drainData forward it
 
 	select {
 	case f := <-dataW.ch:
