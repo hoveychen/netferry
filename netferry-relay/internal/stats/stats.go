@@ -185,6 +185,15 @@ type Counters struct {
 	lastKeepaliveRTTNs atomic.Int64
 	maxKeepaliveRTTNs  atomic.Int64
 
+	// ctrl-path keepalive RTT, measured over the split-mode ctrl SSH connection
+	// (0 when not in split mode / not yet measured). Kept separate from the
+	// data-path RTT above because the data connection carries bulk PSH traffic
+	// and its keepalive RTT balloons under load (expected bufferbloat), while
+	// the ctrl connection reflects the latency of the path that actually
+	// determines tunnel responsiveness (SYN/NOP/UPD).
+	lastCtrlKeepaliveRTTNs atomic.Int64
+	maxCtrlKeepaliveRTTNs  atomic.Int64
+
 	connEventCh chan ConnEvent // connection open/close notifications for SSE
 
 	mu          sync.Mutex
@@ -666,6 +675,52 @@ func (c *Counters) ObserveKeepaliveRTT(rtt time.Duration) {
 			return
 		}
 	}
+}
+
+// ObserveCtrlKeepaliveRTT records a keepalive round-trip measured over the
+// split-mode ctrl SSH connection. Kept separate from ObserveKeepaliveRTT so the
+// data-path RTT (used for the TUI display and pool member selection) is
+// unaffected.
+func (c *Counters) ObserveCtrlKeepaliveRTT(rtt time.Duration) {
+	if rtt <= 0 {
+		return
+	}
+	ns := rtt.Nanoseconds()
+	c.lastCtrlKeepaliveRTTNs.Store(ns)
+	for {
+		cur := c.maxCtrlKeepaliveRTTNs.Load()
+		if ns <= cur {
+			return
+		}
+		if c.maxCtrlKeepaliveRTTNs.CompareAndSwap(cur, ns) {
+			return
+		}
+	}
+}
+
+// LastCtrlKeepaliveRTT returns the most recent ctrl-path keepalive RTT (0 if
+// not in split mode / never measured).
+func (c *Counters) LastCtrlKeepaliveRTT() time.Duration {
+	return time.Duration(c.lastCtrlKeepaliveRTTNs.Load())
+}
+
+// MaxCtrlKeepaliveRTT returns the maximum ctrl-path keepalive RTT observed.
+func (c *Counters) MaxCtrlKeepaliveRTT() time.Duration {
+	return time.Duration(c.maxCtrlKeepaliveRTTNs.Load())
+}
+
+// EffectiveKeepaliveRTT is the RTT that drives the "keepalive RTT is high"
+// health warning. In split mode it reflects the ctrl-path RTT (the latency of
+// the path that determines responsiveness); the data-path RTT is deliberately
+// ignored there because bulk transfers make it balloon into multi-second
+// standing queues under load, which is expected and not actionable. When no
+// ctrl-path measurement exists (non-split mode) it falls back to the data-path
+// RTT, preserving the original single-connection behavior.
+func (c *Counters) EffectiveKeepaliveRTT() time.Duration {
+	if ctrl := c.LastCtrlKeepaliveRTT(); ctrl > 0 {
+		return ctrl
+	}
+	return c.LastKeepaliveRTT()
 }
 
 func (c *Counters) NoteActiveConns(active int32) {
@@ -1183,7 +1238,7 @@ func (c *Counters) lastActivityTime() time.Time {
 func (c *Counters) logHealth(now time.Time, snap Snapshot, openedPerWindow, dnsPerWindow int64) {
 	idle := c.LastActivityAgo(now)
 	log.Printf(
-		"health: active=%d peak=%d total=%d opened/%ds=%d dns/%ds=%d rx=%s/s tx=%s/s idle=%s keepalive_rtt=%s keepalive_rtt_max=%s",
+		"health: active=%d peak=%d total=%d opened/%ds=%d dns/%ds=%d rx=%s/s tx=%s/s idle=%s keepalive_rtt=%s keepalive_rtt_max=%s ctrl_rtt=%s ctrl_rtt_max=%s",
 		snap.ActiveConns,
 		snap.PeakConns,
 		snap.TotalConns,
@@ -1196,6 +1251,8 @@ func (c *Counters) logHealth(now time.Time, snap Snapshot, openedPerWindow, dnsP
 		idle.Round(time.Second),
 		c.LastKeepaliveRTT().Round(time.Millisecond),
 		c.MaxKeepaliveRTT().Round(time.Millisecond),
+		c.LastCtrlKeepaliveRTT().Round(time.Millisecond),
+		c.MaxCtrlKeepaliveRTT().Round(time.Millisecond),
 	)
 
 	switch {
@@ -1207,8 +1264,8 @@ func (c *Counters) logHealth(now time.Time, snap Snapshot, openedPerWindow, dnsP
 		log.Printf("warning: tunnel pressure: dns volume is high, queries=%d over %s", dnsPerWindow, healthLogInterval)
 	case snap.ActiveConns > 0 && idle >= idleWarnAfter:
 		log.Printf("warning: tunnel appears stalled: active_conns=%d idle=%s last_keepalive_rtt=%s", snap.ActiveConns, idle.Round(time.Second), c.LastKeepaliveRTT().Round(time.Millisecond))
-	case c.LastKeepaliveRTT() >= highKeepaliveRTT:
-		log.Printf("warning: tunnel keepalive RTT is high: rtt=%s active_conns=%d", c.LastKeepaliveRTT().Round(time.Millisecond), snap.ActiveConns)
+	case c.EffectiveKeepaliveRTT() >= highKeepaliveRTT:
+		log.Printf("warning: tunnel keepalive RTT is high: rtt=%s active_conns=%d", c.EffectiveKeepaliveRTT().Round(time.Millisecond), snap.ActiveConns)
 	}
 }
 
