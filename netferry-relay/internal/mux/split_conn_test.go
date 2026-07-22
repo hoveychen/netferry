@@ -31,14 +31,11 @@ func buildFrame(cmd byte, sid uint32, payload []byte) []byte {
 }
 
 // TestSplitWriterSYNBypassesCongestedDataCh verifies that SYN frames are
-// written to the ctrl channel even when dataCh is completely full.
+// written to the ctrl channel even when the data connection is stalled.
 //
-// Setup: dataW blocks every write (unbuffered channel), so drainData blocks
-// on the first frame and dataCh fills to capacity.  Then we write a SYN
-// frame and verify it completes instantly via ctrl.
-//
-// Before the fix, SYN goes through dataCh and blocks indefinitely.
-// After the fix, SYN goes through ctrl and returns immediately.
+// Setup: dataW blocks every write (unbuffered channel), so drainData blocks on
+// the first frame.  Then we write a SYN frame and verify it completes instantly
+// via ctrl regardless of the stalled data path.
 func TestSplitWriterSYNBypassesCongestedDataCh(t *testing.T) {
 	// dataW: unbuffered → every Write blocks until someone receives.
 	dataW := &chanWriter{ch: make(chan []byte)}
@@ -49,18 +46,20 @@ func TestSplitWriterSYNBypassesCongestedDataCh(t *testing.T) {
 	sw := newSplitWriter(dataW, ctrlW, sc)
 	defer sw.close()
 
-	// Step 1: write one PSH frame. drainData picks it up from dataCh and
-	// blocks trying to write to dataW (unbuffered channel, nobody reads).
+	// Step 1: write one PSH frame. drainData picks it up and blocks trying to
+	// write to dataW (unbuffered channel, nobody reads) — the data conn stall.
 	sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
 	time.Sleep(50 * time.Millisecond) // let drainData pick it up
 
-	// Step 2: fill the remaining dataCh capacity.
-	for i := 0; i < dataChSize; i++ {
+	// Step 2: queue several more PSH frames.  With the elastic queue these are
+	// appended without blocking while drainData stays stuck on the first frame.
+	for i := 0; i < 8; i++ {
 		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
 	}
-	// dataCh is now full and drainData is blocked. Any dataCh write will block.
 
-	// Step 3: verify PSH IS blocked (proves the data channel is congested).
+	// Step 3: enqueuing PSH must NOT block the caller even while the data
+	// connection is stalled — that non-blocking property is what keeps smux's
+	// single write loop (and thus ctrl NOP/UPD frames) moving.
 	pshDone := make(chan struct{})
 	go func() {
 		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
@@ -68,13 +67,13 @@ func TestSplitWriterSYNBypassesCongestedDataCh(t *testing.T) {
 	}()
 	select {
 	case <-pshDone:
-		t.Fatal("PSH should be blocked when dataCh is full")
-	case <-time.After(200 * time.Millisecond):
-		// Good — PSH is blocked as expected.
+		// Good — PSH enqueue returns promptly despite the stalled data conn.
+	case <-time.After(2 * time.Second):
+		t.Fatal("PSH enqueue blocked on a stalled data connection (head-of-line blocking)")
 	}
 
-	// Step 4: write a SYN frame. With the fix it goes to ctrl and returns
-	// immediately.  Without the fix it enters dataCh and blocks forever.
+	// Step 4: write a SYN frame. It goes to ctrl and returns immediately,
+	// unaffected by the stalled data path.
 	synDone := make(chan struct{})
 	go func() {
 		sw.Write(buildFrame(smuxCmdSYN, 99, nil))
@@ -112,10 +111,10 @@ func TestSplitWriterDNSFullCtrlRouting(t *testing.T) {
 	sw := newSplitWriter(dataW, ctrlW, sc)
 	defer sw.close()
 
-	// Congest the data channel (same as above).
+	// Stall the data connection and queue a backlog behind the first frame.
 	sw.Write(buildFrame(smuxCmdPSH, 1, []byte("bulk")))
 	time.Sleep(50 * time.Millisecond)
-	for i := 0; i < dataChSize; i++ {
+	for i := 0; i < 8; i++ {
 		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("bulk")))
 	}
 
@@ -315,8 +314,9 @@ done:
 	}
 }
 
-// TestSplitWriterFINNotBlockedByCongestedDataCh verifies FIN is promptly
-// delivered even when the data channel is completely saturated.
+// TestSplitWriterFINNotBlockedByCongestedDataCh verifies FIN enqueue returns
+// promptly even when the data connection is stalled (as does PSH — neither is
+// allowed to block the caller / smux write loop).
 func TestSplitWriterFINNotBlockedByCongestedDataCh(t *testing.T) {
 	// dataW: unbuffered → every Write blocks until someone receives.
 	dataW := &chanWriter{ch: make(chan []byte)}
@@ -326,14 +326,14 @@ func TestSplitWriterFINNotBlockedByCongestedDataCh(t *testing.T) {
 	sw := newSplitWriter(dataW, ctrlW, sc)
 	defer sw.close()
 
-	// Congest: one frame blocks in drainData, then fill dataCh.
+	// Stall the data conn: one frame blocks in drainData, queue a backlog.
 	sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
 	time.Sleep(50 * time.Millisecond)
-	for i := 0; i < dataChSize; i++ {
+	for i := 0; i < 8; i++ {
 		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
 	}
 
-	// Verify PSH IS blocked (proves data channel is congested).
+	// PSH enqueue must NOT block on a stalled data connection (elastic queue).
 	pshDone := make(chan struct{})
 	go func() {
 		sw.Write(buildFrame(smuxCmdPSH, 1, []byte("data")))
@@ -341,11 +341,11 @@ func TestSplitWriterFINNotBlockedByCongestedDataCh(t *testing.T) {
 	}()
 	select {
 	case <-pshDone:
-		t.Fatal("PSH should be blocked when dataCh is full")
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("PSH enqueue blocked on a stalled data connection")
 	}
 
-	// FIN should NOT block — it goes to finCh, not dataCh.
+	// FIN must likewise NOT block.
 	finDone := make(chan struct{})
 	go func() {
 		sw.Write(buildFrame(smuxCmdFIN, 99, nil))
@@ -353,9 +353,58 @@ func TestSplitWriterFINNotBlockedByCongestedDataCh(t *testing.T) {
 	}()
 	select {
 	case <-finDone:
-		t.Log("FIN bypassed congested dataCh via finCh")
+		t.Log("FIN enqueue returned promptly despite stalled data conn")
 	case <-time.After(2 * time.Second):
-		t.Fatal("FIN blocked by full dataCh — should use finCh")
+		t.Fatal("FIN enqueue blocked on a stalled data connection")
+	}
+}
+
+// TestSplitWriterDataStallDoesNotBlockWriteLoop verifies the elastic PSH queue:
+// when the data connection stalls (bufferbloat / cross-border jitter),
+// enqueuing PSH must NOT block the caller.  smux drives SplitConn.Write from a
+// single write loop; if a PSH enqueue blocks, that loop stalls and every stream
+// on the connection freezes — plus ctrl frames (NOP keepalive, UPD window
+// updates) queue behind it — the head-of-line-blocking bug.  With the bounded
+// dataCh this test blocks once ~4 frames are queued; with the elastic queue all
+// writes return promptly and a ctrl NOP still gets through during the stall.
+func TestSplitWriterDataStallDoesNotBlockWriteLoop(t *testing.T) {
+	dataW := &chanWriter{ch: make(chan []byte)} // unbuffered → stalls forever
+	ctrlW := &chanWriter{ch: make(chan []byte, 100)}
+
+	sc := &SplitConn{}
+	sw := newSplitWriter(dataW, ctrlW, sc)
+	defer sw.close()
+
+	// First PSH is picked up by drainData, which then blocks on dataW.Write.
+	sw.Write(buildFrame(smuxCmdPSH, 1, []byte("stall")))
+	time.Sleep(50 * time.Millisecond)
+
+	// Enqueue far more PSH frames than any bounded channel would hold.  With the
+	// elastic queue these all return promptly; the old bounded dataCh blocks the
+	// caller (and thus smux's write loop) once it fills.
+	writesDone := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			sw.Write(buildFrame(smuxCmdPSH, uint32(i+2), []byte("more")))
+		}
+		close(writesDone)
+	}()
+	select {
+	case <-writesDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("PSH writes blocked on a stalled data connection (head-of-line blocking)")
+	}
+
+	// A ctrl frame (NOP keepalive) must still reach the ctrl connection while
+	// the data connection is stalled.
+	sw.Write(buildFrame(smuxCmdNOP, 0, nil))
+	select {
+	case f := <-ctrlW.ch:
+		if f[1] != smuxCmdNOP {
+			t.Fatalf("ctrl received cmd %d, want NOP (%d)", f[1], smuxCmdNOP)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("NOP not delivered on ctrl during data stall")
 	}
 }
 
