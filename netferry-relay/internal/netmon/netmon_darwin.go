@@ -48,8 +48,9 @@ func Watch(done <-chan struct{}) error {
 
 		n, err := syscall.Read(fd, buf)
 		if err != nil {
-			// Timeout — loop back and check done.
-			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+			// Timeout (EAGAIN/EWOULDBLOCK) or signal interruption (EINTR) —
+			// loop back and check done, then retry.
+			if isRetryableRecvErr(err) {
 				continue
 			}
 			return fmt.Errorf("netmon: read routing socket: %w", err)
@@ -90,10 +91,10 @@ func Watch(done <-chan struct{}) error {
 // network switch (WiFi change, cable unplug, VPN up/down).
 func isRelevantChange(msgType byte) bool {
 	const (
-		RTM_NEWADDR  = 0xc
-		RTM_DELADDR  = 0xd
-		RTM_IFINFO   = 0xe
-		RTM_IFINFO2  = 0x12
+		RTM_NEWADDR = 0xc
+		RTM_DELADDR = 0xd
+		RTM_IFINFO  = 0xe
+		RTM_IFINFO2 = 0x12
 	)
 	switch msgType {
 	case RTM_NEWADDR, RTM_DELADDR,
