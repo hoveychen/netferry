@@ -89,142 +89,131 @@ func (s *SplitConn) Close() error {
 
 // ── splitWriter ───────────────────────────────────────────────────────────────
 
-// splitWriter routes smux frames to two connections.  Data frames (SYN, PSH,
-// FIN) are queued into a buffered channel and written by a background goroutine
-// so that a blocked data TCP never stalls the smux write loop.  Ctrl frames
-// (NOP, UPD) are written synchronously.
-type splitWriter struct {
-	data   io.Writer
-	ctrl   io.Writer
-	sc     *SplitConn    // back-pointer for ctrlStreams & routeNextSYN
-	synCh  chan []byte    // top-priority queue for SYN mirrors (ordering)
-	dataCh chan []byte    // async queue for PSH data frames
-	finCh  chan []byte    // high-priority queue for FIN frames
-	done   chan struct{}  // closed on fatal data-write error
-	once   sync.Once
-	wErr   error         // first data-write error, readable after done closes
-}
-
-// dataChSize is the capacity of the async PSH data-frame queue.
+// splitWriter routes smux frames to two connections.  Data frames (SYN mirror,
+// PSH, FIN) are appended to an in-memory elastic queue and written by a
+// background goroutine so that a blocked data TCP never stalls smux's single
+// write loop.  Ctrl frames (NOP, UPD, and ctrl-routed streams) are written
+// synchronously.
 //
-// Keep this SMALL (2–4 frames).  A large buffer lets one heavy download stream
-// dump many frames into the channel before other streams get a turn, starving
-// lighter streams.  With a small buffer, smux's priority-based shaper controls
-// inter-stream fairness, and the maximum NOP delay is bounded by one frame
-// drain time (e.g. 64 KB @ 256 Kbps ≈ 2 s), well within the 30 s keepalive
-// timeout.
-const dataChSize = 4
+// Why an elastic queue rather than a bounded channel: smux drives Write from
+// ONE write loop.  If a data-frame enqueue blocks (bounded channel full while
+// the data TCP is stalled by cross-border bufferbloat), that loop stalls — every
+// stream on the connection freezes AND ctrl frames (NOP keepalive, UPD window
+// updates) queue behind the blocked data frame.  That head-of-line blocking is
+// exactly the "connection is up but nothing loads" symptom.  Keeping every
+// enqueue non-blocking lets the write loop keep moving so ctrl frames always
+// flow.  The queue does not grow without bound: smux's own per-stream and
+// per-session flow control caps total in-flight data, so a persistently stalled
+// data connection backpressures the individual stalled streams (their Write
+// blocks on the smux window), not the shared write loop.
+type splitWriter struct {
+	data io.Writer
+	ctrl io.Writer
+	sc   *SplitConn // back-pointer for ctrlStreams & routeNextSYN
 
-// finChSize is the capacity of the FIN priority queue.  FIN frames are tiny
-// (8 bytes, header only) and must not queue behind bulk PSH frames — otherwise
-// connections accumulate because SYN (via ctrl) opens streams instantly while
-// FIN (stuck behind PSH in dataCh) takes ages to close them.
-const finChSize = 64
+	mu  sync.Mutex
+	syn [][]byte // SYN mirrors — highest priority (ordering)
+	psh [][]byte // bulk PSH data frames
+	fin [][]byte // FIN — drained only after all pending PSH (PSH→FIN ordering)
 
-// synChSize is the capacity of the SYN mirror queue.  SYN mirrors are tiny
-// (8 bytes, header only) and are drained at the highest priority, so this only
-// needs to absorb bursts of new connections while the data TCP is momentarily
-// stalled.  A generous buffer keeps SYN Write instant (never starved by a
-// congested dataCh), preserving the low-latency-new-connection property.
-const synChSize = 64
+	signal chan struct{} // cap 1: wakes drainData when a data frame is queued
+	done   chan struct{} // closed on close() or fatal data-write error
+	once   sync.Once
+	wErr   error // first data-write error, readable after done closes
+}
 
 func newSplitWriter(data io.Writer, ctrl io.Writer, sc *SplitConn) *splitWriter {
 	sw := &splitWriter{
 		data:   data,
 		ctrl:   ctrl,
 		sc:     sc,
-		synCh:  make(chan []byte, synChSize),
-		dataCh: make(chan []byte, dataChSize),
-		finCh:  make(chan []byte, finChSize),
+		signal: make(chan struct{}, 1),
 		done:   make(chan struct{}),
 	}
 	go sw.drainData()
 	return sw
 }
 
-// drainData writes queued data frames to the data TCP connection.
-//
-// Priority order: SYN mirrors > FIN > PSH.
-//
-//   - SYN mirrors are written first so the receiver opens the stream (on this
-//     ordered data connection) before any PSH for it arrives.  This is what
-//     prevents the cross-connection reorder bug: without it, a lossy link can
-//     deliver a data-channel PSH before the ctrl-channel SYN, and smux
-//     silently drops data for a not-yet-open stream.
-//   - FIN is prioritized over bulk PSH: when a FIN is ready, all pending PSH
-//     frames are drained first (to preserve per-stream PSH→FIN ordering),
-//     then the FIN is written.
+// wake signals drainData that new work is queued (non-blocking; the cap-1
+// signal channel coalesces bursts — one wake drains everything pending).
+func (sw *splitWriter) wake() {
+	select {
+	case sw.signal <- struct{}{}:
+	default:
+	}
+}
+
+// enqueueData appends a copy of frame to the given queue without blocking and
+// wakes the drain goroutine.  Returns false if the writer has been closed.
+func (sw *splitWriter) enqueueData(q *[][]byte, frame []byte) bool {
+	buf := make([]byte, len(frame))
+	copy(buf, frame)
+	sw.mu.Lock()
+	select {
+	case <-sw.done:
+		sw.mu.Unlock()
+		return false
+	default:
+	}
+	*q = append(*q, buf)
+	sw.mu.Unlock()
+	sw.wake()
+	return true
+}
+
+// popData removes and returns the next data frame in priority order
+// (SYN > PSH > FIN), or (nil, false) when all queues are empty.  FIN is drained
+// only when no PSH remain, which preserves per-stream PSH→FIN ordering: by the
+// time smux writes FIN(X) all PSH(X) are already queued, so they are written
+// first.  SYN mirrors precede PSH for the same reason (smux writes SYN(X)
+// before PSH(X), and SYN has the highest drain priority).
+func (sw *splitWriter) popData() ([]byte, bool) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	switch {
+	case len(sw.syn) > 0:
+		f := sw.syn[0]
+		sw.syn[0] = nil
+		sw.syn = sw.syn[1:]
+		return f, true
+	case len(sw.psh) > 0:
+		f := sw.psh[0]
+		sw.psh[0] = nil
+		sw.psh = sw.psh[1:]
+		return f, true
+	case len(sw.fin) > 0:
+		f := sw.fin[0]
+		sw.fin[0] = nil
+		sw.fin = sw.fin[1:]
+		return f, true
+	default:
+		return nil, false
+	}
+}
+
+// drainData writes queued data frames to the data TCP connection in priority
+// order.  It blocks (on the signal channel) only when the queue is empty, never
+// while frames are pending; a slow data.Write applies no backpressure to the
+// enqueue side — the queue simply grows until smux flow control throttles the
+// producing streams.
 func (sw *splitWriter) drainData() {
 	for {
-		// SYN mirrors have the highest priority — flush them before blocking.
-		if !sw.drainSyn() {
-			return
-		}
 		select {
-		case frame := <-sw.synCh:
-			if !sw.writeDataFrame(frame) {
-				return
-			}
-		case frame := <-sw.dataCh:
-			// A SYN may have raced in just before this PSH; flush it first so
-			// the SYN precedes the PSH on the wire.
-			if !sw.drainSyn() {
-				return
-			}
-			if !sw.writeDataFrame(frame) {
-				return
-			}
-		case frame := <-sw.finCh:
-			// Drain any pending SYN mirrors and PSH before writing FIN.
-			// This preserves ordering: by the time smux writes FIN(stream X),
-			// all PSH(stream X) frames are already in dataCh.  Draining first
-			// ensures they hit the wire before FIN.
-			if !sw.drainSyn() {
-				return
-			}
-			if !sw.drainPendingData() {
-				return
-			}
-			if !sw.writeDataFrame(frame) {
-				return
-			}
 		case <-sw.done:
 			return
-		}
-	}
-}
-
-// drainSyn writes all currently queued SYN mirror frames from synCh.
-// SYN mirrors must precede any PSH for the same stream on the data connection,
-// so they are flushed before every PSH/FIN write.  Returns false on write error.
-func (sw *splitWriter) drainSyn() bool {
-	for {
-		select {
-		case frame := <-sw.synCh:
-			if !sw.writeDataFrame(frame) {
-				return false
-			}
 		default:
-			return true
 		}
-	}
-}
-
-// drainPendingData writes all currently queued PSH frames from dataCh.
-// Any SYN mirror that raced in is flushed first so it precedes the PSH.
-// Returns false if a write error occurred.
-func (sw *splitWriter) drainPendingData() bool {
-	for {
-		if !sw.drainSyn() {
-			return false
-		}
-		select {
-		case frame := <-sw.dataCh:
-			if !sw.writeDataFrame(frame) {
-				return false
+		frame, ok := sw.popData()
+		if !ok {
+			select {
+			case <-sw.signal:
+			case <-sw.done:
+				return
 			}
-		default:
-			return true
+			continue
+		}
+		if !sw.writeDataFrame(frame) {
+			return
 		}
 	}
 }
@@ -245,10 +234,19 @@ func (sw *splitWriter) close() {
 	sw.once.Do(func() { close(sw.done) })
 }
 
+// closedErr reports the terminal write error (or a generic closed-pipe error)
+// after the writer's done channel has been observed closed.
+func (sw *splitWriter) closedErr() (int, error) {
+	if sw.wErr != nil {
+		return 0, sw.wErr
+	}
+	return 0, io.ErrClosedPipe
+}
+
 // Write routes a complete smux frame to either the data or ctrl channel.
 //
-// Data frames are copied into the async queue and return immediately.
-// Ctrl frames are written synchronously to the ctrl TCP.
+// Data frames (SYN mirror, PSH, FIN) are appended to the elastic queue and
+// return immediately.  Ctrl frames are written synchronously to the ctrl TCP.
 func (sw *splitWriter) Write(b []byte) (int, error) {
 	// Check for a previous async data-write error.
 	select {
@@ -268,12 +266,12 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 		sid := streamID(b)
 
 		// SYN frames travel via ctrl for low latency — they are header-only
-		// (8 bytes) and must not queue behind bulk PSH frames in dataCh,
-		// otherwise a single congested download can starve new stream
-		// creation for tens of seconds.
+		// (8 bytes) and must not queue behind bulk PSH frames, otherwise a
+		// single congested download can starve new stream creation for tens of
+		// seconds.
 		//
 		// For a regular stream we ALSO mirror the SYN onto the data channel
-		// (top-priority synCh).  The ctrl and data channels are independent
+		// (top-priority syn queue).  The ctrl and data channels are independent
 		// TCP connections: a lossy/reordering link can deliver the data PSH
 		// before the ctrl SYN, and smux silently drops data for a not-yet-open
 		// stream.  Mirroring the SYN onto the (ordered) data connection ahead
@@ -290,16 +288,9 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 				return sw.ctrl.Write(b)
 			}
 			// Mirror onto the data channel (top priority) before returning via
-			// ctrl.  synCh is generously buffered so this stays non-blocking.
-			frame := make([]byte, len(b))
-			copy(frame, b)
-			select {
-			case sw.synCh <- frame:
-			case <-sw.done:
-				if sw.wErr != nil {
-					return 0, sw.wErr
-				}
-				return 0, io.ErrClosedPipe
+			// ctrl.  The enqueue is non-blocking.
+			if !sw.enqueueData(&sw.syn, b) {
+				return sw.closedErr()
 			}
 			return sw.ctrl.Write(b)
 		}
@@ -312,35 +303,21 @@ func (sw *splitWriter) Write(b []byte) (int, error) {
 			return sw.ctrl.Write(b)
 		}
 
-		// FIN: route to high-priority finCh so it doesn't queue behind
-		// bulk PSH frames from other streams.  drainData ensures all
-		// pending PSH for this stream are flushed before the FIN is sent.
+		// FIN: separate queue so it doesn't queue behind bulk PSH frames from
+		// other streams; drainData writes it only after all pending PSH, so a
+		// stream's PSH still precede its FIN on the wire.
 		if b[1] == smuxCmdFIN {
-			frame := make([]byte, len(b))
-			copy(frame, b)
-			select {
-			case sw.finCh <- frame:
-				return len(b), nil
-			case <-sw.done:
-				if sw.wErr != nil {
-					return 0, sw.wErr
-				}
-				return 0, io.ErrClosedPipe
+			if !sw.enqueueData(&sw.fin, b) {
+				return sw.closedErr()
 			}
+			return len(b), nil
 		}
 
-		// PSH: normal data queue.
-		frame := make([]byte, len(b))
-		copy(frame, b)
-		select {
-		case sw.dataCh <- frame:
-			return len(b), nil
-		case <-sw.done:
-			if sw.wErr != nil {
-				return 0, sw.wErr
-			}
-			return 0, io.ErrClosedPipe
+		// PSH: elastic data queue.
+		if !sw.enqueueData(&sw.psh, b) {
+			return sw.closedErr()
 		}
+		return len(b), nil
 	}
 
 	return sw.ctrl.Write(b)
