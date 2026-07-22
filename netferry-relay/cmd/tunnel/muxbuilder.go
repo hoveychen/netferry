@@ -36,7 +36,7 @@ func startSplitMuxClient(
 	remoteCmd string,
 	member, total int,
 ) *mux.MuxClient {
-	c, err := trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total)
+	c, err := trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total, nil)
 	if err != nil {
 		fatalf("%v", err)
 	}
@@ -77,6 +77,7 @@ func trySplitMuxClient(
 	jumpHosts []sshconn.JumpHostSpec,
 	remoteCmd string,
 	member, total int,
+	ctrlRTTCb func(time.Duration),
 ) (*mux.MuxClient, error) {
 	sid := newSessionID()
 
@@ -105,7 +106,11 @@ func trySplitMuxClient(
 	if err != nil {
 		return nil, fmt.Errorf("split ctrl SSH connect %d/%d: %w", member, total, err)
 	}
-	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second, nil)
+	// Measure keepalive RTT over the ctrl connection. Unlike the data
+	// connection (which carries bulk PSH and shows multi-second bufferbloat
+	// under load), the ctrl connection reflects the latency of the path that
+	// determines responsiveness, so this is what drives the high-RTT warning.
+	sshconn.StartSSHKeepalive(ctrlClient, 30*time.Second, ctrlRTTCb)
 
 	ctrlSess, err := ctrlClient.NewSession()
 	if err != nil {
@@ -201,7 +206,7 @@ func connectPoolMember(
 
 	var c *mux.MuxClient
 	if split {
-		c, err = trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total)
+		c, err = trySplitMuxClient(sc, hc, ac, jumpHosts, remoteCmd, member, total, buildCtrlRTTCallback(counters, false))
 	} else {
 		c, err = tryMuxClient(sc, remoteCmd, member, total)
 	}
@@ -308,5 +313,19 @@ func buildRTTCallback(counters *stats.Counters, tc *stats.TunnelCounters, primar
 		if primary {
 			counters.ObserveKeepaliveRTT(rtt)
 		}
+	}
+}
+
+// buildCtrlRTTCallback returns an observer for the split-mode ctrl connection's
+// keepalive RTT. It feeds only the global ctrl-path counter (which drives the
+// high-RTT warning) and only for the primary member, mirroring buildRTTCallback's
+// primary gating. Returns nil for non-primary members so no callback overhead is
+// incurred and StartSSHKeepalive's nil-onRTT fast path is used.
+func buildCtrlRTTCallback(counters *stats.Counters, primary bool) func(time.Duration) {
+	if !primary {
+		return nil
+	}
+	return func(rtt time.Duration) {
+		counters.ObserveCtrlKeepaliveRTT(rtt)
 	}
 }
