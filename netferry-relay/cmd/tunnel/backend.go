@@ -215,7 +215,7 @@ func connectBackend(
 
 		var c *mux.MuxClient
 		if cfg.splitConn {
-			c, err = trySplitMuxClient(sc, hc, ac, cfg.jumpHosts, remoteCmd, i+1, n)
+			c, err = trySplitMuxClient(sc, hc, ac, cfg.jumpHosts, remoteCmd, i+1, n, buildCtrlRTTCallback(counters, primaryRTT && i == 0))
 		} else {
 			c, err = tryMuxClient(sc, remoteCmd, i+1, n)
 		}
