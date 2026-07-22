@@ -57,7 +57,7 @@ func Watch(done <-chan struct{}) error {
 
 		n, _, err := syscall.Recvfrom(fd, buf, 0)
 		if err != nil {
-			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+			if isRetryableRecvErr(err) {
 				continue
 			}
 			return fmt.Errorf("netmon: read netlink: %w", err)
