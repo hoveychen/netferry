@@ -391,6 +391,7 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, prof
 	if !ok {
 		ds = &destStats{host: displayHost, firstSeenAt: now}
 		c.dests[dk] = ds
+		c.evictDestsLocked()
 	}
 	ds.activeConns++
 	ds.totalConns++
@@ -974,6 +975,48 @@ func (c *Counters) broadcast(msg string) {
 
 const destSnapshotInterval = 5 * time.Second
 
+const (
+	// maxDests bounds the per-destination aggregate map. A long browsing session
+	// touches thousands of unique hosts (CDNs, trackers, analytics endpoints);
+	// without a cap the map — and every snapshot built from it — grows unbounded
+	// for the tunnel's lifetime. When exceeded, evictDestsLocked removes the
+	// least-recently-seen entries that have no active connection.
+	maxDests = 2048
+	// maxDestSnapshot caps the destinations_snapshot payload broadcast to every
+	// SSE client. Entries are sorted by total bytes desc first, so the
+	// heaviest-traffic destinations are always the ones kept.
+	maxDestSnapshot = 500
+)
+
+// evictDestsLocked trims the destination map back under maxDests by removing the
+// least-recently-seen entries that have no active connection. Destinations with
+// a live connection are always retained. It evicts down to a low-water mark
+// (7/8 of the cap) so eviction runs in amortized batches rather than on every
+// new destination once the map is full. Caller must hold c.mu.
+func (c *Counters) evictDestsLocked() {
+	if len(c.dests) <= maxDests {
+		return
+	}
+	const keep = maxDests * 7 / 8
+	type cand struct {
+		key      string
+		lastSeen time.Time
+	}
+	cands := make([]cand, 0, len(c.dests))
+	for k, ds := range c.dests {
+		if ds.activeConns <= 0 {
+			cands = append(cands, cand{k, ds.lastSeenAt})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		return cands[i].lastSeen.Before(cands[j].lastSeen)
+	})
+	target := len(c.dests) - keep
+	for i := 0; i < len(cands) && i < target; i++ {
+		delete(c.dests, cands[i].key)
+	}
+}
+
 // buildDestSnapshotLocked builds a snapshot of all destination stats, sorted by
 // total bytes descending. Caller must hold c.mu.
 func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elapsed float64) []DestinationSnapshot {
@@ -1007,6 +1050,9 @@ func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elap
 	sort.Slice(snaps, func(i, j int) bool {
 		return snaps[i].RxBytes+snaps[i].TxBytes > snaps[j].RxBytes+snaps[j].TxBytes
 	})
+	if len(snaps) > maxDestSnapshot {
+		snaps = snaps[:maxDestSnapshot]
+	}
 	return snaps
 }
 
