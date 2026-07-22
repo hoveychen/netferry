@@ -316,6 +316,7 @@ export function DestinationsPage() {
     return (
       <div
         key={draft ? `draft:${host}` : host}
+        data-destrow
         className={`mb-1.5 rounded-xl border px-3 py-2.5 ${
           draft
             ? "border-accent/40 bg-accent/[0.06]"
@@ -372,6 +373,56 @@ export function DestinationsPage() {
     );
   };
 
+  // ── Windowed rendering ──────────────────────────────────────────────────
+  // The row list is the union of every configured rule, live destination, and
+  // cross-session observed host — potentially thousands of entries. Each row
+  // mounts two interactive dropdowns (RouteBadge + PriorityBadge) with their own
+  // hooks, so rendering the whole list synchronously pins the WebView main
+  // thread and freezes the app. We render only the rows in (or near) the
+  // viewport, padding the scroll container above and below to preserve the
+  // scrollbar geometry. Rows are uniform height, so a single measured row height
+  // drives the math.
+  const rows = useMemo(() => {
+    const arr: { host: string; draft: boolean }[] = [];
+    if (showDraft) arr.push({ host: query, draft: true });
+    for (const h of filtered) arr.push({ host: h, draft: false });
+    return arr;
+  }, [showDraft, query, filtered]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [rowH, setRowH] = useState(48); // measured on first paint; 48 ≈ estimate
+
+  // Track the scroll viewport height (also handles window/pane resizes).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setViewportH(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [noGroup]);
+
+  // Measure the real row height once rows are on screen (offsetHeight excludes
+  // the mb-1.5 = 6px margin, so add it back). Self-corrects any estimate drift.
+  useEffect(() => {
+    const el = scrollRef.current?.querySelector<HTMLElement>("[data-destrow]");
+    if (!el) return;
+    const h = el.offsetHeight + 6;
+    if (Math.abs(h - rowH) > 1) setRowH(h);
+  }, [rows, rowH]);
+
+  const OVERSCAN = 8;
+  const total = rows.length;
+  const startIdx = Math.max(0, Math.floor(scrollTop / rowH) - OVERSCAN);
+  const visibleCount =
+    viewportH > 0 ? Math.ceil(viewportH / rowH) + OVERSCAN * 2 : total;
+  const endIdx = Math.min(total, startIdx + visibleCount);
+  const topPad = startIdx * rowH;
+  const bottomPad = Math.max(0, (total - endIdx) * rowH);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -424,20 +475,28 @@ export function DestinationsPage() {
       )}
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs">
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs"
+      >
         {noGroup ? (
           <p className="text-t4">{t("destinationsPage.noGroup")}</p>
-        ) : (
+        ) : total === 0 ? (
           <>
-            {showDraft && renderRow(query, true)}
-            {filtered.map((host) => renderRow(host, false))}
-            {!showDraft && sorted.length === 0 && (
+            {sorted.length === 0 && (
               <p className="text-t4">{t("destinationsPage.noHosts")}</p>
             )}
-            {!showDraft && sorted.length > 0 && filtered.length === 0 && (
+            {sorted.length > 0 && (
               <p className="text-t4">{t("destinationsPage.noMatches")}</p>
             )}
           </>
+        ) : (
+          <div style={{ paddingTop: topPad, paddingBottom: bottomPad }}>
+            {rows
+              .slice(startIdx, endIdx)
+              .map((r) => renderRow(r.host, r.draft))}
+          </div>
         )}
       </div>
     </div>

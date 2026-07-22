@@ -61,6 +61,17 @@ interface RuleStore {
 
 let currentStatsUrl: string | null = null;
 
+/**
+ * Upper bound on the observed-host history persisted in a group's `knownHosts`.
+ * A long browsing session touches thousands of unique hosts; left unbounded this
+ * list grows forever (and is rewritten to disk on every new host), and it is the
+ * dominant contributor to the destinations/rules page row count. We keep only
+ * the most-recently-observed hosts. Hosts with a configured route/priority are
+ * surfaced independently from the `routes`/`priorities` maps, so trimming here
+ * never hides a configured rule.
+ */
+const MAX_KNOWN_HOSTS = 1000;
+
 /** Push all priorities to the Go sidecar via its HTTP API. */
 async function syncPrioritiesToSidecar(priorities: DestinationPriorities) {
   if (!currentStatsUrl) return;
@@ -251,9 +262,16 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
       }
     }
     if (additions.length === 0) return;
+    let nextKnown = [...(group.knownHosts ?? []), ...additions];
+    // Cap the history to the most-recent MAX_KNOWN_HOSTS (additions are appended,
+    // so the tail is the newest). Trimming the front drops only stale observed
+    // hosts, never configured rules.
+    if (nextKnown.length > MAX_KNOWN_HOSTS) {
+      nextKnown = nextKnown.slice(nextKnown.length - MAX_KNOWN_HOSTS);
+    }
     const nextGroup: ProfileGroup = {
       ...group,
-      knownHosts: [...(group.knownHosts ?? []), ...additions],
+      knownHosts: nextKnown,
     };
     set({ activeGroup: nextGroup });
     saveGroup(nextGroup).catch((err) => {
