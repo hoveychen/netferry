@@ -24,10 +24,11 @@ type MuxClient struct {
 	counters   *stats.Counters
 	routesCh   chan []string
 	done       atomic.Bool
-	splitConn  *SplitConn    // non-nil in split mode
-	fairWriter *FairWriter   // non-nil in non-split mode
-	ctrlCloser io.Closer            // split-mode ctrl SSH connection; closed on teardown (nil otherwise)
-	tunnelIdx  int                  // 1-based pool member index; 0 = single-tunnel mode
+	splitConn  *SplitConn            // non-nil in split mode
+	fairWriter *FairWriter           // non-nil in non-split mode
+	ctrlCloser io.Closer             // split-mode ctrl SSH connection; closed on teardown (nil otherwise)
+	connCloser io.Closer             // data-side (main) SSH connection + its keepalive; closed on teardown
+	tunnelIdx  int                   // 1-based pool member index; 0 = single-tunnel mode
 	tunnelCtrs *stats.TunnelCounters // nil when not in pool mode
 }
 
@@ -36,6 +37,15 @@ type MuxClient struct {
 // Without this the ctrl connection leaks each time a split pool member
 // reconnects. No-op cleanup target for non-split clients (leave nil).
 func (c *MuxClient) SetCtrlCloser(cl io.Closer) { c.ctrlCloser = cl }
+
+// SetConnCloser registers the data-side (main) SSH connection — the one that
+// carries the smux data session — so it is closed when this client's session
+// ends. This connection is dialed by the caller (with its own SSH keepalive
+// goroutine); without registering it here, every pool-member reconnect leaks
+// the old SSH connection, its fd, and its keepalive goroutine, because Run()'s
+// teardown never touched it and reconnectPoolMember just replaces the client.
+// Applies to both split and non-split pool members.
+func (c *MuxClient) SetConnCloser(cl io.Closer) { c.connCloser = cl }
 
 // rwConn adapts separate io.Reader / io.Writer into the io.ReadWriteCloser
 // that smux requires.
@@ -137,6 +147,12 @@ func (c *MuxClient) Run() error {
 		// member dies or reconnects.
 		if c.ctrlCloser != nil {
 			c.ctrlCloser.Close()
+		}
+		// Close the data-side (main) SSH connection + its keepalive goroutine.
+		// Without this, every pool-member reconnect leaks the old connection,
+		// its fd, and its keepalive goroutine (see SetConnCloser).
+		if c.connCloser != nil {
+			c.connCloser.Close()
 		}
 	}()
 	for {
@@ -301,8 +317,8 @@ type ClientConn struct {
 	tunnelCtrs  *stats.TunnelCounters // nil in single-tunnel mode
 	TunnelIndex int                   // 1-based pool member; 0 = single-tunnel or unknown
 
-	readBuf []byte     // leftover bytes from the last data frame
-	readEOF bool       // received half-close from remote
+	readBuf []byte // leftover bytes from the last data frame
+	readEOF bool   // received half-close from remote
 	closed  sync.Once
 	done    atomic.Bool
 }

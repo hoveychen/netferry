@@ -211,7 +211,7 @@ func connectBackend(
 		tc := counters.RegisterTunnel(cfg.profileID, i+1)
 		tunnelCounters[i] = tc
 		rttCb := buildRTTCallback(counters, tc, primaryRTT && i == 0)
-		sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
+		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
 
 		var c *mux.MuxClient
 		if cfg.splitConn {
@@ -220,11 +220,15 @@ func connectBackend(
 			c, err = tryMuxClient(sc, remoteCmd, i+1, n)
 		}
 		if err != nil {
+			stop()
 			for _, s := range sshClients {
 				s.Close()
 			}
 			return nil, fmt.Errorf("mux handshake: %w", err)
 		}
+		// Register the data-side connection + keepalive so a later reconnect of
+		// this member releases them instead of leaking (see SetConnCloser).
+		c.SetConnCloser(connKeepaliveCloser{sc: sc, stop: stop})
 		c.SetCounters(counters)
 		c.SetTunnelIndex(i+1, tc)
 		clients[i] = c

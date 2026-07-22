@@ -164,6 +164,22 @@ func trySplitMuxClient(
 	return mc, nil
 }
 
+// connKeepaliveCloser bundles a data-side SSH connection with its keepalive
+// stopper so that when the mux client tears down (member death / reconnect),
+// both the connection and its keepalive goroutine are released together.
+// Registered on the MuxClient via SetConnCloser; see the leak it fixes there.
+type connKeepaliveCloser struct {
+	sc   *ssh.Client
+	stop func()
+}
+
+func (c connKeepaliveCloser) Close() error {
+	if c.stop != nil {
+		c.stop()
+	}
+	return c.sc.Close()
+}
+
 // connectPoolMember dials a fresh SSH connection and creates a MuxClient.
 // Used by reconnectPoolMember for reconnecting dead pool members. The existing
 // TunnelCounters pointer is passed in so cumulative counts survive the reconnect.
@@ -181,7 +197,7 @@ func connectPoolMember(
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
-	sshconn.StartSSHKeepalive(sc, 30*time.Second, buildRTTCallback(counters, tc, false))
+	stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, buildRTTCallback(counters, tc, false))
 
 	var c *mux.MuxClient
 	if split {
@@ -190,9 +206,13 @@ func connectPoolMember(
 		c, err = tryMuxClient(sc, remoteCmd, member, total)
 	}
 	if err != nil {
+		stop()
 		sc.Close()
 		return nil, err
 	}
+	// Hand the data-side connection + its keepalive to the client so both are
+	// closed on teardown, instead of leaking one per reconnect.
+	c.SetConnCloser(connKeepaliveCloser{sc: sc, stop: stop})
 	c.SetCounters(counters)
 	if tc != nil {
 		c.SetTunnelIndex(member, tc)
