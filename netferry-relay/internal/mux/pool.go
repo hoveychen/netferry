@@ -56,8 +56,10 @@ type MuxPool struct {
 }
 
 const (
-	dnsTotalTimeout        = 5 * time.Second
-	dnsFirstAttemptTimeout = 2 * time.Second
+	dnsTotalTimeout = 5 * time.Second
+	// DNSFirstAttemptTimeout is exported so the remote server can guarantee
+	// its upstream resolver deadline returns before the client changes tunnel.
+	DNSFirstAttemptTimeout = 2 * time.Second
 	dnsMaxAttempts         = 2
 )
 
@@ -215,8 +217,8 @@ func (p *MuxPool) DNSRequest(data []byte) ([]byte, error) {
 			break
 		}
 		attemptTimeout := remaining
-		if attempt == 0 && len(candidates) > 1 && attemptTimeout > dnsFirstAttemptTimeout {
-			attemptTimeout = dnsFirstAttemptTimeout
+		if attempt == 0 && len(candidates) > 1 && attemptTimeout > DNSFirstAttemptTimeout {
+			attemptTimeout = DNSFirstAttemptTimeout
 		}
 
 		started := time.Now()

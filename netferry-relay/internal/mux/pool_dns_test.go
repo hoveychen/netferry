@@ -71,7 +71,7 @@ func TestMuxPoolDNSFailover(t *testing.T) {
 		firstAttempts.Add(1)
 		_ = readDNSMuxTestQuery(t, stream)
 		// Keep the stream open without a response to reproduce dns read timeout.
-		time.Sleep(dnsFirstAttemptTimeout + 250*time.Millisecond)
+		time.Sleep(DNSFirstAttemptTimeout + 250*time.Millisecond)
 	})
 	second := newDNSMuxTestClient(t, func(stream *smux.Stream) {
 		defer stream.Close()

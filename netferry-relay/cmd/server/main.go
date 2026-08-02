@@ -24,6 +24,10 @@ import (
 
 var Version = "dev"
 
+// Keep the remote resolver deadline below mux.DNSFirstAttemptTimeout so the
+// client receives SERVFAIL before it spends the first tunnel's retry budget.
+const dnsUpstreamTimeout = 1500 * time.Millisecond
+
 // ctrlSocketPath returns the unix socket path used to coordinate the data and
 // ctrl SSH sessions when running in split-conn mode.
 func ctrlSocketPath(sessionID string) string {
@@ -364,7 +368,7 @@ func handleTCP(stream *smux.Stream, br *bufio.Reader, family int, dstIP string, 
 
 // handleDNS forwards a single DNS query and writes back the response.
 func handleDNS(stream *smux.Stream, br *bufio.Reader, toNameserver string) {
-	stream.SetDeadline(time.Now().Add(15 * time.Second))
+	stream.SetDeadline(time.Now().Add(mux.DNSFirstAttemptTimeout))
 
 	query, err := readMsgBuf(br)
 	if err != nil || query == nil {
@@ -374,26 +378,41 @@ func handleDNS(stream *smux.Stream, br *bufio.Reader, toNameserver string) {
 	ns := resolveNameserver(toNameserver)
 	log.Printf("DNS len=%d → %s", len(query), ns)
 
-	conn, err := net.DialTimeout("udp", ns, 5*time.Second)
+	started := time.Now()
+	response, err := forwardDNS(query, ns, dnsUpstreamTimeout)
 	if err != nil {
-		log.Printf("DNS dial %s: %v", ns, err)
-		writeMsg(stream, servfail(query))
-		return
+		log.Printf("DNS upstream %s failed after %s: %v", ns, time.Since(started).Round(time.Millisecond), err)
+	}
+	writeMsg(stream, response)
+}
+
+// forwardDNS exchanges one UDP query with the selected upstream. Errors are
+// returned alongside a SERVFAIL response so the caller can always answer the
+// intercepted client before its first tunnel attempt expires.
+func forwardDNS(query []byte, nameserver string, timeout time.Duration) ([]byte, error) {
+	return forwardDNSWithDial(query, nameserver, timeout, net.DialTimeout)
+}
+
+type dnsDialFunc func(network, address string, timeout time.Duration) (net.Conn, error)
+
+func forwardDNSWithDial(query []byte, nameserver string, timeout time.Duration, dial dnsDialFunc) ([]byte, error) {
+	conn, err := dial("udp", nameserver, timeout)
+	if err != nil {
+		return servfail(query), fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
-
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return servfail(query), fmt.Errorf("set deadline: %w", err)
+	}
 	if _, err := conn.Write(query); err != nil {
-		writeMsg(stream, servfail(query))
-		return
+		return servfail(query), fmt.Errorf("write: %w", err)
 	}
 	buf := make([]byte, 65535)
 	n, err := conn.Read(buf)
 	if err != nil {
-		writeMsg(stream, servfail(query))
-		return
+		return servfail(query), fmt.Errorf("read: %w", err)
 	}
-	writeMsg(stream, buf[:n])
+	return buf[:n], nil
 }
 
 // handleUDP proxies UDP datagrams through the stream.
