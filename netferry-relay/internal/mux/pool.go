@@ -1,7 +1,10 @@
 package mux
 
 import (
+	"fmt"
+	"log"
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,6 +54,12 @@ type MuxPool struct {
 	next        atomic.Uint64
 	tcpStrategy LBStrategy
 }
+
+const (
+	dnsTotalTimeout        = 5 * time.Second
+	dnsFirstAttemptTimeout = 2 * time.Second
+	dnsMaxAttempts         = 2
+)
 
 // NewMuxPool creates a pool with the default round-robin TCP strategy.
 func NewMuxPool(clients []*MuxClient) *MuxPool {
@@ -190,7 +199,77 @@ func (p *MuxPool) pickMostLoaded() *MuxClient {
 // streams). This prevents DNS queries from queuing behind bulk TCP data on a
 // congested connection, which would cause name-resolution timeouts.
 func (p *MuxPool) DNSRequest(data []byte) ([]byte, error) {
-	return p.pickLeastLoaded().DNSRequest(data)
+	candidates := p.dnsCandidates()
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("mux: DNS request: no live tunnel")
+	}
+	if len(candidates) > dnsMaxAttempts {
+		candidates = candidates[:dnsMaxAttempts]
+	}
+
+	deadline := time.Now().Add(dnsTotalTimeout)
+	var lastErr error
+	for attempt, candidate := range candidates {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		attemptTimeout := remaining
+		if attempt == 0 && len(candidates) > 1 && attemptTimeout > dnsFirstAttemptTimeout {
+			attemptTimeout = dnsFirstAttemptTimeout
+		}
+
+		started := time.Now()
+		response, err := candidate.client.dnsRequest(data, attemptTimeout)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+		log.Printf("mux: DNS tunnel %d attempt %d/%d failed after %s: %v",
+			candidate.tunnel, attempt+1, len(candidates), time.Since(started).Round(time.Millisecond), err)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("overall timeout exceeded")
+	}
+	return nil, fmt.Errorf("mux: DNS failed after %d tunnel attempt(s): %w", len(candidates), lastErr)
+}
+
+type dnsCandidate struct {
+	client *MuxClient
+	score  float64
+	order  int
+	tunnel int
+}
+
+// dnsCandidates returns each live client once, ordered by the same congestion
+// score used by pickLeastLoaded. Stable sorting preserves pool order for ties.
+func (p *MuxPool) dnsCandidates() []dnsCandidate {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	candidates := make([]dnsCandidate, 0, len(p.clients))
+	for i, client := range p.clients {
+		if client.IsClosed() {
+			continue
+		}
+		tunnel := client.tunnelIdx
+		if tunnel == 0 {
+			tunnel = i + 1
+		}
+		candidates = append(candidates, dnsCandidate{
+			client: client,
+			score:  congestionScore(client),
+			order:  i,
+			tunnel: tunnel,
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return candidates[i].order < candidates[j].order
+		}
+		return candidates[i].score < candidates[j].score
+	})
+	return candidates
 }
 
 // OpenUDP routes through the least-loaded client.

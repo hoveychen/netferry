@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/xtaci/smux"
 )
@@ -40,7 +41,6 @@ func newDNSMuxTestClient(t *testing.T, handle func(*smux.Stream)) *MuxClient {
 
 func readDNSMuxTestQuery(t *testing.T, stream *smux.Stream) []byte {
 	t.Helper()
-	defer stream.Close()
 
 	reader := bufio.NewReader(stream)
 	header, err := reader.ReadString('\n')
@@ -67,11 +67,14 @@ func TestMuxPoolDNSFailover(t *testing.T) {
 	var secondAttempts atomic.Int32
 
 	first := newDNSMuxTestClient(t, func(stream *smux.Stream) {
+		defer stream.Close()
 		firstAttempts.Add(1)
 		_ = readDNSMuxTestQuery(t, stream)
-		// Close without a response to simulate a broken selected tunnel.
+		// Keep the stream open without a response to reproduce dns read timeout.
+		time.Sleep(dnsFirstAttemptTimeout + 250*time.Millisecond)
 	})
 	second := newDNSMuxTestClient(t, func(stream *smux.Stream) {
+		defer stream.Close()
 		secondAttempts.Add(1)
 		if got := readDNSMuxTestQuery(t, stream); string(got) != string(query) {
 			t.Errorf("second tunnel query = %v, want %v", got, query)
