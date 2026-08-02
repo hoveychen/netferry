@@ -249,6 +249,13 @@ func (c *MuxClient) OpenTCP(family int, dstIP string, dstPort int, _ int) (*Clie
 // In split mode, DNS streams are routed via the ctrl connection for lower
 // latency — DNS is small and idempotent, so it won't congest the ctrl channel.
 func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
+	return c.dnsRequest(data, 5*time.Second)
+}
+
+// dnsRequest is DNSRequest with a caller-provided per-attempt timeout. Pools
+// use a shorter first attempt so a different tunnel can be tried within the
+// resolver's overall five-second budget.
+func (c *MuxClient) dnsRequest(data []byte, timeout time.Duration) ([]byte, error) {
 	if c.done.Load() {
 		return nil, fmt.Errorf("mux: client closed")
 	}
@@ -257,9 +264,7 @@ func (c *MuxClient) DNSRequest(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("mux: open stream: %w", err)
 	}
 	defer stream.Close()
-	// The OS resolver gives up after ~5s per query; waiting longer only ties
-	// up the flow handler after the answer has stopped mattering.
-	stream.SetDeadline(time.Now().Add(5 * time.Second))
+	stream.SetDeadline(time.Now().Add(timeout))
 
 	// Header + length-prefixed query in one write.
 	hdr := "DNS\n"
