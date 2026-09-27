@@ -309,7 +309,7 @@ export function DestinationsPage() {
   const addressHosts = useMemo(() => sorted.filter((host) => parse(host).isIp && !ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))), [sorted, ruleGroups]);
   const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
 
-  const filtered = useMemo(() => {
+  const scopeHosts = useMemo(() => {
     if (!selectedScope) return [];
     let entries = sorted;
     if (selectedScope.startsWith("group:")) {
@@ -321,10 +321,14 @@ export function DestinationsPage() {
     } else if (selectedScope === "ip") {
       entries = addressHosts;
     }
+    return entries;
+  }, [sorted, selectedScope, ruleGroups, siteGroups, addressHosts]);
+
+  const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((h) => h.toLowerCase().includes(q));
-  }, [sorted, filter, selectedScope, ruleGroups, siteGroups, addressHosts]);
+    if (!q) return scopeHosts;
+    return scopeHosts.filter((h) => h.toLowerCase().includes(q));
+  }, [scopeHosts, filter]);
 
   const domainInputs = useMemo(() => draftDomains.split(/[\n,]/).map((input) => input.trim()).filter(Boolean), [draftDomains]);
   const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
@@ -529,7 +533,7 @@ export function DestinationsPage() {
           </div>
           <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[11px] text-t4">
             {selectedScope && sorted.length > 0 && (
-              <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}</span>
+              <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: scopeHosts.length })}</span>
             )}
             {selectedScope && wildcardSuggestion && (
               <button
