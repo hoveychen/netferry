@@ -22,9 +22,11 @@
 
 站点归并使用 `tldts` 的公共后缀表提取可注册域名；它只能把 `a.example.co.uk` 归到 `example.co.uk`，不能知道服务归属。
 
-服务建议来自 V2Fly 的 [domain-list-community](https://github.com/v2fly/domain-list-community)，固定提交 `bcea25493ed28c387660fe49ce1ceb242d2efca0`，MIT 许可证见 `docs/third-party/domain-list-community-LICENSE`。`scripts/build_service_catalog.py` 下载该提交，展开 `include:`，把普通域名映射为域名及子域范围、`full:` 映射为精确主机；跳过正则、关键词和广告标记。生成的 `src/data/serviceDomains.json` 随应用离线发布，版本可核查。
+服务建议来自 V2Fly 的 [domain-list-community](https://github.com/v2fly/domain-list-community)，固定提交 `bcea25493ed28c387660fe49ce1ceb242d2efca0`，MIT 许可证见 `docs/third-party/domain-list-community-LICENSE`。`scripts/build_service_catalog.py` 下载该提交，按标签展开 `include:`，把普通域名映射为域名及子域范围、`full:` 映射为精确主机；跳过无法准确映射的正则和关键词。具体服务清单排除 `@ads` 条目，“广告与跟踪”类别只从带 `@ads` 的嵌套条目及明确列出的提供方取范围。生成的 `src/data/serviceDomains.json` 随应用离线发布，版本可核查；目录只在打开规则页时加载。
 
 客户端只用目录识别已见目标，候选范围只包含实际命中的目录条目。用户在预览后确认，才会写入 `ruleGroups` 并影响路由。目录是社区维护的归属线索，不能保证覆盖全部服务域名，也可能存在共享基础设施；因此不自动应用目录的全部条目或改变路由。未识别的目标仍按站点显示，用户可手动建组。
+
+纯 IP 不能可靠反推服务，单独收在“IP 地址”入口；它们仍可搜索并设置精确规则。宽类别（金融、娱乐、社交等）排在具体服务之后，减少同域名归属冲突。
 
 ## 优先级
 
