@@ -10,6 +10,7 @@ export interface RoutingSuggestion {
   suggestedRoute: "default" | "direct";
   domains: string[];
   hosts: string[];
+  coveredHosts: number;
 }
 
 type Match = { scope: string };
@@ -43,14 +44,15 @@ function identify(host: string, index: Index): Match | null {
 }
 
 export function suggestRoutingScopes(hosts: string[], existing: RuleGroup[]): RoutingSuggestion[] {
-  const found = catalog.scopes.map(() => ({ domains: new Set<string>(), hosts: [] as string[] }));
+  const found = catalog.scopes.map(() => ({ domains: new Set<string>(), hosts: [] as string[], coveredHosts: 0 }));
   for (const host of hosts) {
-    if (existing.some((group) => group.domains.some((scope) => matchesDomain(host, scope)))) continue;
+    const covered = existing.some((group) => group.domains.some((scope) => matchesDomain(host, scope)));
     indexes.forEach((index, i) => {
       const match = identify(host, index);
       if (!match) return;
       found[i].domains.add(match.scope);
       found[i].hosts.push(host);
+      if (covered) found[i].coveredHosts++;
     });
   }
   return catalog.scopes.flatMap((entry, i) => found[i].hosts.length ? [{
@@ -61,6 +63,7 @@ export function suggestRoutingScopes(hosts: string[], existing: RuleGroup[]): Ro
     suggestedRoute: entry.suggestedRoute as "default" | "direct",
     domains: [...found[i].domains].sort(),
     hosts: found[i].hosts,
+    coveredHosts: found[i].coveredHosts,
   }] : []);
 }
 

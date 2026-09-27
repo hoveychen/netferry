@@ -343,6 +343,8 @@ export function DestinationsPage() {
   const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
   const normalizedDraftDomains = useMemo(() => [...new Set(domainInputs.map(normalizeDomain).filter((d): d is string => !!d))], [domainInputs]);
   const previewHosts = useMemo(() => sorted.filter((host) => normalizedDraftDomains.some((domain) => matchesDomain(host, domain))), [sorted, normalizedDraftDomains]);
+  const previewGroupOverlap = useMemo(() => previewHosts.filter((host) => ruleGroups.some((group) => group.id !== editingGroup?.id && group.domains.some((domain) => matchesDomain(host, domain)))).length, [previewHosts, ruleGroups, editingGroup]);
+  const previewRuleOverrides = useMemo(() => previewHosts.filter((host) => !!routes[host]).length, [previewHosts, routes]);
 
   const saveEditor = () => {
     if (!editingGroup || !draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0) return;
@@ -591,11 +593,11 @@ export function DestinationsPage() {
               </div>
             </section>
             {routingSuggestions.length > 0 && <section>
-              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.routingScopes")} · {routingSuggestions.length}</span><span>V2Fly · GFWList</span></div>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.routingScopes")} · {routingSuggestions.length}</span><span>{t("destinationsPage.routingSourceSummary")}</span></div>
               <p className="mb-2 text-xs text-t4">{t("destinationsPage.routingScopeHint")}</p>
               <div className="space-y-1">
                 {routingSuggestions.filter((s) => !filter || suggestionName(s).toLowerCase().includes(filter.toLowerCase()) || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
-                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{suggestion.source} · {suggestion.suggestedRoute === "direct" ? t("destinationsPage.routeDirect") : t("destinationsPage.routeDefault")}</div></div>
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{suggestion.source} · {suggestion.suggestedRoute === "direct" ? t("destinationsPage.routeDirect") : t("destinationsPage.routeDefault")}{suggestion.coveredHosts > 0 && ` · ${t("destinationsPage.alreadyGrouped", { count: suggestion.coveredHosts })}`}</div></div>
                   <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
                   <button type="button" onClick={() => openRoutingSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
                 </div>)}
@@ -658,6 +660,7 @@ export function DestinationsPage() {
           {invalidDomains.length > 0 && <p className="mb-3 text-xs text-danger">{t("destinationsPage.invalidDomains", { domains: invalidDomains.join(", ") })}</p>}
           <label className="mb-4 block text-xs font-medium text-t3">{t("destinationsPage.route")}<select value={draftRoute} onChange={(e) => setDraftRoute(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1"><option value="default">{t("destinationsPage.routeDefault")}</option>{children.map((p) => <option key={p.id} value={`tunnel:${p.id}`}>{p.name}</option>)}<option value="direct">{t("destinationsPage.routeDirect")}</option><option value="blocked">{t("destinationsPage.routeBlocked")}</option></select></label>
           <div className="mb-4 border-t border-sep pt-3 text-xs text-t3"><div className="font-medium">{t("destinationsPage.previewCount", { count: previewHosts.length })}</div><div className="mt-1 max-h-20 overflow-y-auto font-mono text-t4">{previewHosts.slice(0, 8).join(" · ")}</div></div>
+          {(previewGroupOverlap > 0 || previewRuleOverrides > 0) && <p className="mb-4 text-xs text-warning">{t("destinationsPage.previewOverlap", { groups: previewGroupOverlap, rules: previewRuleOverrides })}</p>}
           <div className="flex items-center justify-between">
             {ruleGroups.some((g) => g.id === editingGroup.id) ? <button type="button" onClick={() => { if (window.confirm(t("destinationsPage.deleteConfirm"))) { deleteRuleGroup(editingGroup.id); setEditingGroup(null); } }} className="flex items-center gap-1 text-xs text-danger"><Trash2 className="h-3.5 w-3.5" />{t("destinationsPage.deleteGroup")}</button> : <span />}
             <div className="flex gap-2"><button type="button" onClick={() => setEditingGroup(null)} className="rounded-md px-3 py-1.5 text-xs text-t3 hover:bg-ov-6">{t("destinationsPage.cancel")}</button><button type="button" disabled={!draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0} onClick={saveEditor} className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">{t("destinationsPage.saveGroup")}</button></div>
