@@ -11,6 +11,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { tunnelColor } from "@/lib/tunnelColor";
 import { compileRoutes, matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
 import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
+import { suggestRoutingScopes, type RoutingSuggestion } from "@/lib/routingCatalog";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
   1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
@@ -243,7 +244,7 @@ export function DestinationsPage() {
   const [draftRoute, setDraftRoute] = useState("default");
   const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
   const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
-  const suggestionName = (suggestion: ServiceSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
+  const suggestionName = (suggestion: ServiceSuggestion | RoutingSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
     const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
@@ -257,6 +258,13 @@ export function DestinationsPage() {
     openEditor(group);
     setDraftName(group?.name ?? suggestionName(suggestion));
     setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+  };
+  const openRoutingSuggestion = (suggestion: RoutingSuggestion) => {
+    const group = ruleGroups.find((item) => item.name === suggestion.name || item.name === suggestion.nameZh);
+    openEditor(group);
+    setDraftName(group?.name ?? suggestionName(suggestion));
+    setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+    if (!group) setDraftRoute(suggestion.suggestedRoute);
   };
 
   // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
@@ -308,6 +316,7 @@ export function DestinationsPage() {
   }, [sorted, ruleGroups]);
   const addressHosts = useMemo(() => sorted.filter((host) => parse(host).isIp && !ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))), [sorted, ruleGroups]);
   const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
+  const routingSuggestions = useMemo(() => suggestRoutingScopes(sorted, ruleGroups), [sorted, ruleGroups]);
 
   const scopeHosts = useMemo(() => {
     if (!selectedScope) return [];
@@ -581,6 +590,17 @@ export function DestinationsPage() {
                 })}
               </div>
             </section>
+            {routingSuggestions.length > 0 && <section>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.routingScopes")} · {routingSuggestions.length}</span><span>V2Fly · GFWList</span></div>
+              <p className="mb-2 text-xs text-t4">{t("destinationsPage.routingScopeHint")}</p>
+              <div className="space-y-1">
+                {routingSuggestions.filter((s) => !filter || suggestionName(s).toLowerCase().includes(filter.toLowerCase()) || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{suggestion.source} · {suggestion.suggestedRoute === "direct" ? t("destinationsPage.routeDirect") : t("destinationsPage.routeDefault")}</div></div>
+                  <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
+                  <button type="button" onClick={() => openRoutingSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
+                </div>)}
+              </div>
+            </section>}
             {serviceSuggestions.length > 0 && <section>
               <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.suggestedServices")} · {serviceSuggestions.length}</span><span title="https://github.com/v2fly/domain-list-community">V2Fly · {catalogRevision.slice(0, 7)}</span></div>
               <p className="mb-2 text-xs text-t4">{t("destinationsPage.suggestionHint")}</p>
