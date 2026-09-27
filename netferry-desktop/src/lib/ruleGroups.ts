@@ -1,4 +1,5 @@
 import type { RouteModeV2, RuleGroup } from "@/types";
+import { getDomain } from "tldts";
 
 /** Normalize one user-entered scope. Empty/invalid entries are discarded. */
 export function normalizeDomain(input: string): string | null {
@@ -7,6 +8,7 @@ export function normalizeDomain(input: string): string | null {
   const host = exact ? raw.slice(1) : raw;
   if (!host || host.length > 253 || host.includes("..") || /[^a-z0-9.-]/.test(host)) return null;
   if (host.split(".").some((label) => !label || label.length > 63 || label.startsWith("-") || label.endsWith("-"))) return null;
+  if (!exact && !getDomain(host, { allowPrivateDomains: true })) return null;
   return exact ? `=${host}` : host;
 }
 

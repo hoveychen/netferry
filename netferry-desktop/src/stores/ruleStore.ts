@@ -214,13 +214,8 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
   setRule: (host, mode) => {
     const group = get().activeGroup;
     const nextRoutes: Record<string, RouteModeV2> = { ...get().routes };
-    // Treat {kind:"default"} as "no override" and strip it out — the group's
-    // default child is the fallback by definition. Anything else stores.
-    if (mode.kind === "default") {
-      delete nextRoutes[host];
-    } else {
-      nextRoutes[host] = mode;
-    }
+    // An explicit default may override a broader scope group's route.
+    nextRoutes[host] = mode;
     set({ routes: nextRoutes });
     if (group) {
       const nextGroup: ProfileGroup = { ...group, rules: nextRoutes };
