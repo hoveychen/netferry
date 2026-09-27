@@ -5,6 +5,7 @@ import { matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
 export interface ServiceSuggestion {
   id: string;
   name: string;
+  nameZh?: string;
   domains: string[];
   hosts: string[];
 }
@@ -52,7 +53,7 @@ export function suggestServiceGroups(hosts: string[], existing: RuleGroup[]): Se
   return catalog.services.flatMap((service) => {
     const entry = found.get(service.id);
     if (!entry) return [];
-    return [{ id: service.id, name: service.name, domains: [...entry.domains].sort(), hosts: entry.hosts }];
+    return [{ id: service.id, name: service.name, nameZh: "nameZh" in service ? service.nameZh : undefined, domains: [...entry.domains].sort(), hosts: entry.hosts }];
   }).sort((a, b) => b.hosts.length - a.hosts.length || a.name.localeCompare(b.name));
 }
 

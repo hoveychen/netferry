@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Shield, Zap, Ban, Gauge, Search, X, Plus, ArrowLeft, Pencil, Trash2 } from "lucide-react";
-import { getDomain } from "tldts";
+import { parse } from "tldts";
 import type { DestinationSnapshot, Profile, RouteModeV2, RuleGroup } from "@/types";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
@@ -227,7 +227,7 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
  * the active ProfileGroup's `rules` map.
  */
 export function DestinationsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { priorities, routes, setPriority, setRule, deleteRule, activeGroup, saveRuleGroup, deleteRuleGroup } = useRuleStore();
   const { fetch: fetchGroups } = useGroupStore();
   const { profiles, loadProfiles } = useProfileStore();
@@ -243,6 +243,7 @@ export function DestinationsPage() {
   const [draftRoute, setDraftRoute] = useState("default");
   const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
   const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
+  const suggestionName = (suggestion: ServiceSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
     const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
@@ -252,9 +253,9 @@ export function DestinationsPage() {
     setDraftRoute(group?.route.kind === "tunnel" ? `tunnel:${group.route.profileId}` : group?.route.kind ?? "default");
   };
   const openSuggestion = (suggestion: ServiceSuggestion) => {
-    const group = ruleGroups.find((item) => item.name === suggestion.name);
+    const group = ruleGroups.find((item) => item.name === suggestion.name || item.name === suggestion.nameZh);
     openEditor(group);
-    setDraftName(group?.name ?? suggestion.name);
+    setDraftName(group?.name ?? suggestionName(suggestion));
     setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
   };
 
@@ -296,16 +297,19 @@ export function DestinationsPage() {
     const groups = new Map<string, string[]>();
     for (const host of sorted) {
       if (ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))) continue;
-      const site = getDomain(host, { allowPrivateDomains: true }) ?? host;
+      const parsed = parse(host, { allowPrivateDomains: true });
+      if (parsed.isIp) continue;
+      const site = parsed.domain ?? host;
       const entries = groups.get(site) ?? [];
       entries.push(host);
       groups.set(site, entries);
     }
     return [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
   }, [sorted, ruleGroups]);
+  const addressHosts = useMemo(() => sorted.filter((host) => parse(host).isIp && !ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))), [sorted, ruleGroups]);
   const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
 
-  const filtered = useMemo(() => {
+  const scopeHosts = useMemo(() => {
     if (!selectedScope) return [];
     let entries = sorted;
     if (selectedScope.startsWith("group:")) {
@@ -314,11 +318,17 @@ export function DestinationsPage() {
     } else if (selectedScope.startsWith("site:")) {
       const site = selectedScope.slice(5);
       entries = siteGroups.find(([key]) => key === site)?.[1] ?? [];
+    } else if (selectedScope === "ip") {
+      entries = addressHosts;
     }
+    return entries;
+  }, [sorted, selectedScope, ruleGroups, siteGroups, addressHosts]);
+
+  const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((h) => h.toLowerCase().includes(q));
-  }, [sorted, filter, selectedScope, ruleGroups, siteGroups]);
+    if (!q) return scopeHosts;
+    return scopeHosts.filter((h) => h.toLowerCase().includes(q));
+  }, [scopeHosts, filter]);
 
   const domainInputs = useMemo(() => draftDomains.split(/[\n,]/).map((input) => input.trim()).filter(Boolean), [draftDomains]);
   const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
@@ -493,7 +503,7 @@ export function DestinationsPage() {
       {/* Header */}
       <div className="flex h-[52px] items-center gap-2 px-6">
         {selectedScope && <button type="button" onClick={() => { setSelectedScope(null); setFilter(""); }} className="rounded p-1 text-t3 hover:bg-ov-6" aria-label={t("destinationsPage.back")}><ArrowLeft className="h-4 w-4" /></button>}
-        <h1 className="text-[15px] font-semibold text-t1">{selectedScope?.startsWith("group:") ? ruleGroups.find((g) => g.id === selectedScope.slice(6))?.name : selectedScope?.startsWith("site:") ? selectedScope.slice(5) : t("destinationsPage.title")}</h1>
+        <h1 className="text-[15px] font-semibold text-t1">{selectedScope?.startsWith("group:") ? ruleGroups.find((g) => g.id === selectedScope.slice(6))?.name : selectedScope?.startsWith("site:") ? selectedScope.slice(5) : selectedScope === "ip" ? t("destinationsPage.ipAddresses") : t("destinationsPage.title")}</h1>
         {!selectedScope && <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>}
         {!noGroup && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
       </div>
@@ -523,7 +533,7 @@ export function DestinationsPage() {
           </div>
           <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[11px] text-t4">
             {selectedScope && sorted.length > 0 && (
-              <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}</span>
+              <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: scopeHosts.length })}</span>
             )}
             {selectedScope && wildcardSuggestion && (
               <button
@@ -575,12 +585,19 @@ export function DestinationsPage() {
               <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.suggestedServices")} · {serviceSuggestions.length}</span><span title="https://github.com/v2fly/domain-list-community">V2Fly · {catalogRevision.slice(0, 7)}</span></div>
               <p className="mb-2 text-xs text-t4">{t("destinationsPage.suggestionHint")}</p>
               <div className="space-y-1">
-                {serviceSuggestions.filter((s) => !filter || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
-                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestion.name}</div><div className="mt-0.5 truncate font-mono text-[11px] text-t4" title={suggestion.hosts.join("\n")}>{suggestion.hosts.slice(0, 3).join(" · ")}</div></div>
+                {serviceSuggestions.filter((s) => !filter || suggestionName(s).toLowerCase().includes(filter.toLowerCase()) || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 truncate font-mono text-[11px] text-t4" title={suggestion.hosts.join("\n")}>{suggestion.hosts.slice(0, 3).join(" · ")}</div></div>
                   <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
                   <button type="button" onClick={() => openSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
                 </div>)}
               </div>
+            </section>}
+            {addressHosts.length > 0 && (!filter || addressHosts.some((host) => host.includes(filter))) && <section>
+              <div className="mb-2 border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">{t("destinationsPage.unknownDestinations")}</div>
+              <button type="button" onClick={() => { setSelectedScope("ip"); setScrollTop(0); }} className="flex w-full items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5 text-left hover:border-bdr">
+                <span className="flex-1 text-sm font-medium text-t2">{t("destinationsPage.ipAddresses")}</span><span className="font-mono text-xs text-t4">{addressHosts.length}</span>
+              </button>
+              <p className="mt-1.5 text-xs text-t4">{t("destinationsPage.ipHint")}</p>
             </section>}
             <section>
               <div className="mb-2 border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">{t("destinationsPage.unclassifiedSites")} · {siteGroups.length}</div>

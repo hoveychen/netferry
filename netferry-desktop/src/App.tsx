@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { Activity, Globe, Network, PanelLeft, PanelLeftClose, Route, Settings } from "lucide-react";
 import { ConnectionErrorDialog } from "@/components/ConnectionErrorDialog";
 import { ConnectionPage } from "@/components/ConnectionPage";
-import { DestinationsPage } from "@/components/DestinationsPage";
 import { DiagnosticsPage } from "@/components/DiagnosticsPage";
 import { GlobalSettingsPage } from "@/components/GlobalSettingsPage";
 import { HelperSetupGuide } from "@/components/HelperSetupGuide";
@@ -27,6 +26,8 @@ import {
 } from "@/api";
 import type { ConnectionStatus, DeployProgress, Profile, TunnelError } from "@/types";
 import dragStyles from "@/drag.module.css";
+
+const DestinationsPage = lazy(() => import("@/components/DestinationsPage").then((module) => ({ default: module.DestinationsPage })));
 
 // Sub-page state for profile detail (pushed on top of nav).
 type SubPage =
@@ -466,7 +467,9 @@ function App() {
         )}
 
         {activeTab === "destinations" && (
-          <DestinationsPage />
+          <Suspense fallback={<div className="p-6 text-sm text-t4">{t("destinationsPage.title")}</div>}>
+            <DestinationsPage />
+          </Suspense>
         )}
 
         {activeTab === "diagnostics" && (
