@@ -10,6 +10,7 @@ import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { tunnelColor } from "@/lib/tunnelColor";
 import { compileRoutes, matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
+import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
   1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
@@ -249,6 +250,12 @@ export function DestinationsPage() {
     setDraftDomains(group?.domains.join("\n") ?? suggestedScope ?? "");
     setDraftRoute(group?.route.kind === "tunnel" ? `tunnel:${group.route.profileId}` : group?.route.kind ?? "default");
   };
+  const openSuggestion = (suggestion: ServiceSuggestion) => {
+    const group = ruleGroups.find((item) => item.name === suggestion.name);
+    openEditor(group);
+    setDraftName(group?.name ?? suggestion.name);
+    setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+  };
 
   // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
   useEffect(() => {
@@ -295,6 +302,7 @@ export function DestinationsPage() {
     }
     return [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
   }, [sorted, ruleGroups]);
+  const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
 
   const filtered = useMemo(() => {
     if (!selectedScope) return [];
@@ -562,6 +570,17 @@ export function DestinationsPage() {
                 })}
               </div>
             </section>
+            {serviceSuggestions.length > 0 && <section>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.suggestedServices")} · {serviceSuggestions.length}</span><span title="https://github.com/v2fly/domain-list-community">V2Fly · {catalogRevision.slice(0, 7)}</span></div>
+              <p className="mb-2 text-xs text-t4">{t("destinationsPage.suggestionHint")}</p>
+              <div className="space-y-1">
+                {serviceSuggestions.filter((s) => !filter || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestion.name}</div><div className="mt-0.5 truncate font-mono text-[11px] text-t4" title={suggestion.hosts.join("\n")}>{suggestion.hosts.slice(0, 3).join(" · ")}</div></div>
+                  <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
+                  <button type="button" onClick={() => openSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
+                </div>)}
+              </div>
+            </section>}
             <section>
               <div className="mb-2 border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">{t("destinationsPage.unclassifiedSites")} · {siteGroups.length}</div>
               <div className="space-y-1">
