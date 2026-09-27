@@ -235,12 +235,13 @@ export function DestinationsPage() {
   // Live-session observed hosts; empty when disconnected.
   const liveDestinations = useConnectionStore((s) => s.destinations);
   const [filter, setFilter] = useState("");
+  const [showAllSites, setShowAllSites] = useState(false);
   const [selectedScope, setSelectedScope] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<RuleGroup | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftDomains, setDraftDomains] = useState("");
   const [draftRoute, setDraftRoute] = useState("default");
-  const ruleGroups = activeGroup?.ruleGroups ?? [];
+  const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
   const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
@@ -584,11 +585,12 @@ export function DestinationsPage() {
             <section>
               <div className="mb-2 border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">{t("destinationsPage.unclassifiedSites")} · {siteGroups.length}</div>
               <div className="space-y-1">
-                {siteGroups.filter(([site, hosts]) => !filter || site.includes(filter.toLowerCase()) || hosts.some((host) => host.includes(filter.toLowerCase()))).map(([site, hosts]) => <div key={site} className="flex items-center gap-3 border-b border-sep/70 px-3 py-2">
+                {siteGroups.filter(([site, hosts]) => !filter || site.includes(filter.toLowerCase()) || hosts.some((host) => host.includes(filter.toLowerCase()))).slice(0, filter || showAllSites ? undefined : 20).map(([site, hosts]) => <div key={site} className="flex items-center gap-3 border-b border-sep/70 px-3 py-2">
                   <button type="button" onClick={() => { setSelectedScope(`site:${site}`); setFilter(""); setScrollTop(0); }} className="min-w-0 flex-1 text-left text-sm text-t2 hover:text-accent">{site}</button>
                   <span className="w-12 text-right font-mono text-xs text-t4">{hosts.length}</span>
                   <button type="button" onClick={() => openEditor(undefined, site)} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1" aria-label={t("destinationsPage.makeGroup")}><Plus className="h-3.5 w-3.5" /></button>
                 </div>)}
+                {!filter && siteGroups.length > 20 && <button type="button" onClick={() => setShowAllSites((value) => !value)} className="w-full border-b border-sep px-3 py-2 text-left text-xs text-accent hover:bg-ov-2">{showAllSites ? t("destinationsPage.showFewerSites") : t("destinationsPage.showAllSites", { count: siteGroups.length })}</button>}
                 {siteGroups.length === 0 && sorted.length === 0 && <p className="py-5 text-sm text-t4">{t("destinationsPage.noHosts")}</p>}
               </div>
             </section>
