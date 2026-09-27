@@ -24,6 +24,12 @@
 
 服务建议来自 V2Fly 的 [domain-list-community](https://github.com/v2fly/domain-list-community)，固定提交 `bcea25493ed28c387660fe49ce1ceb242d2efca0`，MIT 许可证见 `docs/third-party/domain-list-community-LICENSE`。`scripts/build_service_catalog.py` 下载该提交，按标签展开 `include:`，把普通域名映射为域名及子域范围、`full:` 映射为精确主机；跳过无法准确映射的正则和关键词。具体服务清单排除 `@ads` 条目，“广告与跟踪”类别只从带 `@ads` 的嵌套条目及明确列出的提供方取范围。生成的 `src/data/serviceDomains.json` 随应用离线发布，版本可核查；目录只在打开规则页时加载。
 
+规则首页优先展示**按路由用途分组**：内地有接入点、内地无接入点、GFWList 收录、已核实的服务地区限制。前两项分别来自同一固定 V2Fly 提交的 `geolocation-cn` 与 `geolocation-!cn`，只说明内地接入点状况，不表示服务商是否允许中国或香港用户。GFWList 来自固定提交 `3e23962592b28d64fdd7cc76505bc22af6ac75c8`，仅保留可转成域名范围的规则；遇到允许例外时保守地丢弃冲突范围。GFWList 是社区规则，不是实时封锁测试；其 LGPL 2.1 许可见 `docs/third-party/gfwlist-LICENSE`。
+
+“已核实的服务地区限制”截至 2026-09-28 仅含四个精确产品主机：`=api.openai.com`（[OpenAI API 支持地区](https://developers.openai.com/api/docs/supported-countries)）、`=api.anthropic.com`（[Claude API 支持地区](https://platform.claude.com/docs/en/api/supported-regions)）、`=claude.ai`（[Claude 网页支持地区](https://support.claude.com/en/articles/8461763-where-can-i-access-claude-ai)）和 `=generativelanguage.googleapis.com`（[Gemini API 可用地区](https://ai.google.dev/gemini-api/docs/available-regions)）。这些官方列表有完整支持地区，未列中国内地和香港；客户端的预览为各主机提供对应证据链接。不能据此推断同一公司其他域名或产品的政策。服务商还可能检查账号地区，改变网络路线不保证服务可用。
+
+这些是**独立线索**：同一目标可以同时没有内地接入点并被 GFWList 收录。客户端仅对已见目标推荐命中的范围；内地接入点建议直连，其他范围建议默认隧道，均须用户检查预览并保存才生效。已有命名范围组保持在首页最上方，品牌服务候选作为次级细分保留。不能把“海外”“被拦截”“服务商地区限制”互相等同。
+
 客户端只用目录识别已见目标，候选范围只包含实际命中的目录条目。用户在预览后确认，才会写入 `ruleGroups` 并影响路由。目录是社区维护的归属线索，不能保证覆盖全部服务域名，也可能存在共享基础设施；因此不自动应用目录的全部条目或改变路由。未识别的目标仍按站点显示，用户可手动建组。
 
 纯 IP 不能可靠反推服务，单独收在“IP 地址”入口；它们仍可搜索并设置精确规则。宽类别（金融、娱乐、社交等）排在具体服务之后，减少同域名归属冲突。

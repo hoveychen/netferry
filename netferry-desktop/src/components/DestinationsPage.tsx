@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Shield, Zap, Ban, Gauge, Search, X, Plus, ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { parse } from "tldts";
 import type { DestinationSnapshot, Profile, RouteModeV2, RuleGroup } from "@/types";
@@ -11,6 +13,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { tunnelColor } from "@/lib/tunnelColor";
 import { compileRoutes, matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
 import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
+import { suggestRoutingScopes, type RoutingSuggestion } from "@/lib/routingCatalog";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
   1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
@@ -241,11 +244,13 @@ export function DestinationsPage() {
   const [draftName, setDraftName] = useState("");
   const [draftDomains, setDraftDomains] = useState("");
   const [draftRoute, setDraftRoute] = useState("default");
+  const [draftEvidence, setDraftEvidence] = useState<RoutingSuggestion["evidence"]>([]);
   const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
   const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
-  const suggestionName = (suggestion: ServiceSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
+  const suggestionName = (suggestion: ServiceSuggestion | RoutingSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
+    setDraftEvidence([]);
     const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
     setEditingGroup(group ?? { id: crypto.randomUUID(), name: "", domains: [], route: { kind: "default" } });
     setDraftName(group?.name ?? suggestedDomain ?? "");
@@ -257,6 +262,14 @@ export function DestinationsPage() {
     openEditor(group);
     setDraftName(group?.name ?? suggestionName(suggestion));
     setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+  };
+  const openRoutingSuggestion = (suggestion: RoutingSuggestion) => {
+    const group = ruleGroups.find((item) => item.name === suggestion.name || item.name === suggestion.nameZh);
+    openEditor(group);
+    setDraftName(group?.name ?? suggestionName(suggestion));
+    setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+    setDraftEvidence(suggestion.evidence);
+    if (!group) setDraftRoute(suggestion.suggestedRoute);
   };
 
   // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
@@ -308,6 +321,7 @@ export function DestinationsPage() {
   }, [sorted, ruleGroups]);
   const addressHosts = useMemo(() => sorted.filter((host) => parse(host).isIp && !ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))), [sorted, ruleGroups]);
   const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
+  const routingSuggestions = useMemo(() => suggestRoutingScopes(sorted, ruleGroups), [sorted, ruleGroups]);
 
   const scopeHosts = useMemo(() => {
     if (!selectedScope) return [];
@@ -334,6 +348,8 @@ export function DestinationsPage() {
   const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
   const normalizedDraftDomains = useMemo(() => [...new Set(domainInputs.map(normalizeDomain).filter((d): d is string => !!d))], [domainInputs]);
   const previewHosts = useMemo(() => sorted.filter((host) => normalizedDraftDomains.some((domain) => matchesDomain(host, domain))), [sorted, normalizedDraftDomains]);
+  const previewGroupOverlap = useMemo(() => previewHosts.filter((host) => ruleGroups.some((group) => group.id !== editingGroup?.id && group.domains.some((domain) => matchesDomain(host, domain)))).length, [previewHosts, ruleGroups, editingGroup]);
+  const previewRuleOverrides = useMemo(() => previewHosts.filter((host) => !!routes[host]).length, [previewHosts, routes]);
 
   const saveEditor = () => {
     if (!editingGroup || !draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0) return;
@@ -581,6 +597,17 @@ export function DestinationsPage() {
                 })}
               </div>
             </section>
+            {routingSuggestions.length > 0 && <section>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.routingScopes")} · {routingSuggestions.length}</span><span>{t("destinationsPage.routingSourceSummary")}</span></div>
+              <p className="mb-2 text-xs text-t4">{t("destinationsPage.routingScopeHint")}</p>
+              <div className="space-y-1">
+                {routingSuggestions.filter((s) => !filter || suggestionName(s).toLowerCase().includes(filter.toLowerCase()) || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{i18n.language.startsWith("zh") ? suggestion.sourceZh ?? suggestion.source : suggestion.source} · {suggestion.suggestedRoute === "direct" ? t("destinationsPage.routeDirect") : t("destinationsPage.routeDefault")}{suggestion.coveredHosts > 0 && ` · ${t("destinationsPage.alreadyGrouped", { count: suggestion.coveredHosts })}`}</div></div>
+                  <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
+                  <button type="button" onClick={() => openRoutingSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
+                </div>)}
+              </div>
+            </section>}
             {serviceSuggestions.length > 0 && <section>
               <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.suggestedServices")} · {serviceSuggestions.length}</span><span title="https://github.com/v2fly/domain-list-community">V2Fly · {catalogRevision.slice(0, 7)}</span></div>
               <p className="mb-2 text-xs text-t4">{t("destinationsPage.suggestionHint")}</p>
@@ -629,8 +656,8 @@ export function DestinationsPage() {
           </div>
         )}
       </div>
-      {editingGroup && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={t("destinationsPage.editGroup")}>
-        <div className="w-full max-w-lg rounded-xl border border-bdr bg-surface p-5 shadow-xl">
+      {editingGroup && createPortal(<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={t("destinationsPage.editGroup")}>
+        <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl border border-bdr bg-surface p-5 shadow-xl">
           <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold text-t1">{t("destinationsPage.editGroup")}</h2><button type="button" onClick={() => setEditingGroup(null)} className="text-t4 hover:text-t1"><X className="h-4 w-4" /></button></div>
           <label className="mb-3 block text-xs font-medium text-t3">{t("destinationsPage.groupName")}<input value={draftName} onChange={(e) => setDraftName(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1 outline-none focus:border-accent" /></label>
           <label className="mb-3 block text-xs font-medium text-t3">{t("destinationsPage.groupDomains")}<textarea value={draftDomains} onChange={(e) => setDraftDomains(e.target.value)} rows={5} className="mt-1 w-full resize-y rounded-md border border-bdr bg-ov-2 px-3 py-2 font-mono text-sm text-t1 outline-none focus:border-accent" /></label>
@@ -638,12 +665,14 @@ export function DestinationsPage() {
           {invalidDomains.length > 0 && <p className="mb-3 text-xs text-danger">{t("destinationsPage.invalidDomains", { domains: invalidDomains.join(", ") })}</p>}
           <label className="mb-4 block text-xs font-medium text-t3">{t("destinationsPage.route")}<select value={draftRoute} onChange={(e) => setDraftRoute(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1"><option value="default">{t("destinationsPage.routeDefault")}</option>{children.map((p) => <option key={p.id} value={`tunnel:${p.id}`}>{p.name}</option>)}<option value="direct">{t("destinationsPage.routeDirect")}</option><option value="blocked">{t("destinationsPage.routeBlocked")}</option></select></label>
           <div className="mb-4 border-t border-sep pt-3 text-xs text-t3"><div className="font-medium">{t("destinationsPage.previewCount", { count: previewHosts.length })}</div><div className="mt-1 max-h-20 overflow-y-auto font-mono text-t4">{previewHosts.slice(0, 8).join(" · ")}</div></div>
+          {(previewGroupOverlap > 0 || previewRuleOverrides > 0) && <p className="mb-4 text-xs text-warning">{t("destinationsPage.previewOverlap", { groups: previewGroupOverlap, rules: previewRuleOverrides })}</p>}
+          {draftEvidence.length > 0 && <div className="mb-4 space-y-1 text-xs text-t3"><div className="font-medium">{t("destinationsPage.officialEvidence")}</div>{draftEvidence.map((item) => <button key={item.domain} type="button" onClick={() => openUrl(item.url)} className="block text-left text-accent hover:underline">{item.product} · {item.domain.slice(1)} ↗</button>)}</div>}
           <div className="flex items-center justify-between">
             {ruleGroups.some((g) => g.id === editingGroup.id) ? <button type="button" onClick={() => { if (window.confirm(t("destinationsPage.deleteConfirm"))) { deleteRuleGroup(editingGroup.id); setEditingGroup(null); } }} className="flex items-center gap-1 text-xs text-danger"><Trash2 className="h-3.5 w-3.5" />{t("destinationsPage.deleteGroup")}</button> : <span />}
             <div className="flex gap-2"><button type="button" onClick={() => setEditingGroup(null)} className="rounded-md px-3 py-1.5 text-xs text-t3 hover:bg-ov-6">{t("destinationsPage.cancel")}</button><button type="button" disabled={!draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0} onClick={saveEditor} className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">{t("destinationsPage.saveGroup")}</button></div>
           </div>
         </div>
-      </div>}
+      </div>, document.body)}
     </div>
   );
 }
