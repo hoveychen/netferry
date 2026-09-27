@@ -17,6 +17,12 @@ GFW_REVISION = "3e23962592b28d64fdd7cc76505bc22af6ac75c8"
 GFW_SOURCE = "https://github.com/gfwlist/gfwlist"
 OUTPUT = Path(__file__).resolve().parents[1] / "netferry-desktop/src/data/routingDomains.json"
 DOMAIN_RULE = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z0-9-]+\^?$", re.IGNORECASE)
+REGIONAL_RESTRICTIONS = (
+    ("=api.openai.com", "OpenAI API", "https://developers.openai.com/api/docs/supported-countries"),
+    ("=api.anthropic.com", "Claude API", "https://platform.claude.com/docs/en/api/supported-regions"),
+    ("=claude.ai", "Claude web", "https://support.claude.com/en/articles/8461763-where-can-i-access-claude-ai"),
+    ("=generativelanguage.googleapis.com", "Gemini API", "https://ai.google.dev/gemini-api/docs/available-regions"),
+)
 
 
 def gfw_domains(lines: list[str]) -> set[str]:
@@ -54,13 +60,16 @@ def build() -> dict:
         "sources": [
             {"name": "V2Fly domain-list-community", "url": "https://github.com/v2fly/domain-list-community", "revision": DLC_REVISION, "license": "MIT"},
             {"name": "GFWList", "url": GFW_SOURCE, "revision": GFW_REVISION, "license": "LGPL-2.1"},
-            {"name": "OpenAI API supported countries", "url": "https://developers.openai.com/api/docs/supported-countries", "revision": "2026-09-28", "license": "link-only"},
+        ],
+        "regionalRestrictions": [
+            {"domain": domain, "product": product, "evidence": evidence, "regions": ["CN", "HK"], "checked": "2026-09-28"}
+            for domain, product, evidence in REGIONAL_RESTRICTIONS
         ],
         "scopes": [
             {"id": "mainland-access", "name": "Mainland access point", "nameZh": "内地有接入点", "source": "V2Fly geolocation-cn", "suggestedRoute": "direct", "domains": sorted(expand("geolocation-cn", files, set(), {}))},
             {"id": "no-mainland-access", "name": "No mainland access point", "nameZh": "内地无接入点", "source": "V2Fly geolocation-!cn", "suggestedRoute": "default", "domains": sorted(expand("geolocation-!cn", files, set(), {}))},
             {"id": "gfwlist", "name": "Listed by GFWList", "nameZh": "GFWList 收录", "source": "GFWList", "suggestedRoute": "default", "domains": sorted(gfw_domains(lines))},
-            {"id": "region-limited", "name": "Verified regional restriction", "nameZh": "已核实的服务地区限制", "source": "OpenAI API supported countries", "suggestedRoute": "default", "domains": ["=api.openai.com"]},
+            {"id": "region-limited", "name": "Unavailable in mainland China and Hong Kong", "nameZh": "内地及香港未开放", "source": "Official product availability lists", "sourceZh": "服务商官方地区列表", "suggestedRoute": "default", "domains": sorted(domain for domain, _, _ in REGIONAL_RESTRICTIONS)},
         ],
     }
 

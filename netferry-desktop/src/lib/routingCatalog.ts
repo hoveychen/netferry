@@ -7,10 +7,12 @@ export interface RoutingSuggestion {
   name: string;
   nameZh: string;
   source: string;
+  sourceZh?: string;
   suggestedRoute: "default" | "direct";
   domains: string[];
   hosts: string[];
   coveredHosts: number;
+  evidence: { domain: string; product: string; url: string }[];
 }
 
 type Match = { scope: string };
@@ -60,10 +62,12 @@ export function suggestRoutingScopes(hosts: string[], existing: RuleGroup[]): Ro
     name: entry.name,
     nameZh: entry.nameZh,
     source: entry.source,
+    sourceZh: "sourceZh" in entry ? entry.sourceZh : undefined,
     suggestedRoute: entry.suggestedRoute as "default" | "direct",
     domains: [...found[i].domains].sort(),
     hosts: found[i].hosts,
     coveredHosts: found[i].coveredHosts,
+    evidence: catalog.regionalRestrictions.filter((item) => found[i].domains.has(item.domain)).map((item) => ({ domain: item.domain, product: item.product, url: item.evidence })),
   }] : []);
 }
 

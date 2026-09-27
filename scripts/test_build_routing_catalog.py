@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_routing_catalog import gfw_domains
+from build_routing_catalog import REGIONAL_RESTRICTIONS, gfw_domains
 
 
 class GFWDomainTests(unittest.TestCase):
@@ -18,6 +18,12 @@ class GFWDomainTests(unittest.TestCase):
             gfw_domains(["||example.com^", "||other.test^", "@@||www.example.com^", "@@||*.other.test^"]),
             set(),
         )
+
+    def test_regional_restrictions_stay_exact_and_sourced(self):
+        domains = [domain for domain, _, _ in REGIONAL_RESTRICTIONS]
+        self.assertEqual(len(domains), len(set(domains)))
+        self.assertTrue(all(domain.startswith("=") for domain in domains))
+        self.assertTrue(all(evidence.startswith("https://") for _, _, evidence in REGIONAL_RESTRICTIONS))
 
 
 if __name__ == "__main__":
