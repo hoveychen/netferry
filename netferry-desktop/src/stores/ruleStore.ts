@@ -11,7 +11,9 @@ import type {
   ProfileGroup,
   RouteMode,
   RouteModeV2,
+  RuleGroup,
 } from "@/types";
+import { compileRoutes } from "@/lib/ruleGroups";
 
 /**
  * Routes are persisted inside the active ProfileGroup's `rules` map as
@@ -45,6 +47,8 @@ interface RuleStore {
   setRule: (host: string, mode: RouteModeV2) => void;
   /** Remove a rule for a host. Persists to the active group. */
   deleteRule: (host: string) => void;
+  saveRuleGroup: (group: RuleGroup) => void;
+  deleteRuleGroup: (id: string) => void;
   /**
    * Back-compat: accept the legacy `RouteMode` string and forward to setRule.
    * ConnectionPage still calls this with legacy strings.
@@ -87,13 +91,13 @@ async function syncPrioritiesToSidecar(priorities: DestinationPriorities) {
 }
 
 /** Push all route modes to the Go sidecar via its HTTP API as V2 tagged unions. */
-async function syncRoutesToSidecar(rules: Record<string, RouteModeV2>) {
+async function syncRoutesToSidecar(rules: Record<string, RouteModeV2>, groups: RuleGroup[] = []) {
   if (!currentStatsUrl) return;
   try {
     await fetch(`${currentStatsUrl}/routes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(rules),
+      body: JSON.stringify(compileRoutes(groups, rules)),
     });
   } catch {
     // Sidecar may not be ready yet; ignore.
@@ -130,7 +134,7 @@ export function onSidecarConnected(url: string) {
   currentStatsUrl = url;
   const { priorities, routes, activeGroup, connectionMode } = useRuleStore.getState();
   syncPrioritiesToSidecar(priorities);
-  syncRoutesToSidecar(routes);
+  syncRoutesToSidecar(routes, activeGroup?.ruleGroups ?? []);
   // Solo mode explicitly clears the group on the sidecar so legacy/single-profile
   // UI paths kick in on ConnectionPage.
   syncActiveGroupToSidecar(connectionMode === "group" ? activeGroup : null);
@@ -191,7 +195,7 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
     // Re-push to the sidecar so mid-session reloads (e.g. active-group
     // switch) propagate without reconnecting. No-op when not connected.
     syncPrioritiesToSidecar(priorities);
-    syncRoutesToSidecar(routes);
+    syncRoutesToSidecar(routes, activeGroup?.ruleGroups ?? []);
     syncActiveGroupToSidecar(get().connectionMode === "group" ? activeGroup : null);
   },
 
@@ -225,7 +229,7 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
         console.error("Failed to persist group rules:", err);
       });
     }
-    syncRoutesToSidecar(nextRoutes);
+    syncRoutesToSidecar(nextRoutes, group?.ruleGroups ?? []);
   },
 
   deleteRule: (host) => {
@@ -240,7 +244,30 @@ export const useRuleStore = create<RuleStore>((set, get) => ({
         console.error("Failed to persist group rules:", err);
       });
     }
-    syncRoutesToSidecar(nextRoutes);
+    syncRoutesToSidecar(nextRoutes, group?.ruleGroups ?? []);
+  },
+
+  saveRuleGroup: (ruleGroup) => {
+    const group = get().activeGroup;
+    if (!group) return;
+    const ruleGroups = [...(group.ruleGroups ?? [])];
+    const index = ruleGroups.findIndex((item) => item.id === ruleGroup.id);
+    if (index >= 0) ruleGroups[index] = ruleGroup;
+    else ruleGroups.push(ruleGroup);
+    const nextGroup = { ...group, ruleGroups };
+    set({ activeGroup: nextGroup });
+    saveGroup(nextGroup).catch((err) => console.error("Failed to save rule group:", err));
+    syncRoutesToSidecar(get().routes, ruleGroups);
+  },
+
+  deleteRuleGroup: (id) => {
+    const group = get().activeGroup;
+    if (!group) return;
+    const ruleGroups = (group.ruleGroups ?? []).filter((item) => item.id !== id);
+    const nextGroup = { ...group, ruleGroups };
+    set({ activeGroup: nextGroup });
+    saveGroup(nextGroup).catch((err) => console.error("Failed to delete rule group:", err));
+    syncRoutesToSidecar(get().routes, ruleGroups);
   },
 
   setRoute: (host, route) => {

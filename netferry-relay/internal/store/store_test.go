@@ -214,6 +214,10 @@ func TestGroupsCRUD(t *testing.T) {
 			"badhost":     {Kind: "blocked"},
 		},
 		Priorities: map[string]int{"example.com": 5},
+		RuleGroups: []store.RuleGroup{{
+			ID: "service", Name: "Service", Domains: []string{"example.com", "=api.other.test"},
+			Route: store.RouteMode{Kind: "direct"},
+		}},
 		KnownHosts: []string{"example.com", "badhost", "other"},
 	}
 	if err := store.SaveGroup(g); err != nil {
@@ -232,6 +236,9 @@ func TestGroupsCRUD(t *testing.T) {
 	}
 	if got.Priorities["example.com"] != 5 {
 		t.Fatalf("priorities: %+v", got.Priorities)
+	}
+	if len(got.RuleGroups) != 1 || got.RuleGroups[0].Name != "Service" || got.RuleGroups[0].Route.Kind != "direct" {
+		t.Fatalf("rule groups round-trip: %+v", got.RuleGroups)
 	}
 
 	all, err := store.ListGroups()

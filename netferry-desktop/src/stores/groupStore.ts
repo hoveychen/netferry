@@ -8,6 +8,7 @@ export function newGroup(): ProfileGroup {
     name: "New Group",
     childrenIds: [],
     rules: {},
+    ruleGroups: [],
     priorities: {},
     knownHosts: [],
   };
