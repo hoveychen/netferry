@@ -243,9 +243,10 @@ export function DestinationsPage() {
   const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
+    const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
     setEditingGroup(group ?? { id: crypto.randomUUID(), name: "", domains: [], route: { kind: "default" } });
     setDraftName(group?.name ?? suggestedDomain ?? "");
-    setDraftDomains(group?.domains.join("\n") ?? suggestedDomain ?? "");
+    setDraftDomains(group?.domains.join("\n") ?? suggestedScope ?? "");
     setDraftRoute(group?.route.kind === "tunnel" ? `tunnel:${group.route.profileId}` : group?.route.kind ?? "default");
   };
 
