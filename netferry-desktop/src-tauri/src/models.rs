@@ -107,6 +107,16 @@ pub struct RouteMode {
     pub profile_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub domains: Vec<String>,
+    pub route: RouteMode,
+}
+
 /// A ProfileGroup bundles an ordered list of profile-id references with a set
 /// of destination rules. `children_ids[0]` is the group's default profile.
 /// Profile objects themselves live in `profiles.json`; the group only holds
@@ -126,6 +136,8 @@ pub struct ProfileGroup {
     pub legacy_children: Vec<Profile>,
     #[serde(default)]
     pub rules: std::collections::HashMap<String, RouteMode>,
+    #[serde(default)]
+    pub rule_groups: Vec<RuleGroup>,
     #[serde(default)]
     pub priorities: std::collections::HashMap<String, i32>,
     /// Accumulates every destination host/IP the relay has observed for this

@@ -52,6 +52,7 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
         children_ids,
         legacy_children: Vec::new(),
         rules,
+        rule_groups: Vec::new(),
         priorities: legacy_priorities,
         known_hosts: Vec::new(),
     };

@@ -61,6 +61,14 @@ export type RouteModeV2 =
   | { kind: "direct" }
   | { kind: "blocked" };
 
+export interface RuleGroup {
+  id: string;
+  name: string;
+  /** A domain includes its apex and subdomains; =host matches exactly. */
+  domains: string[];
+  route: RouteModeV2;
+}
+
 export interface ProfileGroup {
   id: string;
   name: string;
@@ -69,6 +77,7 @@ export interface ProfileGroup {
   childrenIds: string[];
   /** Destination host → route decision. */
   rules: Record<string, RouteModeV2>;
+  ruleGroups: RuleGroup[];
   /** Destination host → priority (1–5). */
   priorities: Record<string, number>;
   /** Every host/IP the relay has ever observed for this group (dedup, unordered).

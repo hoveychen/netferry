@@ -19,6 +19,13 @@ type RouteMode struct {
 	ProfileID string `json:"profileId,omitempty"`
 }
 
+type RuleGroup struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Domains []string  `json:"domains"`
+	Route   RouteMode `json:"route"`
+}
+
 // Group mirrors models.rs::ProfileGroup. ChildrenIDs[0] is the default
 // profile when Rules contain a "default" entry without an explicit ProfileID.
 //
@@ -31,6 +38,7 @@ type Group struct {
 	ChildrenIDs    []string             `json:"childrenIds,omitempty"`
 	LegacyChildren []profile.Profile    `json:"children,omitempty"`
 	Rules          map[string]RouteMode `json:"rules,omitempty"`
+	RuleGroups     []RuleGroup          `json:"ruleGroups,omitempty"`
 	Priorities     map[string]int       `json:"priorities,omitempty"`
 	KnownHosts     []string             `json:"knownHosts,omitempty"`
 }
@@ -59,6 +67,7 @@ type groupOnDisk struct {
 	Name        string               `json:"name"`
 	ChildrenIDs []string             `json:"childrenIds"`
 	Rules       map[string]RouteMode `json:"rules"`
+	RuleGroups  []RuleGroup          `json:"ruleGroups"`
 	Priorities  map[string]int       `json:"priorities"`
 	KnownHosts  []string             `json:"knownHosts"`
 }
@@ -69,6 +78,7 @@ func (g *Group) marshalForDisk() any {
 		Name:        g.Name,
 		ChildrenIDs: nilToEmpty(g.ChildrenIDs),
 		Rules:       g.Rules,
+		RuleGroups:  nilToEmpty(g.RuleGroups),
 		Priorities:  g.Priorities,
 		KnownHosts:  nilToEmpty(g.KnownHosts),
 	}

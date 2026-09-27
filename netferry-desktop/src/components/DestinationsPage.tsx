@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Shield, Zap, Ban, Gauge, Search, X } from "lucide-react";
-import type { DestinationSnapshot, Profile, RouteModeV2 } from "@/types";
+import { Shield, Zap, Ban, Gauge, Search, X, Plus, ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { getDomain } from "tldts";
+import type { DestinationSnapshot, Profile, RouteModeV2, RuleGroup } from "@/types";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
 import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { tunnelColor } from "@/lib/tunnelColor";
+import { compileRoutes, matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
+import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
 
 const PRIORITY_META: Record<number, { label: string; color: string; ring: string; bg: string; dotColor: string }> = {
   1: { label: "Low",  color: "text-t3",   ring: "ring-sep",     bg: "bg-ov-6",    dotColor: "bg-t4" },
@@ -225,13 +228,35 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
  */
 export function DestinationsPage() {
   const { t } = useTranslation();
-  const { priorities, routes, setPriority, setRule, activeGroup } = useRuleStore();
+  const { priorities, routes, setPriority, setRule, deleteRule, activeGroup, saveRuleGroup, deleteRuleGroup } = useRuleStore();
   const { fetch: fetchGroups } = useGroupStore();
   const { profiles, loadProfiles } = useProfileStore();
   const { loadSettings } = useSettingsStore();
   // Live-session observed hosts; empty when disconnected.
   const liveDestinations = useConnectionStore((s) => s.destinations);
   const [filter, setFilter] = useState("");
+  const [showAllSites, setShowAllSites] = useState(false);
+  const [selectedScope, setSelectedScope] = useState<string | null>(null);
+  const [editingGroup, setEditingGroup] = useState<RuleGroup | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftDomains, setDraftDomains] = useState("");
+  const [draftRoute, setDraftRoute] = useState("default");
+  const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
+  const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
+
+  const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
+    const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
+    setEditingGroup(group ?? { id: crypto.randomUUID(), name: "", domains: [], route: { kind: "default" } });
+    setDraftName(group?.name ?? suggestedDomain ?? "");
+    setDraftDomains(group?.domains.join("\n") ?? suggestedScope ?? "");
+    setDraftRoute(group?.route.kind === "tunnel" ? `tunnel:${group.route.profileId}` : group?.route.kind ?? "default");
+  };
+  const openSuggestion = (suggestion: ServiceSuggestion) => {
+    const group = ruleGroups.find((item) => item.name === suggestion.name);
+    openEditor(group);
+    setDraftName(group?.name ?? suggestion.name);
+    setDraftDomains([...new Set([...(group?.domains ?? []), ...suggestion.domains])].join("\n"));
+  };
 
   // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
   useEffect(() => {
@@ -267,11 +292,47 @@ export function DestinationsPage() {
     return [...all].sort((a, b) => a.localeCompare(b));
   }, [priorities, routes, liveDestinations, activeGroup]);
 
+  const siteGroups = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const host of sorted) {
+      if (ruleGroups.some((group) => group.domains.some((domain) => matchesDomain(host, domain)))) continue;
+      const site = getDomain(host, { allowPrivateDomains: true }) ?? host;
+      const entries = groups.get(site) ?? [];
+      entries.push(host);
+      groups.set(site, entries);
+    }
+    return [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  }, [sorted, ruleGroups]);
+  const serviceSuggestions = useMemo(() => suggestServiceGroups(sorted, ruleGroups), [sorted, ruleGroups]);
+
   const filtered = useMemo(() => {
+    if (!selectedScope) return [];
+    let entries = sorted;
+    if (selectedScope.startsWith("group:")) {
+      const group = ruleGroups.find((item) => item.id === selectedScope.slice(6));
+      entries = group ? entries.filter((host) => group.domains.some((domain) => matchesDomain(host, domain))) : [];
+    } else if (selectedScope.startsWith("site:")) {
+      const site = selectedScope.slice(5);
+      entries = siteGroups.find(([key]) => key === site)?.[1] ?? [];
+    }
     const q = filter.trim().toLowerCase();
-    if (!q) return sorted;
-    return sorted.filter((h) => h.toLowerCase().includes(q));
-  }, [sorted, filter]);
+    if (!q) return entries;
+    return entries.filter((h) => h.toLowerCase().includes(q));
+  }, [sorted, filter, selectedScope, ruleGroups, siteGroups]);
+
+  const domainInputs = useMemo(() => draftDomains.split(/[\n,]/).map((input) => input.trim()).filter(Boolean), [draftDomains]);
+  const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
+  const normalizedDraftDomains = useMemo(() => [...new Set(domainInputs.map(normalizeDomain).filter((d): d is string => !!d))], [domainInputs]);
+  const previewHosts = useMemo(() => sorted.filter((host) => normalizedDraftDomains.some((domain) => matchesDomain(host, domain))), [sorted, normalizedDraftDomains]);
+
+  const saveEditor = () => {
+    if (!editingGroup || !draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0) return;
+    const route: RouteModeV2 = draftRoute.startsWith("tunnel:")
+      ? { kind: "tunnel", profileId: draftRoute.slice(7) }
+      : { kind: draftRoute as "default" | "direct" | "blocked" };
+    saveRuleGroup({ ...editingGroup, name: draftName.trim(), domains: normalizedDraftDomains, route });
+    setEditingGroup(null);
+  };
 
   const noGroup = !activeGroup;
 
@@ -281,7 +342,7 @@ export function DestinationsPage() {
   const query = filter.trim();
   const knownSet = useMemo(() => new Set(sorted), [sorted]);
   const looksLikeTarget = query.startsWith("*.") || query.includes(".");
-  const showDraft = !noGroup && query !== "" && looksLikeTarget && !knownSet.has(query);
+  const showDraft = !noGroup && selectedScope !== null && query !== "" && looksLikeTarget && !knownSet.has(query);
   // Nudge a bare domain toward its wildcard form (wildcard the typed host's parent).
   const wildcardSuggestion = useMemo(() => {
     if (!query || query.startsWith("*.")) return null;
@@ -293,7 +354,8 @@ export function DestinationsPage() {
   }, [query, knownSet]);
 
   const renderRow = (host: string, draft: boolean) => {
-    const { mode: route, via: routeVia } = resolveRoute(host, routes);
+    const { mode: route, via: routeVia } = resolveRoute(host, effectiveRoutes);
+    const groupVia = ruleGroups.find((group) => group.domains.some((domain) => matchesDomain(host, domain)));
     const { value: priority } = resolvePriority(host, priorities);
     const isBlocked = route.kind === "blocked";
     const isDirect = route.kind === "direct";
@@ -350,6 +412,8 @@ export function DestinationsPage() {
               >
                 {t("destinationsPage.inheritedVia", { pattern: routeVia })}
               </span>
+            ) : groupVia && !routes[host] ? (
+              <span className="shrink-0 truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-medium bg-ov-8 text-t4">{groupVia.name}</span>
             ) : null}
             {liveProfileBadge && (
               <span
@@ -367,6 +431,7 @@ export function DestinationsPage() {
               onChange={(r) => setRule(host, r)}
             />
             <PriorityBadge priority={priority} onChange={(p) => setPriority(host, p)} />
+            {routes[host] && <button type="button" onClick={() => deleteRule(host)} title={t("destinationsPage.resetOverride")} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1"><X className="h-3.5 w-3.5" /></button>}
           </div>
         </div>
       </div>
@@ -426,9 +491,11 @@ export function DestinationsPage() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex h-[52px] items-center px-6">
-        <h1 className="text-[15px] font-semibold text-t1">{t("destinationsPage.title")}</h1>
-        <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>
+      <div className="flex h-[52px] items-center gap-2 px-6">
+        {selectedScope && <button type="button" onClick={() => { setSelectedScope(null); setFilter(""); }} className="rounded p-1 text-t3 hover:bg-ov-6" aria-label={t("destinationsPage.back")}><ArrowLeft className="h-4 w-4" /></button>}
+        <h1 className="text-[15px] font-semibold text-t1">{selectedScope?.startsWith("group:") ? ruleGroups.find((g) => g.id === selectedScope.slice(6))?.name : selectedScope?.startsWith("site:") ? selectedScope.slice(5) : t("destinationsPage.title")}</h1>
+        {!selectedScope && <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>}
+        {!noGroup && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
       </div>
 
       {/* Filter bar */}
@@ -455,10 +522,10 @@ export function DestinationsPage() {
             )}
           </div>
           <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[11px] text-t4">
-            {sorted.length > 0 && (
+            {selectedScope && sorted.length > 0 && (
               <span>{t("destinationsPage.countLabel", { shown: filtered.length, total: sorted.length })}</span>
             )}
-            {wildcardSuggestion && (
+            {selectedScope && wildcardSuggestion && (
               <button
                 type="button"
                 onClick={() => setFilter(wildcardSuggestion)}
@@ -467,7 +534,7 @@ export function DestinationsPage() {
                 {t("destinationsPage.wildcardSuggest", { pattern: wildcardSuggestion })}
               </button>
             )}
-            {!wildcardSuggestion && sorted.length === 0 && (
+            {selectedScope && !wildcardSuggestion && sorted.length === 0 && (
               <span>{t("destinationsPage.wildcardHint")}</span>
             )}
           </div>
@@ -482,6 +549,52 @@ export function DestinationsPage() {
       >
         {noGroup ? (
           <p className="text-t4">{t("destinationsPage.noGroup")}</p>
+        ) : !selectedScope ? (
+          <div className="space-y-5 font-sans">
+            <section>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">
+                <span>{t("destinationsPage.namedGroups")} · {ruleGroups.length}</span>
+              </div>
+              {ruleGroups.length === 0 && <p className="py-5 text-sm text-t4">{t("destinationsPage.noNamedGroups")}</p>}
+              <div className="space-y-1">
+                {ruleGroups.filter((g) => !filter || g.name.toLowerCase().includes(filter.toLowerCase()) || g.domains.some((d) => d.includes(filter.toLowerCase()))).map((group) => {
+                  const matched = sorted.filter((host) => group.domains.some((domain) => matchesDomain(host, domain)));
+                  return <div key={group.id} className="group flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                    <button type="button" onClick={() => { setSelectedScope(`group:${group.id}`); setFilter(""); setScrollTop(0); }} className="min-w-0 flex-1 text-left">
+                      <div className="truncate text-sm font-medium text-t1">{group.name}</div>
+                      <div className="mt-0.5 truncate text-[11px] text-t4">{group.domains.join(" · ")}</div>
+                    </button>
+                    <span className="shrink-0 text-xs text-t3">{routeLabel(group.route, children[0]?.name, children.find((p) => group.route.kind === "tunnel" && p.id === group.route.profileId)?.name)}</span>
+                    <span className="w-12 shrink-0 text-right font-mono text-xs text-t4">{matched.length}</span>
+                    <button type="button" onClick={() => openEditor(group)} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1" aria-label={t("destinationsPage.editGroup")}><Pencil className="h-3.5 w-3.5" /></button>
+                  </div>;
+                })}
+              </div>
+            </section>
+            {serviceSuggestions.length > 0 && <section>
+              <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.suggestedServices")} · {serviceSuggestions.length}</span><span title="https://github.com/v2fly/domain-list-community">V2Fly · {catalogRevision.slice(0, 7)}</span></div>
+              <p className="mb-2 text-xs text-t4">{t("destinationsPage.suggestionHint")}</p>
+              <div className="space-y-1">
+                {serviceSuggestions.filter((s) => !filter || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestion.name}</div><div className="mt-0.5 truncate font-mono text-[11px] text-t4" title={suggestion.hosts.join("\n")}>{suggestion.hosts.slice(0, 3).join(" · ")}</div></div>
+                  <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
+                  <button type="button" onClick={() => openSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
+                </div>)}
+              </div>
+            </section>}
+            <section>
+              <div className="mb-2 border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">{t("destinationsPage.unclassifiedSites")} · {siteGroups.length}</div>
+              <div className="space-y-1">
+                {siteGroups.filter(([site, hosts]) => !filter || site.includes(filter.toLowerCase()) || hosts.some((host) => host.includes(filter.toLowerCase()))).slice(0, filter || showAllSites ? undefined : 20).map(([site, hosts]) => <div key={site} className="flex items-center gap-3 border-b border-sep/70 px-3 py-2">
+                  <button type="button" onClick={() => { setSelectedScope(`site:${site}`); setFilter(""); setScrollTop(0); }} className="min-w-0 flex-1 text-left text-sm text-t2 hover:text-accent">{site}</button>
+                  <span className="w-12 text-right font-mono text-xs text-t4">{hosts.length}</span>
+                  <button type="button" onClick={() => openEditor(undefined, site)} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1" aria-label={t("destinationsPage.makeGroup")}><Plus className="h-3.5 w-3.5" /></button>
+                </div>)}
+                {!filter && siteGroups.length > 20 && <button type="button" onClick={() => setShowAllSites((value) => !value)} className="w-full border-b border-sep px-3 py-2 text-left text-xs text-accent hover:bg-ov-2">{showAllSites ? t("destinationsPage.showFewerSites") : t("destinationsPage.showAllSites", { count: siteGroups.length })}</button>}
+                {siteGroups.length === 0 && sorted.length === 0 && <p className="py-5 text-sm text-t4">{t("destinationsPage.noHosts")}</p>}
+              </div>
+            </section>
+          </div>
         ) : total === 0 ? (
           <>
             {sorted.length === 0 && (
@@ -499,7 +612,21 @@ export function DestinationsPage() {
           </div>
         )}
       </div>
+      {editingGroup && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={t("destinationsPage.editGroup")}>
+        <div className="w-full max-w-lg rounded-xl border border-bdr bg-surface p-5 shadow-xl">
+          <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold text-t1">{t("destinationsPage.editGroup")}</h2><button type="button" onClick={() => setEditingGroup(null)} className="text-t4 hover:text-t1"><X className="h-4 w-4" /></button></div>
+          <label className="mb-3 block text-xs font-medium text-t3">{t("destinationsPage.groupName")}<input value={draftName} onChange={(e) => setDraftName(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1 outline-none focus:border-accent" /></label>
+          <label className="mb-3 block text-xs font-medium text-t3">{t("destinationsPage.groupDomains")}<textarea value={draftDomains} onChange={(e) => setDraftDomains(e.target.value)} rows={5} className="mt-1 w-full resize-y rounded-md border border-bdr bg-ov-2 px-3 py-2 font-mono text-sm text-t1 outline-none focus:border-accent" /></label>
+          <p className="mb-3 text-xs text-t4">{t("destinationsPage.domainHint")}</p>
+          {invalidDomains.length > 0 && <p className="mb-3 text-xs text-danger">{t("destinationsPage.invalidDomains", { domains: invalidDomains.join(", ") })}</p>}
+          <label className="mb-4 block text-xs font-medium text-t3">{t("destinationsPage.route")}<select value={draftRoute} onChange={(e) => setDraftRoute(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1"><option value="default">{t("destinationsPage.routeDefault")}</option>{children.map((p) => <option key={p.id} value={`tunnel:${p.id}`}>{p.name}</option>)}<option value="direct">{t("destinationsPage.routeDirect")}</option><option value="blocked">{t("destinationsPage.routeBlocked")}</option></select></label>
+          <div className="mb-4 border-t border-sep pt-3 text-xs text-t3"><div className="font-medium">{t("destinationsPage.previewCount", { count: previewHosts.length })}</div><div className="mt-1 max-h-20 overflow-y-auto font-mono text-t4">{previewHosts.slice(0, 8).join(" · ")}</div></div>
+          <div className="flex items-center justify-between">
+            {ruleGroups.some((g) => g.id === editingGroup.id) ? <button type="button" onClick={() => { if (window.confirm(t("destinationsPage.deleteConfirm"))) { deleteRuleGroup(editingGroup.id); setEditingGroup(null); } }} className="flex items-center gap-1 text-xs text-danger"><Trash2 className="h-3.5 w-3.5" />{t("destinationsPage.deleteGroup")}</button> : <span />}
+            <div className="flex gap-2"><button type="button" onClick={() => setEditingGroup(null)} className="rounded-md px-3 py-1.5 text-xs text-t3 hover:bg-ov-6">{t("destinationsPage.cancel")}</button><button type="button" disabled={!draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0} onClick={saveEditor} className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">{t("destinationsPage.saveGroup")}</button></div>
+          </div>
+        </div>
+      </div>}
     </div>
   );
 }
-
