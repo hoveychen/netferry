@@ -106,7 +106,7 @@ echo "==> Version: v$VERSION"
 
 # ── Build sidecar (no signing yet) ───────────────────────────────────────────
 echo "==> Building sidecar"
-python "$SCRIPT_DIR/build_sidecar.py" --target "$RUST_TARGET" --version "v$VERSION"
+python3 "$SCRIPT_DIR/build_sidecar.py" --target "$RUST_TARGET" --version "v$VERSION"
 
 # ── Build Tauri .app bundle WITHOUT signing ───────────────────────────────────
 # Tauri auto-signs when APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY are present
@@ -137,9 +137,9 @@ if [[ ! -f "$HELPER_BIN" ]]; then
   exit 1
 fi
 
-cp "$HELPER_BIN" "$HELPER_DIR/com.hoveychen.netferry.helper"
-cp "$DESKTOP_DIR/src-tauri/com.hoveychen.netferry.helper.plist" \
-   "$HELPER_DIR/com.hoveychen.netferry.helper.plist"
+cp "$HELPER_BIN" "$HELPER_DIR/com.hoveychen.netferry.helper2"
+cp "$DESKTOP_DIR/src-tauri/com.hoveychen.netferry.helper2.plist" \
+   "$HELPER_DIR/com.hoveychen.netferry.helper2.plist"
 
 # ── Sign all Frameworks / dylibs first ───────────────────────────────────────
 echo "==> Signing frameworks and dylibs"
@@ -159,7 +159,7 @@ echo "==> Signing privileged helper"
 codesign --force --options runtime \
   --entitlements "$DESKTOP_DIR/src-tauri/helper-entitlements.plist" \
   --sign "$APPLE_SIGNING_IDENTITY" \
-  "$HELPER_DIR/com.hoveychen.netferry.helper"
+  "$HELPER_DIR/com.hoveychen.netferry.helper2"
 
 # ── Sign sidecar ──────────────────────────────────────────────────────────────
 # Note: Tauri renames the sidecar to "netferry-tunnel" (no target suffix) inside the bundle.
