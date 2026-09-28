@@ -54,6 +54,11 @@ func newTunnelSession(cfg *Config, callback PlatformCallback, stopCh chan struct
 		return nil, fmt.Errorf("ssh config: %w", err)
 	}
 
+	if cfg.Fectun.Enabled() {
+		hc.Fectun = cfg.Fectun
+		log.Printf("first hop over fectun (udp port %d)", cfg.Fectun.Port)
+	}
+
 	ac := sshconn.AuthConfig{
 		IdentityPEM: cfg.IdentityKey,
 	}

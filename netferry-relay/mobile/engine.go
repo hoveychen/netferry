@@ -400,11 +400,15 @@ func (e *Engine) setDialFunc() {
 		sshconn.SetDialFunc(func(network, addr string, timeout time.Duration) (net.Conn, error) {
 			return protectedDial(network, addr, timeout, e.callback)
 		})
+		sshconn.SetUDPListenFunc(func() (*net.UDPConn, error) {
+			return protectedListenUDP(e.callback)
+		})
 	}
 }
 
 func (e *Engine) clearDialFunc() {
 	sshconn.SetDialFunc(nil)
+	sshconn.SetUDPListenFunc(nil)
 }
 
 func (e *Engine) statsLoop() {

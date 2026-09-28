@@ -57,6 +57,15 @@
 "profile.poolSize" = "Connection Pool";
 "profile.splitConn" = "Split Connection";
 "profile.splitConn.desc" = "Separate TCP for control frames";
+"profile.fectun.section" = "FEC over UDP";
+"profile.fectun" = "Use fectun";
+"profile.fectun.desc" = "Carry the SSH connection over fectun (Reed-Solomon FEC over UDP). Only helps on lossy links.";
+"profile.fectun.hint" = "The server must run a multi-peer fectun server (fectun -mode server -lport <port> -target 127.0.0.1:22, without -peer) and allow inbound UDP on that port. The SSH port in Remote is ignored. The rate limit includes parity; never exceed the link's real capacity, or the SSH session may drop.";
+"profile.fectun.port" = "UDP Port";
+"profile.fectun.key.hint" = "Pre-shared key (empty = no auth)";
+"profile.fectun.k" = "Data shards (k)";
+"profile.fectun.m" = "Parity shards (m)";
+"profile.fectun.rate" = "Upload limit (Mbps)";
 "profile.tcpBalance" = "TCP Load Balancing";
 "profile.tcpBalance.leastLoaded" = "Least Loaded";
 "profile.tcpBalance.roundRobin" = "Round Robin";

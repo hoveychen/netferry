@@ -57,6 +57,15 @@
 "profile.poolSize" = "连接池";
 "profile.splitConn" = "分离连接";
 "profile.splitConn.desc" = "独立 TCP 用于控制帧";
+"profile.fectun.section" = "FEC over UDP";
+"profile.fectun" = "使用 fectun";
+"profile.fectun.desc" = "SSH 连接走 fectun（基于 UDP 的 Reed-Solomon 前向纠错），仅在丢包严重的链路上有帮助。";
+"profile.fectun.hint" = "服务端需运行多对端模式的 fectun server（fectun -mode server -lport <端口> -target 127.0.0.1:22，不带 -peer），并放行该 UDP 端口入站。远程地址里的 SSH 端口会被忽略。限速含校验分片，切勿超过链路实际容量，否则可能断开 SSH。";
+"profile.fectun.port" = "UDP 端口";
+"profile.fectun.key.hint" = "预共享密钥（留空 = 不鉴权）";
+"profile.fectun.k" = "数据分片（k）";
+"profile.fectun.m" = "校验分片（m）";
+"profile.fectun.rate" = "上行限速（Mbps）";
 "profile.tcpBalance" = "TCP 负载均衡";
 "profile.tcpBalance.leastLoaded" = "最小负载";
 "profile.tcpBalance.roundRobin" = "轮询";

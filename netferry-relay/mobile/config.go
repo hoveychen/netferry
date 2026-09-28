@@ -8,7 +8,11 @@
 // Complex data crosses the boundary as JSON strings.
 package mobile
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/hoveychen/netferry/relay/internal/sshconn"
+)
 
 // Config is the tunnel configuration passed as JSON from the native side.
 // Field names and semantics match the desktop Profile type (types.ts / models.rs).
@@ -38,6 +42,10 @@ type Config struct {
 	SplitConn         bool   `json:"splitConn"`                   // separate data/ctrl SSH connections
 	TCPBalanceMode    string `json:"tcpBalanceMode,omitempty"`    // "round-robin" or "least-loaded"
 	LatencyBufferSize *int   `json:"latencyBufferSize,omitempty"` // smux receive buffer size
+
+	// Fectun carries the first SSH hop over FEC-protected UDP when set
+	// (same shape as the desktop profile's fectun). nil = plain TCP.
+	Fectun *sshconn.FectunConfig `json:"fectun,omitempty"`
 
 	// Network
 	DisableIPv6 bool `json:"disableIpv6"`
