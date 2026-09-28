@@ -57,6 +57,14 @@
 "profile.poolSize" = "Connection Pool";
 "profile.splitConn" = "Split Connection";
 "profile.splitConn.desc" = "Separate TCP for control frames";
+"profile.fectun.section" = "FEC over UDP";
+"profile.fectun" = "Use fectun";
+"profile.fectun.desc" = "Carry the SSH connection over fectun (Reed-Solomon FEC over UDP). Only helps on lossy links.";
+"profile.fectun.hint" = "Nothing to install on the server: NetFerry starts fectun there over SSH and sets up the key itself. Only allow inbound UDP on this port in the server's firewall / security group. The rate limit applies both ways and includes parity; never exceed the link's real capacity, or the SSH session may drop.";
+"profile.fectun.port" = "UDP Port";
+"profile.fectun.k" = "Data shards (k)";
+"profile.fectun.m" = "Parity shards (m)";
+"profile.fectun.rate" = "Rate limit, both ways (Mbps)";
 "profile.tcpBalance" = "TCP Load Balancing";
 "profile.tcpBalance.leastLoaded" = "Least Loaded";
 "profile.tcpBalance.roundRobin" = "Round Robin";

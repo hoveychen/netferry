@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, FolderOpen, Lock, Plus, Trash2, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { JumpHost, MethodFeatures, Profile } from "@/types";
+import type { FectunConfig, JumpHost, MethodFeatures, Profile } from "@/types";
 import { listMethodFeatures } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,10 @@ interface Props {
   onSave: (profile: Profile) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }
+
+// Matches the fectun CLI defaults. 55700 is the port the existing fectun
+// deployments use; rate stays well under a typical cross-border link.
+const DEFAULT_FECTUN: FectunConfig = { port: 55700, k: 20, m: 15, rateMbps: 25 };
 
 // Empty/whitespace identityKey must collapse to undefined: the tab picker
 // distinguishes File Path vs PEM Text by `=== undefined`, so a stored "" would
@@ -90,11 +94,20 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
     if (badExclude) errors.push(t("profileDetail.validation.invalidExcludeSubnet", { subnet: badExclude }));
     if (draft.dns === "specific" && !draft.dnsTarget?.trim())
       errors.push(t("profileDetail.validation.dnsTargetRequired"));
+    if (draft.fectun) {
+      const f = draft.fectun;
+      if (!(f.port >= 1 && f.port <= 65535)) errors.push(t("profileDetail.validation.fectunPort"));
+      if (!(f.k >= 1 && f.m >= 1 && f.k + f.m <= 255)) errors.push(t("profileDetail.validation.fectunShards"));
+      if (!(f.rateMbps > 0)) errors.push(t("profileDetail.validation.fectunRate"));
+    }
     return { valid: errors.length === 0, errors };
   }, [draft, t, isImported]);
 
   const setField = <K extends keyof Profile>(key: K, value: Profile[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
+
+  const setFectun = (patch: Partial<FectunConfig>) =>
+    setDraft((prev) => (prev.fectun ? { ...prev, fectun: { ...prev.fectun, ...patch } } : prev));
 
   const jumpHosts = draft.jumpHosts ?? [];
   const setJumpHosts = (hosts: JumpHost[]) => setField("jumpHosts", hosts.length > 0 ? hosts : undefined);
@@ -610,6 +623,75 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       </span>
                     </span>
                   </label>
+                </div>
+
+                <div className="col-span-2">
+                  <label className="inline-flex items-center gap-2.5 text-sm text-t2">
+                    <input
+                      type="checkbox"
+                      checked={!!draft.fectun}
+                      onChange={(e) => setField("fectun", e.target.checked ? { ...DEFAULT_FECTUN } : undefined)}
+                      className="accent-accent"
+                    />
+                    <span>
+                      {t("profileDetail.fectun")}
+                      <span className="ml-1.5 text-xs text-t4">
+                        {t("profileDetail.fectunDesc")}
+                      </span>
+                    </span>
+                  </label>
+                  {draft.fectun && (
+                    <div className="mt-2 grid grid-cols-2 gap-3 rounded-lg border border-bdr p-3">
+                      <p className="col-span-2 text-xs text-t4">{t("profileDetail.fectunHint")}</p>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-t2">
+                          {t("profileDetail.fectunPort")}
+                        </label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={draft.fectun.port}
+                          onChange={(e) => setFectun({ port: parseInt(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-t2">
+                          {t("profileDetail.fectunShards")}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={128}
+                            value={draft.fectun.k}
+                            onChange={(e) => setFectun({ k: parseInt(e.target.value) || 0 })}
+                          />
+                          <span className="text-t4">/</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={128}
+                            value={draft.fectun.m}
+                            onChange={(e) => setFectun({ m: parseInt(e.target.value) || 0 })}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-t2">
+                          {t("profileDetail.fectunRate")}
+                        </label>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={draft.fectun.rateMbps}
+                          onChange={(e) => setFectun({ rateMbps: parseFloat(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <p className="col-span-2 text-xs text-t4">{t("profileDetail.fectunRateHint")}</p>
+                    </div>
+                  )}
                 </div>
 
                 {!isImported && (

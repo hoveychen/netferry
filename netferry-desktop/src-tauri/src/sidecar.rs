@@ -559,6 +559,10 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
     if profile.split_conn {
         args.push("--split".to_string());
     }
+    if let Some(fc) = profile.fectun.as_ref().filter(|f| f.port > 0) {
+        args.push("--fectun".to_string());
+        args.push(serde_json::to_string(fc).unwrap());
+    }
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
     }
@@ -1661,5 +1665,29 @@ mod tests {
         for line in keep {
             assert!(!is_high_frequency_tunnel_line(line), "should be kept: {line}");
         }
+    }
+
+    #[test]
+    fn fectun_passed_as_json_arg() {
+        let profile = Profile {
+            remote: "u@h".to_string(),
+            fectun: Some(crate::models::FectunConfig {
+                port: 55700,
+                k: 20,
+                m: 15,
+                rate_mbps: 25.0,
+            }),
+            ..Profile::default()
+        };
+        let prepared = prepare_identity_args(&profile).unwrap();
+        let args = build_args(&profile, &prepared);
+        let i = args.iter().position(|a| a == "--fectun").expect("--fectun passed");
+        let v: serde_json::Value = serde_json::from_str(&args[i + 1]).unwrap();
+        assert_eq!(v, serde_json::json!({"port": 55700, "k": 20, "m": 15, "rateMbps": 25.0}));
+
+        let plain = Profile::default();
+        assert!(!build_args(&plain, &prepare_identity_args(&plain).unwrap())
+            .iter()
+            .any(|a| a == "--fectun"));
     }
 }

@@ -11,6 +11,14 @@ export interface JumpHost {
   identityKey?: string;
 }
 
+/** Carry the first SSH hop over fectun (FEC over UDP). 0 in k/m/rateMbps = fectun default. */
+export interface FectunConfig {
+  port: number;
+  k: number;
+  m: number;
+  rateMbps: number;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -33,6 +41,8 @@ export interface Profile {
   autoExcludeLan: boolean;
   poolSize: number;
   splitConn: boolean;
+  /** undefined = plain TCP first hop. */
+  fectun?: FectunConfig;
   tcpBalanceMode?: "round-robin" | "least-loaded";
   latencyBufferSize?: number;
   imported?: boolean;

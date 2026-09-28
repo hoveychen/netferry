@@ -10,6 +10,24 @@ struct JumpHost: Codable, Hashable {
     }
 }
 
+/// First SSH hop over fectun (FEC over UDP); mirrors the desktop profile's fectun.
+struct FectunConfig: Codable, Hashable {
+    var port: Int = 55700
+    var k: Int = 20
+    var m: Int = 15
+    var rateMbps: Double = 25
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 55700
+        k = try container.decodeIfPresent(Int.self, forKey: .k) ?? 20
+        m = try container.decodeIfPresent(Int.self, forKey: .m) ?? 15
+        rateMbps = try container.decodeIfPresent(Double.self, forKey: .rateMbps) ?? 25
+    }
+}
+
 struct Profile: Identifiable, Codable, Hashable {
     var id: UUID
     var name: String
@@ -25,6 +43,7 @@ struct Profile: Identifiable, Codable, Hashable {
     var blockUdp: Bool
     var poolSize: Int
     var splitConn: Bool
+    var fectun: FectunConfig?       // nil = plain TCP first hop
     var tcpBalanceMode: String      // "round-robin" or "least-loaded"
     var latencyBufferSize: Int
     var autoExcludeLan: Bool
@@ -49,6 +68,7 @@ struct Profile: Identifiable, Codable, Hashable {
         blockUdp: Bool = true,
         poolSize: Int = 2,
         splitConn: Bool = false,
+        fectun: FectunConfig? = nil,
         tcpBalanceMode: String = "least-loaded",
         latencyBufferSize: Int = 2097152,
         autoExcludeLan: Bool = true,
@@ -72,6 +92,7 @@ struct Profile: Identifiable, Codable, Hashable {
         self.blockUdp = blockUdp
         self.poolSize = poolSize
         self.splitConn = splitConn
+        self.fectun = fectun
         self.tcpBalanceMode = tcpBalanceMode
         self.latencyBufferSize = latencyBufferSize
         self.autoExcludeLan = autoExcludeLan
@@ -100,6 +121,7 @@ struct Profile: Identifiable, Codable, Hashable {
         blockUdp = try container.decodeIfPresent(Bool.self, forKey: .blockUdp) ?? true
         poolSize = try container.decodeIfPresent(Int.self, forKey: .poolSize) ?? 2
         splitConn = try container.decodeIfPresent(Bool.self, forKey: .splitConn) ?? false
+        fectun = try container.decodeIfPresent(FectunConfig.self, forKey: .fectun)
         tcpBalanceMode = try container.decodeIfPresent(String.self, forKey: .tcpBalanceMode) ?? "least-loaded"
         latencyBufferSize = try container.decodeIfPresent(Int.self, forKey: .latencyBufferSize) ?? 2097152
         autoExcludeLan = try container.decodeIfPresent(Bool.self, forKey: .autoExcludeLan) ?? true
@@ -123,7 +145,7 @@ struct Profile: Identifiable, Codable, Hashable {
         let jumpHostDicts = jumpHosts.map { jh -> [String: Any] in
             ["remote": jh.remote, "identityKey": jh.identityKey]
         }
-        let config: [String: Any] = [
+        var config: [String: Any] = [
             "remote": remote,
             "identityKey": identityKey,
             "jumpHosts": jumpHostDicts,
@@ -144,6 +166,11 @@ struct Profile: Identifiable, Codable, Hashable {
             "notes": notes,
             "mtu": mtu
         ]
+        if let f = fectun, f.port > 0 {
+            config["fectun"] = [
+                "port": f.port, "k": f.k, "m": f.m, "rateMbps": f.rateMbps,
+            ] as [String: Any]
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: data, encoding: .utf8) else {
             return "{}"

@@ -29,6 +29,10 @@ type backendConfig struct {
 	poolSize     int
 	splitConn    bool
 	tcpBalance   string
+	// fectun, when enabled, carries the first raw hop over fectun (see
+	// sshconn.FectunConfig). Set on the HostConfig so every dial of this
+	// backend — pool members, split ctrl links, reconnects — shares it.
+	fectun *sshconn.FectunConfig
 
 	// extraExcludes is the union of this profile's ExcludeSubnets and the
 	// auto-LAN CIDRs (when autoExcludeLAN is enabled). The caller merges
@@ -133,6 +137,7 @@ func backendCfgFromProfile(p *profile.Profile) *backendConfig {
 		poolSize:     n,
 		splitConn:    p.SplitConn,
 		tcpBalance:   bal,
+		fectun:       p.Fectun,
 	}
 	if p.AutoExcludeLANOrDefault() {
 		cfg.extraExcludes = append(cfg.extraExcludes, profile.AutoExcludeLANCIDRs()...)
@@ -158,6 +163,9 @@ func connectBackend(
 	hc, err := sshconn.ParseSSHConfig(cfg.remote)
 	if err != nil {
 		return nil, fmt.Errorf("ssh config %q: %w", cfg.remote, err)
+	}
+	if cfg.fectun.Enabled() {
+		hc.Fectun = cfg.fectun
 	}
 	ac := sshconn.AuthConfig{
 		IdentityFile: cfg.identityFile,

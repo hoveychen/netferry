@@ -30,6 +30,21 @@ pub struct JumpHost {
     pub identity_key: Option<String>,
 }
 
+/// Carries the first SSH hop over fectun (FEC over UDP). The tunnel brings
+/// the fectun daemon up on the hop's host over SSH and learns its key, so
+/// only the UDP `port` is configured. 0 in k/m/rate means the fectun default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FectunConfig {
+    pub port: u16,
+    #[serde(default)]
+    pub k: u32,
+    #[serde(default)]
+    pub m: u32,
+    #[serde(default)]
+    pub rate_mbps: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -68,6 +83,9 @@ pub struct Profile {
     pub pool_size: u32,
     #[serde(default)]
     pub split_conn: bool,
+    /// None = plain TCP first hop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fectun: Option<FectunConfig>,
     #[serde(default = "default_tcp_balance_mode")]
     pub tcp_balance_mode: String,
     #[serde(default = "default_latency_buffer_size")]
@@ -204,6 +222,7 @@ impl Default for Profile {
             auto_exclude_lan: true,
             pool_size: 4,
             split_conn: false,
+            fectun: None,
             tcp_balance_mode: "least-loaded".to_string(),
             latency_buffer_size: Some(2097152),
             imported: false,

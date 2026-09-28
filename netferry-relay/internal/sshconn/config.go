@@ -18,6 +18,10 @@ type HostConfig struct {
 	IdentityFile string
 	ProxyJump    string
 	ProxyCommand string
+
+	// Fectun, when non-nil, carries the first raw hop over fectun (FEC over
+	// UDP) instead of TCP. Not read from ~/.ssh/config; callers set it.
+	Fectun *FectunConfig
 }
 
 // ParseSSHConfig loads ~/.ssh/config and resolves settings for the given alias.

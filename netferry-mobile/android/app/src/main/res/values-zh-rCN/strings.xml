@@ -61,6 +61,14 @@
     <string name="profile_pool_size">连接池</string>
     <string name="profile_split_conn">分离连接</string>
     <string name="profile_split_conn_desc">独立 TCP 用于控制帧</string>
+    <string name="profile_fectun">FEC over UDP（fectun）</string>
+    <string name="profile_fectun_desc">SSH 连接走 fectun，仅在丢包严重的链路上有帮助</string>
+    <string name="profile_fectun_hint">服务端无需安装任何东西：NetFerry 会经 SSH 自动在服务端启动 fectun 并配好密钥。只需在服务器的防火墙/安全组放行该 UDP 端口入站。</string>
+    <string name="profile_fectun_port">UDP 端口</string>
+    <string name="profile_fectun_k">数据分片（k）</string>
+    <string name="profile_fectun_m">校验分片（m）</string>
+    <string name="profile_fectun_rate">双向限速（Mbps）</string>
+    <string name="profile_fectun_rate_hint">含校验分片。切勿超过链路实际容量，否则可能断开 SSH。</string>
     <string name="profile_tcp_balance">TCP 负载均衡</string>
     <string name="profile_tcp_least_loaded">最小负载</string>
     <string name="profile_tcp_round_robin">轮询</string>

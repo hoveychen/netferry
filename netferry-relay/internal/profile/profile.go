@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/hoveychen/netferry/relay/internal/sshconn"
 )
 
 // DnsMode mirrors the desktop enum: "off" | "all" | "specific".
@@ -54,6 +56,9 @@ type Profile struct {
 	PoolSize          int        `json:"poolSize,omitempty"`
 	SplitConn         bool       `json:"splitConn"`
 	TcpBalance        string     `json:"tcpBalanceMode,omitempty"`
+	// Fectun carries the first SSH hop over FEC-protected UDP when its Port
+	// is set. nil / Port==0 keeps plain TCP.
+	Fectun *sshconn.FectunConfig `json:"fectun,omitempty"`
 	// Round-tripped on behalf of the desktop app — tunnel core ignores these,
 	// but storing them preserves user state across desktop/TUI co-edits.
 	Notes             string     `json:"notes,omitempty"`

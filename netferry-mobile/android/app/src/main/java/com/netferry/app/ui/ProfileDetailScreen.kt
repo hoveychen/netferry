@@ -64,6 +64,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.netferry.app.model.FectunConfig
 import androidx.compose.ui.unit.dp
 import com.netferry.app.R
 import com.netferry.app.model.JumpHost
@@ -96,6 +98,12 @@ fun ProfileDetailScreen(
     var blockUdp by remember { mutableStateOf(initialProfile.blockUdp) }
     var poolSize by remember { mutableIntStateOf(initialProfile.poolSize) }
     var splitConn by remember { mutableStateOf(initialProfile.splitConn) }
+    val fectunInit = initialProfile.fectun ?: FectunConfig()
+    var fectunEnabled by remember { mutableStateOf(initialProfile.fectun != null) }
+    var fectunPort by remember { mutableIntStateOf(fectunInit.port) }
+    var fectunK by remember { mutableIntStateOf(fectunInit.k) }
+    var fectunM by remember { mutableIntStateOf(fectunInit.m) }
+    var fectunRate by remember { mutableStateOf(fectunInit.rateMbps.toString()) }
     var tcpBalanceMode by remember { mutableStateOf(initialProfile.tcpBalanceMode) }
     var latencyBufferSize by remember { mutableIntStateOf(initialProfile.latencyBufferSize) }
     var disableIpv6 by remember { mutableStateOf(initialProfile.disableIpv6) }
@@ -516,6 +524,62 @@ fun ProfileDetailScreen(
                         onCheckedChange = { splitConn = it }
                     )
 
+                    ToggleRow(
+                        title = stringResource(R.string.profile_fectun),
+                        description = stringResource(R.string.profile_fectun_desc),
+                        checked = fectunEnabled,
+                        onCheckedChange = { fectunEnabled = it }
+                    )
+
+                    AnimatedVisibility(visible = fectunEnabled) {
+                        Column {
+                            Text(
+                                stringResource(R.string.profile_fectun_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = fectunPort.toString(),
+                                onValueChange = { fectunPort = it.toIntOrNull() ?: fectunPort },
+                                label = { Text(stringResource(R.string.profile_fectun_port)) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = fectunK.toString(),
+                                    onValueChange = { fectunK = it.toIntOrNull() ?: fectunK },
+                                    label = { Text(stringResource(R.string.profile_fectun_k)) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = fectunM.toString(),
+                                    onValueChange = { fectunM = it.toIntOrNull() ?: fectunM },
+                                    label = { Text(stringResource(R.string.profile_fectun_m)) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = fectunRate,
+                                onValueChange = { fectunRate = it },
+                                label = { Text(stringResource(R.string.profile_fectun_rate)) },
+                                supportingText = { Text(stringResource(R.string.profile_fectun_rate_hint)) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
@@ -629,6 +693,16 @@ fun ProfileDetailScreen(
                             blockUdp = blockUdp,
                             poolSize = poolSize.coerceIn(1, 10),
                             splitConn = splitConn,
+                            fectun = if (fectunEnabled) {
+                                // Clamp to what fectun accepts: k,m >= 1, k+m <= 255.
+                                val k = fectunK.coerceIn(1, 128)
+                                FectunConfig(
+                                    port = fectunPort.coerceIn(1, 65535),
+                                    k = k,
+                                    m = fectunM.coerceIn(1, 255 - k),
+                                    rateMbps = fectunRate.toDoubleOrNull()?.takeIf { it > 0 } ?: 25.0
+                                )
+                            } else null,
                             tcpBalanceMode = tcpBalanceMode,
                             latencyBufferSize = latencyBufferSize,
                             disableIpv6 = disableIpv6,

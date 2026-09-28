@@ -91,3 +91,13 @@ func TestShellQuote(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFectunKey(t *testing.T) {
+	k, err := parseFectunKey("noise\nfectun-key abc123\n")
+	if err != nil || k != "abc123" {
+		t.Fatalf("got %q, %v", k, err)
+	}
+	if _, err := parseFectunKey("fectun-key \n"); err == nil {
+		t.Fatal("expected error on empty key")
+	}
+}

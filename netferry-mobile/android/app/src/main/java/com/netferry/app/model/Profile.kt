@@ -10,6 +10,14 @@ data class JumpHost(
     val identityKey: String = ""
 ) : Serializable
 
+/** First SSH hop over fectun (FEC over UDP); mirrors the desktop profile's fectun. */
+data class FectunConfig(
+    val port: Int = 55700,
+    val k: Int = 20,
+    val m: Int = 15,
+    val rateMbps: Double = 25.0
+) : Serializable
+
 data class Profile(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
@@ -26,6 +34,7 @@ data class Profile(
     val blockUdp: Boolean = true,
     val poolSize: Int = 2,
     val splitConn: Boolean = false,
+    val fectun: FectunConfig? = null,     // null = plain TCP first hop
     val tcpBalanceMode: String = "least-loaded", // "round-robin" or "least-loaded"
     val latencyBufferSize: Int = 2097152,
     val autoExcludeLan: Boolean = true,
@@ -56,6 +65,10 @@ data class Profile(
         sb.append("\"blockUdp\":$blockUdp,")
         sb.append("\"poolSize\":$poolSize,")
         sb.append("\"splitConn\":$splitConn,")
+        fectun?.takeIf { it.port > 0 }?.let { f ->
+            sb.append("\"fectun\":{\"port\":${f.port},")
+            sb.append("\"k\":${f.k},\"m\":${f.m},\"rateMbps\":${f.rateMbps}},")
+        }
         sb.append("\"tcpBalanceMode\":${tcpBalanceMode.toJsonString()},")
         sb.append("\"latencyBufferSize\":$latencyBufferSize,")
         sb.append("\"disableIpv6\":$disableIpv6,")
@@ -90,6 +103,7 @@ data class Profile(
         blockUdp = blockUdp,
         poolSize = if (poolSize > 0) poolSize else 2,
         splitConn = splitConn,
+        fectun = fectun,
         tcpBalanceMode = tcpBalanceMode ?: "least-loaded",
         latencyBufferSize = if (latencyBufferSize > 0) latencyBufferSize else 2097152,
         autoExcludeLan = autoExcludeLan,

@@ -29,6 +29,7 @@ struct ProfileDetailView: View {
             routingSection
             dnsSection
             advancedSection
+            fectunSection
             notesSection
 
             if !isNew {
@@ -208,6 +209,51 @@ struct ProfileDetailView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             }
+        }
+    }
+
+    // MARK: - fectun
+
+    private var fectunEnabled: Binding<Bool> {
+        Binding(
+            get: { profile.fectun != nil },
+            set: { profile.fectun = $0 ? (profile.fectun ?? FectunConfig()) : nil }
+        )
+    }
+
+    private func fectunField<T>(_ keyPath: WritableKeyPath<FectunConfig, T>) -> Binding<T> {
+        Binding(
+            get: { (profile.fectun ?? FectunConfig())[keyPath: keyPath] },
+            set: { v in
+                var f = profile.fectun ?? FectunConfig()
+                f[keyPath: keyPath] = v
+                profile.fectun = f
+            }
+        )
+    }
+
+    private var fectunSection: some View {
+        Section {
+            Toggle(L("profile.fectun"), isOn: fectunEnabled)
+            if let f = profile.fectun {
+                LabeledContent(L("profile.fectun.port")) {
+                    TextField("55700", value: fectunField(\.port), format: .number.grouping(.never))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                // fectun rejects k+m > 255 and needs at least one parity shard.
+                Stepper(L("profile.fectun.k") + ": \(f.k)", value: fectunField(\.k), in: 1...254)
+                Stepper(L("profile.fectun.m") + ": \(f.m)", value: fectunField(\.m), in: 1...max(1, 255 - f.k))
+                LabeledContent(L("profile.fectun.rate")) {
+                    TextField("25", value: fectunField(\.rateMbps), format: .number)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+        } header: {
+            Text(l10n: "profile.fectun.section")
+        } footer: {
+            Text(l10n: profile.fectun == nil ? "profile.fectun.desc" : "profile.fectun.hint")
         }
     }
 
