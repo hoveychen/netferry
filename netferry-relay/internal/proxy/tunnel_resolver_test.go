@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
 )
 
 // fakeDNSClient answers every A query with 203.0.113.7 and counts requests.
-type fakeDNSClient struct{ queries int }
+// The resolver sends the A and AAAA queries concurrently, so the counter
+// must be atomic.
+type fakeDNSClient struct{ queries atomic.Int32 }
 
 func (f *fakeDNSClient) OpenTCP(int, string, int, int) (*mux.ClientConn, error) {
 	return nil, errors.New("unused")
@@ -18,7 +21,7 @@ func (f *fakeDNSClient) OpenTCP(int, string, int, int) (*mux.ClientConn, error) 
 func (f *fakeDNSClient) OpenUDP(int) (*mux.UDPChannel, error) { return nil, errors.New("unused") }
 
 func (f *fakeDNSClient) DNSRequest(q []byte) ([]byte, error) {
-	f.queries++
+	f.queries.Add(1)
 	// Echo header + question only; Go appends an EDNS0 OPT record we drop.
 	end := 12
 	for q[end] != 0 {
@@ -50,7 +53,7 @@ func TestTunnelResolverUsesDNSRequest(t *testing.T) {
 			found = true
 		}
 	}
-	if !found || f.queries == 0 {
-		t.Fatalf("addrs=%v queries=%d", addrs, f.queries)
+	if !found || f.queries.Load() == 0 {
+		t.Fatalf("addrs=%v queries=%d", addrs, f.queries.Load())
 	}
 }
