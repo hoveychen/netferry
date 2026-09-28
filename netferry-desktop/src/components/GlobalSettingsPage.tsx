@@ -14,6 +14,7 @@ import {
 
 import type { GlobalSettings, Profile, TrayDisplayMode } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { getThemeMode, setThemeMode, type ThemeMode } from "@/lib/theme";
 
@@ -155,6 +156,33 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
                   </option>
                 ))}
               </Select>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.lanSharing")}
+            </p>
+            <p className="mb-4 text-xs leading-relaxed text-t3">
+              {t("settings.lanSharingDesc")}
+            </p>
+            <div className="space-y-4">
+              <LanProxyRow
+                label={t("settings.lanSocks5")}
+                desc={t("settings.lanSocks5Desc")}
+                portLabel={t("settings.lanPort")}
+                port={draft.lanSocks5Port ?? null}
+                defaultPort={1080}
+                onChange={(port) => setDraft({ ...draft, lanSocks5Port: port })}
+              />
+              <LanProxyRow
+                label={t("settings.lanHttp")}
+                desc={t("settings.lanHttpDesc")}
+                portLabel={t("settings.lanPort")}
+                port={draft.lanHttpPort ?? null}
+                defaultPort={8080}
+                onChange={(port) => setDraft({ ...draft, lanHttpPort: port })}
+              />
             </div>
           </div>
 
@@ -314,6 +342,55 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface LanProxyRowProps {
+  label: string;
+  desc: string;
+  portLabel: string;
+  port: number | null;
+  defaultPort: number;
+  onChange: (port: number | null) => void;
+}
+
+/** One LAN proxy toggle + port. `port === null` means off. */
+function LanProxyRow({ label, desc, portLabel, port, defaultPort, onChange }: LanProxyRowProps) {
+  // Keep the typed text (and the last port while off) so re-enabling restores it.
+  const [text, setText] = useState(String(port ?? defaultPort));
+  const parsed = Number(text);
+  const valid = Number.isInteger(parsed) && parsed > 0 && parsed < 65536;
+
+  return (
+    <div>
+      <label className="inline-flex items-center gap-2.5 text-sm font-medium text-t2">
+        <input
+          type="checkbox"
+          checked={port !== null}
+          onChange={(e) => onChange(e.target.checked ? (valid ? parsed : defaultPort) : null)}
+          className="accent-accent"
+        />
+        {label}
+      </label>
+      <p className="mt-1 text-xs text-t3">{desc}</p>
+      {port !== null && (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-sm text-t2">{portLabel}</span>
+          <Input
+            type="number"
+            min={1}
+            max={65535}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              const n = Number(e.target.value);
+              if (Number.isInteger(n) && n > 0 && n < 65536) onChange(n);
+            }}
+            className="w-28"
+          />
+        </div>
+      )}
     </div>
   );
 }

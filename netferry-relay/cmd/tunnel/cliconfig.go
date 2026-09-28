@@ -38,6 +38,8 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		excludeNets    = fs.String("exclude", "", "comma-separated CIDRs to exclude from tunnel")
 		poolSize       = fs.Int("pool", 1, "number of parallel SSH TCP connections for connection bonding (1 = disabled; use 2-4 for high-concurrency workloads)")
 		splitConn      = fs.Bool("split", false, "open a second SSH connection per pool member to carry smux control frames (SYN/NOP/UPD) separately from data frames (PSH/FIN), preventing bulk data from delaying window updates")
+		lanSocks5      = fs.String("lan-socks5", "", "also serve SOCKS5 for other LAN devices on this port or host:port (e.g. 1080 binds 0.0.0.0:1080)")
+		lanHTTP        = fs.String("lan-http", "", "also serve an HTTP proxy (CONNECT + plain http) for other LAN devices on this port or host:port")
 		tcpBalance     = fs.String("tcp-balance", "least-loaded", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
 		showVersion    = fs.Bool("version", false, "print version and exit")
 		listFeatures   = fs.Bool("list-features", false, "print method features as JSON and exit")
@@ -327,6 +329,8 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		TProxyMark:     *tproxyMark,
 		TProxyTable:    *tproxyTable,
 		Verbose:        *verbose,
+		LANSocks5:      strings.TrimSpace(*lanSocks5),
+		LANHTTP:        strings.TrimSpace(*lanHTTP),
 	}
 	return cfg, false
 }

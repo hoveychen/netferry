@@ -18,14 +18,15 @@ import (
 
 // SOCKS5 protocol constants (RFC 1928).
 const (
-	socks5Version    = 5
-	socks5AuthNone   = 0
-	socks5CmdConnect = 1
-	socks5AddrIPv4   = 1
-	socks5AddrDomain = 3
-	socks5AddrIPv6   = 4
-	socks5ReplyOK    = 0
-	socks5ReplyFail  = 1
+	socks5Version         = 5
+	socks5AuthNone        = 0
+	socks5CmdConnect      = 1
+	socks5CmdUDPAssociate = 3
+	socks5AddrIPv4        = 1
+	socks5AddrDomain      = 3
+	socks5AddrIPv6        = 4
+	socks5ReplyOK         = 0
+	socks5ReplyFail       = 1
 )
 
 // ListenSOCKS5 starts a SOCKS5 proxy on the given port and forwards all
@@ -59,12 +60,24 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 	defer conn.Close()
 	startedAt := time.Now()
 
-	dstIP, dstPort, err := socks5Handshake(conn)
+	cmd, dstIP, dstPort, err := socks5Handshake(conn)
 	if err != nil {
 		log.Printf("socks5: handshake: %v", err)
 		return
 	}
+	if cmd == socks5CmdUDPAssociate {
+		handleSOCKS5UDP(conn, client, counters)
+		return
+	}
+	sendSOCKS5Reply(conn, socks5ReplyOK)
+	forwardTCP("socks5", conn, conn, dstIP, dstPort, client, counters, startedAt)
+}
 
+// forwardTCP routes one accepted client connection to dstIP:dstPort through
+// the tunnel (or direct / blocked per the route rules). dstIP may be a
+// hostname, in which case the remote server resolves it. Upload bytes are
+// read from br, which lets callers replay data they already buffered.
+func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort int, client mux.TunnelClient, counters *stats.Counters, startedAt time.Time) {
 	// Determine address family.
 	ip := net.ParseIP(dstIP)
 	family := 2 // AF_INET
@@ -90,10 +103,10 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 
 	switch routeKind {
 	case stats.RouteBlocked:
-		log.Printf("socks5: blocked %s -> %s", srcAddr, dstAddr)
+		log.Printf("%s: blocked %s -> %s", tag, srcAddr, dstAddr)
 		return
 	case stats.RouteDirect:
-		handleDirect(conn, conn, dstAddr, srcAddr, host, counters, startedAt)
+		handleDirect(conn, br, dstAddr, srcAddr, host, counters, startedAt)
 		return
 	}
 
@@ -108,7 +121,7 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 
 	muxConn, err := dispatchClient.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
-		log.Printf("socks5: open channel to %s:%d: %v", dstIP, dstPort, err)
+		log.Printf("%s: open channel to %s:%d: %v", tag, dstIP, dstPort, err)
 		return
 	}
 	defer muxConn.Close()
@@ -131,7 +144,7 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 			if counters != nil {
 				counters.ConnAddTx(connID, int64(wrote))
 			}
-		}}, conn)
+		}}, br)
 		muxConn.CloseWrite()
 		done <- copyResult{direction: "upload", bytes: n, err: normalizeCopyErr(err)}
 	}()
@@ -151,12 +164,13 @@ func handleSOCKS5(conn net.Conn, client mux.TunnelClient, counters *stats.Counte
 	if counters != nil {
 		counters.ConnClose(connID, srcAddr, dstAddr)
 	}
-	logConnSummary("socks5", connID, srcAddr, dstAddr, host, startedAt, first, second)
+	logConnSummary(tag, connID, srcAddr, dstAddr, host, startedAt, first, second)
 }
 
-// socks5Handshake handles the SOCKS5 greeting and request, sends the reply,
-// and returns the requested destination host and port.
-func socks5Handshake(conn net.Conn) (host string, port int, err error) {
+// socks5Handshake handles the SOCKS5 greeting and request and returns the
+// command plus requested destination host and port. On success the caller
+// must send the reply, since its bound address depends on the command.
+func socks5Handshake(conn net.Conn) (cmd byte, host string, port int, err error) {
 	// ── Greeting ─────────────────────────────────────────────────────────────
 	// Client: VER NMETHODS METHODS...
 	hdr := make([]byte, 2)
@@ -186,9 +200,10 @@ func socks5Handshake(conn net.Conn) (host string, port int, err error) {
 		err = fmt.Errorf("bad SOCKS5 version in request: %d", req[0])
 		return
 	}
-	if req[1] != socks5CmdConnect {
+	cmd = req[1]
+	if cmd != socks5CmdConnect && cmd != socks5CmdUDPAssociate {
 		sendSOCKS5Reply(conn, 7) // command not supported
-		err = fmt.Errorf("unsupported SOCKS5 command %d", req[1])
+		err = fmt.Errorf("unsupported SOCKS5 command %d", cmd)
 		return
 	}
 
@@ -234,10 +249,6 @@ func socks5Handshake(conn net.Conn) (host string, port int, err error) {
 		return
 	}
 	port = int(binary.BigEndian.Uint16(portBuf))
-
-	// ── Reply ─────────────────────────────────────────────────────────────────
-	// Server: VER REP RSV ATYP BND.ADDR BND.PORT (use 0.0.0.0:0 as bound addr)
-	sendSOCKS5Reply(conn, socks5ReplyOK)
 	return
 }
 

@@ -180,10 +180,11 @@ func ntohs(v uint16) uint16 { return htons(v) }
 
 // pfMethod implements firewall.Method using macOS pf.
 type pfMethod struct {
-	anchor    string
-	token     string
-	blockUDP  bool
-	blockIPv6 bool
+	anchor       string
+	token        string
+	blockUDP     bool
+	allowRootUDP bool
+	blockIPv6    bool
 
 	// Stored for rule regeneration (e.g. DisableDNS on reconnect).
 	subnets   []SubnetRule
@@ -197,8 +198,9 @@ func (p *pfMethod) SupportedFeatures() []Feature {
 	return []Feature{FeatureDNS, FeaturePortRange, FeatureIPv6, FeatureBlockUDP}
 }
 
-func (p *pfMethod) SetBlockUDP(block bool)   { p.blockUDP = block }
-func (p *pfMethod) SetBlockIPv6(block bool)  { p.blockIPv6 = block }
+func (p *pfMethod) SetBlockUDP(block bool)     { p.blockUDP = block }
+func (p *pfMethod) SetAllowRootUDP(allow bool) { p.allowRootUDP = allow }
+func (p *pfMethod) SetBlockIPv6(block bool)    { p.blockIPv6 = block }
 
 func (p *pfMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) error {
 	p.anchor = fmt.Sprintf("netferry-%d", proxyPort)
@@ -405,6 +407,12 @@ func (p *pfMethod) buildRules(subnets []SubnetRule, excludes []string, proxyPort
 		// so DNS resolution still works.
 		if !(dnsPort > 0 && len(v4DNS) > 0) {
 			fmt.Fprintf(&b, "pass out quick inet proto udp to any port 53\n")
+		}
+		// The LAN SOCKS5 relay (tunnel process, root) must still reach LAN
+		// clients and direct-route destinations.
+		if p.allowRootUDP {
+			fmt.Fprintf(&b, "pass out quick inet proto udp user root keep state\n")
+			fmt.Fprintf(&b, "pass out quick inet6 proto udp user root keep state\n")
 		}
 		fmt.Fprintf(&b, "block out quick inet proto udp all\n")
 

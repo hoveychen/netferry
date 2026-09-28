@@ -55,6 +55,12 @@ type EngineConfig struct {
 	TProxyMark     int
 	TProxyTable    int
 	Verbose        bool
+
+	// LANSocks5 / LANHTTP are a port or host:port for extra SOCKS5 / HTTP
+	// proxy listeners that other LAN devices can use. Empty disables; a bare
+	// port binds 0.0.0.0.
+	LANSocks5 string
+	LANHTTP   string
 }
 
 // Engine runs one tunnel session: SSH+deploy → mux pool → firewall → proxy.
@@ -295,6 +301,7 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	}
 	// Apply UDP blocking (default on; prevents QUIC leaks on pf).
 	firewall.SetUDPBlock(fw, !cfg.NoBlockUDP)
+	firewall.SetRootUDPAllow(fw, cfg.LANSocks5 != "")
 	// Apply IPv6 blocking. Without this the firewall only stops *redirecting*
 	// IPv6 — apps still reach AAAA destinations directly and bypass the tunnel.
 	firewall.SetIPv6Block(fw, cfg.NoIPv6)
@@ -447,6 +454,39 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 		go func() {
 			if err := proxy.ListenUDPTProxy(proxyPort, tunnelClient, e.counters); err != nil {
 				log.Printf("UDP proxy: %v", err)
+			}
+		}()
+	}
+
+	// ── Start LAN proxies (optional) ─────────────────────────────────────────
+	// Let other devices on the LAN route through this tunnel by pointing their
+	// proxy settings here. Transparent capture only sees locally originated
+	// traffic, so forwarded (Internet Sharing) packets never reach the tunnel.
+	// A bind failure is logged, not fatal: the local tunnel still works.
+	for _, lp := range []struct {
+		name, addr string
+		serve      func(net.Listener, mux.TunnelClient, *stats.Counters) error
+	}{
+		{"lan-socks5", cfg.LANSocks5, proxy.ServeSOCKS5},
+		{"lan-http", cfg.LANHTTP, proxy.ServeHTTPProxy},
+	} {
+		if lp.addr == "" {
+			continue
+		}
+		addr := lp.addr
+		if !strings.Contains(addr, ":") {
+			addr = "0.0.0.0:" + addr
+		}
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Printf("%s: listen %s: %v", lp.name, addr, err)
+			continue
+		}
+		defer ln.Close()
+		fmt.Fprintf(os.Stderr, "c : %s: %s\n", lp.name, ln.Addr())
+		go func() {
+			if err := lp.serve(ln, tunnelClient, e.counters); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.Printf("%s: %v", lp.name, err)
 			}
 		}()
 	}

@@ -75,6 +75,21 @@ func SetUDPBlock(m Method, block bool) {
 	}
 }
 
+// RootUDPAllower is optionally implemented by Methods whose UDP block also
+// catches the tunnel's own sockets. Allowing root UDP lets the LAN SOCKS5
+// relay answer LAN clients and send direct-route datagrams; root traffic
+// already bypasses capture for TCP ("user != root"), so this matches it.
+type RootUDPAllower interface {
+	SetAllowRootUDP(allow bool)
+}
+
+// SetRootUDPAllow calls SetAllowRootUDP on the method if it implements RootUDPAllower.
+func SetRootUDPAllow(m Method, allow bool) {
+	if a, ok := m.(RootUDPAllower); ok {
+		a.SetAllowRootUDP(allow)
+	}
+}
+
 // IPv6Blocker is optionally implemented by Methods that support blocking all
 // IPv6 outbound traffic. Used to enforce --no-ipv6: removing IPv6 redirect
 // rules alone is not enough — without an explicit block, applications happily
@@ -158,9 +173,9 @@ func ListMethodFeatures() map[string][]Feature {
 
 // SubnetRule represents a subnet to proxy, optionally restricted to a port range.
 type SubnetRule struct {
-	CIDR    string // e.g. "10.0.0.0/8", "fd00::/64"
-	PortLow int    // 0 = all ports
-	PortHigh int   // 0 = all ports
+	CIDR     string // e.g. "10.0.0.0/8", "fd00::/64"
+	PortLow  int    // 0 = all ports
+	PortHigh int    // 0 = all ports
 }
 
 // IsIPv6 returns true if this rule targets an IPv6 subnet.
