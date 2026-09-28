@@ -94,6 +94,11 @@ func main() {
 			if i < len(os.Args) {
 				fa.rate, _ = strconv.ParseFloat(os.Args[i], 64)
 			}
+		case "--fectun-rate-min":
+			i++
+			if i < len(os.Args) {
+				fa.rateMin, _ = strconv.ParseFloat(os.Args[i], 64)
+			}
 		case "--fectun-target":
 			i++
 			if i < len(os.Args) {

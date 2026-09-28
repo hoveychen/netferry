@@ -26,6 +26,6 @@ var serverBinaries embed.FS
 func init() {
 	deploy.ServerBinaries = serverBinaries
 	sshconn.SetFectunBootstrap(func(c *ssh.Client, fc *sshconn.FectunConfig, restart bool) (string, error) {
-		return deploy.FectunUp(c, version, fc.Port, fc.RateMbps, restart)
+		return deploy.FectunUp(c, version, fc.Port, fc.RateMbps, fc.RateMin(), restart)
 	})
 }

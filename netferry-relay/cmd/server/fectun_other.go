@@ -7,6 +7,7 @@ import "errors"
 type fectunArgs struct {
 	port    int
 	rate    float64
+	rateMin float64
 	target  string
 	restart bool
 }
