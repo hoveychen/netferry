@@ -444,22 +444,31 @@ func (a *App) View() string {
 	}
 	w := a.width
 	// Header: brand, tabs, status.
-	var tabs []string
-	for i, p := range a.pages {
-		label := fmt.Sprintf(" %d %s ", i+1, p.title())
-		if i == a.cur {
-			tabs = append(tabs, sSelected.Render(label))
-		} else {
-			tabs = append(tabs, sMuted.Render(label))
-		}
-	}
-	left := sTitle.Render(" NetFerry ") + strings.Join(tabs, "")
 	right := a.statusPill()
+	renderTabs := func(compact bool) string {
+		var tabs []string
+		for i, p := range a.pages {
+			label := fmt.Sprintf(" %d %s ", i+1, p.title())
+			if compact && i != a.cur {
+				label = fmt.Sprintf(" %d ", i+1)
+			}
+			if i == a.cur {
+				tabs = append(tabs, sSelected.Render(label))
+			} else {
+				tabs = append(tabs, sMuted.Render(label))
+			}
+		}
+		return sTitle.Render(" NetFerry ") + strings.Join(tabs, "")
+	}
+	left := renderTabs(false)
+	if lipgloss.Width(left)+lipgloss.Width(right)+1 > w {
+		left = renderTabs(true)
+	}
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	header := left + strings.Repeat(" ", gap) + right
+	header := truncate(left+strings.Repeat(" ", gap)+right, w)
 	rule := sDim.Render(strings.Repeat("─", w))
 
 	bodyH := a.height - 5
