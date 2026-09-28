@@ -241,9 +241,6 @@ struct ProfileDetailView: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                 }
-                SecureField(L("profile.fectun.key.hint"), text: fectunField(\.key))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
                 // fectun rejects k+m > 255 and needs at least one parity shard.
                 Stepper(L("profile.fectun.k") + ": \(f.k)", value: fectunField(\.k), in: 1...254)
                 Stepper(L("profile.fectun.m") + ": \(f.m)", value: fectunField(\.m), in: 1...max(1, 255 - f.k))

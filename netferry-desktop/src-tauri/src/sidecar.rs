@@ -481,15 +481,6 @@ fn prepare_identity_args(profile: &Profile) -> Result<PreparedIdentity, String> 
         jump_specs.push(spec);
     }
 
-    // fectun pre-shared key → NETFERRY_FECTUN_KEY env var; build_args keeps it
-    // out of the --fectun JSON. (Group mode needs nothing extra: children go
-    // whole into the 0600 group file, like their identity keys.)
-    if let Some(key) = profile.fectun.as_ref().and_then(|f| f.key.as_ref()) {
-        if !key.is_empty() {
-            env_vars.push(("NETFERRY_FECTUN_KEY".to_string(), key.clone()));
-        }
-    }
-
     Ok(PreparedIdentity {
         env_vars,
         jump_json: if jump_specs.is_empty() {
@@ -569,10 +560,8 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
         args.push("--split".to_string());
     }
     if let Some(fc) = profile.fectun.as_ref().filter(|f| f.port > 0) {
-        let mut fc = fc.clone();
-        fc.key = None;
         args.push("--fectun".to_string());
-        args.push(serde_json::to_string(&fc).unwrap());
+        args.push(serde_json::to_string(fc).unwrap());
     }
     if profile.disable_ipv6 {
         args.push("--no-ipv6".to_string());
@@ -1679,12 +1668,11 @@ mod tests {
     }
 
     #[test]
-    fn fectun_key_goes_to_env_not_argv() {
+    fn fectun_passed_as_json_arg() {
         let profile = Profile {
             remote: "u@h".to_string(),
             fectun: Some(crate::models::FectunConfig {
                 port: 55700,
-                key: Some("s3cret".to_string()),
                 k: 20,
                 m: 15,
                 rate_mbps: 25.0,
@@ -1692,14 +1680,10 @@ mod tests {
             ..Profile::default()
         };
         let prepared = prepare_identity_args(&profile).unwrap();
-        assert!(prepared
-            .env_vars
-            .contains(&("NETFERRY_FECTUN_KEY".to_string(), "s3cret".to_string())));
         let args = build_args(&profile, &prepared);
         let i = args.iter().position(|a| a == "--fectun").expect("--fectun passed");
         let v: serde_json::Value = serde_json::from_str(&args[i + 1]).unwrap();
         assert_eq!(v, serde_json::json!({"port": 55700, "k": 20, "m": 15, "rateMbps": 25.0}));
-        assert!(!args.iter().any(|a| a.contains("s3cret")));
 
         let plain = Profile::default();
         assert!(!build_args(&plain, &prepare_identity_args(&plain).unwrap())

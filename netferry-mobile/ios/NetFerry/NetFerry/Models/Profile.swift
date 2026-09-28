@@ -13,7 +13,6 @@ struct JumpHost: Codable, Hashable {
 /// First SSH hop over fectun (FEC over UDP); mirrors the desktop profile's fectun.
 struct FectunConfig: Codable, Hashable {
     var port: Int = 55700
-    var key: String = ""
     var k: Int = 20
     var m: Int = 15
     var rateMbps: Double = 25
@@ -23,7 +22,6 @@ struct FectunConfig: Codable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 55700
-        key = try container.decodeIfPresent(String.self, forKey: .key) ?? ""
         k = try container.decodeIfPresent(Int.self, forKey: .k) ?? 20
         m = try container.decodeIfPresent(Int.self, forKey: .m) ?? 15
         rateMbps = try container.decodeIfPresent(Double.self, forKey: .rateMbps) ?? 25
@@ -170,7 +168,7 @@ struct Profile: Identifiable, Codable, Hashable {
         ]
         if let f = fectun, f.port > 0 {
             config["fectun"] = [
-                "port": f.port, "key": f.key, "k": f.k, "m": f.m, "rateMbps": f.rateMbps,
+                "port": f.port, "k": f.k, "m": f.m, "rateMbps": f.rateMbps,
             ] as [String: Any]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: config),

@@ -14,7 +14,6 @@ export interface JumpHost {
 /** Carry the first SSH hop over fectun (FEC over UDP). 0 in k/m/rateMbps = fectun default. */
 export interface FectunConfig {
   port: number;
-  key?: string;
   k: number;
   m: number;
   rateMbps: number;

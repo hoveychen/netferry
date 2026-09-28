@@ -657,17 +657,6 @@ export function ProfileDetailPage({ profile, isNew, onBack, onSave, onDelete }: 
                       </div>
                       <div>
                         <label className="mb-1.5 block text-sm font-medium text-t2">
-                          {t("profileDetail.fectunKey")}
-                        </label>
-                        <Input
-                          type="password"
-                          value={draft.fectun.key ?? ""}
-                          onChange={(e) => setFectun({ key: e.target.value || undefined })}
-                          placeholder={t("profileDetail.fectunKeyPlaceholder")}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-sm font-medium text-t2">
                           {t("profileDetail.fectunShards")}
                         </label>
                         <div className="flex items-center gap-2">

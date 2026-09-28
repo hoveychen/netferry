@@ -30,15 +30,13 @@ pub struct JumpHost {
     pub identity_key: Option<String>,
 }
 
-/// Carries the first SSH hop over fectun (FEC over UDP). The hop's host must
-/// run a multi-peer fectun server on `port` targeting its sshd. 0 in k/m/rate
-/// means the fectun default.
+/// Carries the first SSH hop over fectun (FEC over UDP). The tunnel brings
+/// the fectun daemon up on the hop's host over SSH and learns its key, so
+/// only the UDP `port` is configured. 0 in k/m/rate means the fectun default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FectunConfig {
     pub port: u16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
     #[serde(default)]
     pub k: u32,
     #[serde(default)]

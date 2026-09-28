@@ -67,13 +67,11 @@
     <string name="profile_split_conn_desc">Separate TCP for control frames</string>
     <string name="profile_fectun">FEC over UDP (fectun)</string>
     <string name="profile_fectun_desc">Carry the SSH connection over fectun; only helps on lossy links</string>
-    <string name="profile_fectun_hint">The server must run a multi-peer fectun server (fectun -mode server -lport &lt;port&gt; -target 127.0.0.1:22, without -peer) and allow inbound UDP on that port. The SSH port in Remote is ignored.</string>
+    <string name="profile_fectun_hint">Nothing to install on the server: NetFerry starts fectun there over SSH and sets up the key itself. Only allow inbound UDP on this port in the server\'s firewall / security group.</string>
     <string name="profile_fectun_port">UDP Port</string>
-    <string name="profile_fectun_key">Pre-shared Key</string>
-    <string name="profile_fectun_key_hint">Same as the server\'s -key (empty = no auth)</string>
     <string name="profile_fectun_k">Data shards (k)</string>
     <string name="profile_fectun_m">Parity shards (m)</string>
-    <string name="profile_fectun_rate">Upload Rate Limit (Mbps)</string>
+    <string name="profile_fectun_rate">Rate Limit, Both Directions (Mbps)</string>
     <string name="profile_fectun_rate_hint">Includes parity. Never exceed the link\'s real capacity, or the SSH session may drop.</string>
     <string name="profile_tcp_balance">TCP Load Balancing</string>
     <string name="profile_tcp_least_loaded">Least Loaded</string>

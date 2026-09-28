@@ -101,7 +101,6 @@ fun ProfileDetailScreen(
     val fectunInit = initialProfile.fectun ?: FectunConfig()
     var fectunEnabled by remember { mutableStateOf(initialProfile.fectun != null) }
     var fectunPort by remember { mutableIntStateOf(fectunInit.port) }
-    var fectunKey by remember { mutableStateOf(fectunInit.key) }
     var fectunK by remember { mutableIntStateOf(fectunInit.k) }
     var fectunM by remember { mutableIntStateOf(fectunInit.m) }
     var fectunRate by remember { mutableStateOf(fectunInit.rateMbps.toString()) }
@@ -549,17 +548,6 @@ fun ProfileDetailScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = fectunKey,
-                                onValueChange = { fectunKey = it },
-                                label = { Text(stringResource(R.string.profile_fectun_key)) },
-                                placeholder = { Text(stringResource(R.string.profile_fectun_key_hint)) },
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 OutlinedTextField(
                                     value = fectunK.toString(),
@@ -710,7 +698,6 @@ fun ProfileDetailScreen(
                                 val k = fectunK.coerceIn(1, 128)
                                 FectunConfig(
                                     port = fectunPort.coerceIn(1, 65535),
-                                    key = fectunKey,
                                     k = k,
                                     m = fectunM.coerceIn(1, 255 - k),
                                     rateMbps = fectunRate.toDoubleOrNull()?.takeIf { it > 0 } ?: 25.0
