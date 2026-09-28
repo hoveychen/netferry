@@ -4,6 +4,8 @@ import (
 	"embed"
 
 	"github.com/hoveychen/netferry/relay/internal/deploy"
+	"github.com/hoveychen/netferry/relay/internal/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 // version is set at build time via ldflags:
@@ -23,4 +25,7 @@ var serverBinaries embed.FS
 
 func init() {
 	deploy.ServerBinaries = serverBinaries
+	sshconn.SetFectunBootstrap(func(c *ssh.Client, fc *sshconn.FectunConfig, restart bool) (string, error) {
+		return deploy.FectunUp(c, version, fc.Port, fc.RateMbps, restart)
+	})
 }

@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"net"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,6 +107,36 @@ func resetFectunClients(t *testing.T) {
 	})
 }
 
+// fakeBootstrap stands in for `server --fectun-up`: it hands out whatever
+// key() returns and counts the calls. It also forgets cached keys.
+func fakeBootstrap(t *testing.T, key func(restart bool) string) *atomic.Int32 {
+	t.Helper()
+	var n atomic.Int32
+	SetFectunBootstrap(func(c *ssh.Client, fc *FectunConfig, restart bool) (string, error) {
+		n.Add(1)
+		return key(restart), nil
+	})
+	reset := func() {
+		fectunPeers.Lock()
+		fectunPeers.m = make(map[string]*fectunPeer)
+		fectunPeers.Unlock()
+	}
+	reset()
+	t.Cleanup(func() { SetFectunBootstrap(nil); reset() })
+	return &n
+}
+
+func constKey(k string) func(bool) string { return func(bool) string { return k } }
+
+// hostFor points a HostConfig at the in-process sshd, which both the TCP
+// bootstrap and the fectun server's target use.
+func hostFor(t *testing.T, sshd string, fc *FectunConfig) *HostConfig {
+	t.Helper()
+	host, p, _ := net.SplitHostPort(sshd)
+	port, _ := strconv.Atoi(p)
+	return &HostConfig{User: "u", HostName: host, Port: port, Fectun: fc}
+}
+
 // Direct dial with Fectun set: SSH must complete over the fectun stream,
 // firstHopIP must be the UDP peer, and a second Dial must reuse the same
 // shared client instead of opening a second UDP session.
@@ -114,9 +146,9 @@ func TestDialOverFectun(t *testing.T) {
 	pemKey, pub := testIdentity(t)
 	sshd := startSSHServer(t, pub)
 	port := startFectunServer(t, sshd, "k3y")
+	boots := fakeBootstrap(t, constKey("k3y"))
 
-	hc := &HostConfig{User: "u", HostName: "127.0.0.1", Port: 1, // TCP port is ignored under fectun
-		Fectun: &FectunConfig{Port: port, Key: "k3y", RateMbps: 100}}
+	hc := hostFor(t, sshd, &FectunConfig{Port: port, RateMbps: 100})
 	ac := AuthConfig{IdentityPEM: pemKey}
 
 	c1, ip, err := Dial(hc, ac)
@@ -146,6 +178,35 @@ func TestDialOverFectun(t *testing.T) {
 	if n != 1 || refs != 2 {
 		t.Fatalf("shared clients=%d refs=%d, want 1 client with 2 refs", n, refs)
 	}
+	if b := boots.Load(); b != 1 {
+		t.Fatalf("bootstraps = %d, want 1 (second dial must reuse the cached key)", b)
+	}
+}
+
+// A cached key that the daemon no longer accepts (it was restarted with a
+// new key file, or the host was rebuilt) must trigger one re-bootstrap.
+func TestDialOverFectunStaleKeyRebootstraps(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	resetFectunClients(t)
+	old := fectunHandshakeTimeout
+	fectunHandshakeTimeout = time.Second
+	t.Cleanup(func() { fectunHandshakeTimeout = old })
+
+	pemKey, pub := testIdentity(t)
+	sshd := startSSHServer(t, pub)
+	port := startFectunServer(t, sshd, "fresh")
+	boots := fakeBootstrap(t, constKey("fresh"))
+	hc := hostFor(t, sshd, &FectunConfig{Port: port})
+	fectunPeerFor(net.JoinHostPort(hc.HostName, strconv.Itoa(port))).key = "stale"
+
+	c, _, err := Dial(hc, AuthConfig{IdentityPEM: pemKey})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	c.Close()
+	if b := boots.Load(); b != 1 {
+		t.Fatalf("bootstraps = %d, want 1", b)
+	}
 }
 
 // Once every stream on a shared client is closed, the client must be torn
@@ -159,8 +220,10 @@ func TestFectunClientClosedWhenIdle(t *testing.T) {
 	t.Cleanup(func() { fectunIdleClose = old })
 
 	pemKey, pub := testIdentity(t)
-	port := startFectunServer(t, startSSHServer(t, pub), "")
-	hc := &HostConfig{User: "u", HostName: "127.0.0.1", Port: 22, Fectun: &FectunConfig{Port: port}}
+	sshd := startSSHServer(t, pub)
+	port := startFectunServer(t, sshd, "k")
+	fakeBootstrap(t, constKey("k"))
+	hc := hostFor(t, sshd, &FectunConfig{Port: port})
 	c, _, err := Dial(hc, AuthConfig{IdentityPEM: pemKey})
 	if err != nil {
 		t.Fatal(err)
@@ -182,15 +245,27 @@ func TestFectunClientClosedWhenIdle(t *testing.T) {
 	}
 }
 
-// A wrong key never gets a session on the server: the SSH handshake has no
-// TCP connect step to fail, so it must be bounded by the handshake timeout
-// rather than hang.
-func TestDialOverFectunWrongKeyFails(t *testing.T) {
+// When the UDP path never works (port blocked, foreign process on it) the
+// dial must give up after bootstrap + restart, each bounded by the
+// handshake timeout since there is no TCP connect step to fail, and say
+// which UDP port to check.
+func TestDialOverFectunUnreachableFails(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	resetFectunClients(t)
+	old := fectunHandshakeTimeout
+	fectunHandshakeTimeout = time.Second
+	t.Cleanup(func() { fectunHandshakeTimeout = old })
 	pemKey, pub := testIdentity(t)
-	port := startFectunServer(t, startSSHServer(t, pub), "right")
-	hc := &HostConfig{User: "u", HostName: "127.0.0.1", Port: 22, Fectun: &FectunConfig{Port: port, Key: "wrong"}}
+	sshd := startSSHServer(t, pub)
+	port := startFectunServer(t, sshd, "right")
+	var restarts atomic.Int32
+	boots := fakeBootstrap(t, func(restart bool) string {
+		if restart {
+			restarts.Add(1)
+		}
+		return "wrong"
+	})
+	hc := hostFor(t, sshd, &FectunConfig{Port: port})
 
 	done := make(chan error, 1)
 	go func() {
@@ -202,10 +277,14 @@ func TestDialOverFectunWrongKeyFails(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "handshake") {
-			t.Fatalf("want handshake error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "handshake") ||
+			!strings.Contains(err.Error(), "UDP port "+strconv.Itoa(port)) {
+			t.Fatalf("want handshake error naming the UDP port, got %v", err)
 		}
-	case <-time.After(fectunHandshakeTimeout + 10*time.Second):
-		t.Fatal("dial with wrong key hung past the handshake timeout")
+		if boots.Load() != 2 || restarts.Load() != 1 {
+			t.Fatalf("bootstraps=%d restarts=%d, want 2 and 1", boots.Load(), restarts.Load())
+		}
+	case <-time.After(2*fectunHandshakeTimeout + 10*time.Second):
+		t.Fatal("dial hung past the handshake timeouts")
 	}
 }

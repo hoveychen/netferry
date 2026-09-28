@@ -35,17 +35,28 @@ func dialTCP(addr string) (net.Conn, error) {
 	return net.DialTimeout("tcp", addr, dialTimeout)
 }
 
-// dialFirstHop opens the raw connection this process makes to the first
-// hop: fectun when fc is enabled, TCP otherwise.
-func dialFirstHop(addr string, fc *FectunConfig) (net.Conn, error) {
-	if !fc.Enabled() {
-		return dialTCP(addr)
+// firstHopClient opens the SSH client for the first hop, the only one this
+// process reaches directly: over fectun when fc is enabled, TCP otherwise.
+// It also returns the peer IP of the raw connection (see Dial).
+func firstHopClient(addr string, cfg *ssh.ClientConfig, fc *FectunConfig) (*ssh.Client, net.IP, error) {
+	if fc.Enabled() {
+		return fectunFirstHop(addr, cfg, fc)
 	}
-	host, _, err := net.SplitHostPort(addr)
+	return tcpClient(addr, cfg)
+}
+
+func tcpClient(addr string, cfg *ssh.ClientConfig) (*ssh.Client, net.IP, error) {
+	conn, err := dialTCP(addr)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
-	return dialFectun(host, fc)
+	setTCPKeepAlive(conn)
+	ip := remoteIPFromConn(conn)
+	client, err := sshClientFromConn(conn, addr, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, ip, nil
 }
 
 // JumpHostSpec describes an explicit jump host, independent of ~/.ssh/config.
@@ -105,17 +116,7 @@ func Dial(hc *HostConfig, ac AuthConfig, jumpHosts ...JumpHostSpec) (*ssh.Client
 	}
 
 	// Direct connection.
-	conn, err := dialFirstHop(addr, hc.Fectun)
-	if err != nil {
-		return nil, nil, fmt.Errorf("ssh dial %s: %w", addr, err)
-	}
-	setTCPKeepAlive(conn)
-	firstHopIP := remoteIPFromConn(conn)
-	client, err := sshClientFromConn(conn, addr, clientCfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	return client, firstHopIP, nil
+	return firstHopClient(addr, clientCfg, hc.Fectun)
 }
 
 // remoteIPFromConn extracts the peer IP from a freshly-dialed TCP connection,
@@ -161,7 +162,6 @@ func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, 
 		return nil, nil, fmt.Errorf("empty ProxyJump")
 	}
 
-	var current net.Conn
 	var currentClient *ssh.Client
 	var firstHopIP net.IP
 
@@ -172,38 +172,32 @@ func dialViaProxyJump(jumpSpec, targetAddr string, targetCfg *ssh.ClientConfig, 
 		}
 		jumpAddr := net.JoinHostPort(jumpHC.HostName, strconv.Itoa(jumpHC.Port))
 
-		var conn net.Conn
-		if currentClient == nil {
-			conn, err = dialFirstHop(jumpAddr, fc)
-			if err != nil {
-				return nil, nil, fmt.Errorf("ProxyJump dial %s: %w", jumpAddr, err)
-			}
-			setTCPKeepAlive(conn)
-			firstHopIP = remoteIPFromConn(conn)
-		} else {
-			// Dial next hop through the previous SSH client.
-			conn, err = currentClient.Dial("tcp", jumpAddr)
-			if err != nil {
-				return nil, nil, fmt.Errorf("ProxyJump[%d] dial %s: %w", i, jumpAddr, err)
-			}
-		}
-
 		jumpAC := ac
 		if jumpHC.IdentityFile != "" {
 			jumpAC.IdentityFile = jumpHC.IdentityFile
 		}
 		jumpCfg, err := BuildSSHConfig(jumpHC.User, jumpAC)
 		if err != nil {
-			conn.Close()
 			return nil, nil, err
+		}
+
+		if currentClient == nil {
+			currentClient, firstHopIP, err = firstHopClient(jumpAddr, jumpCfg, fc)
+			if err != nil {
+				return nil, nil, fmt.Errorf("ProxyJump %s: %w", jumpAddr, err)
+			}
+			continue
+		}
+		// Dial next hop through the previous SSH client.
+		conn, err := currentClient.Dial("tcp", jumpAddr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ProxyJump[%d] dial %s: %w", i, jumpAddr, err)
 		}
 		currentClient, err = sshClientFromConn(conn, jumpAddr, jumpCfg)
 		if err != nil {
 			return nil, nil, err
 		}
-		current = conn
 	}
-	_ = current
 
 	// Final hop: dial target through last jump client.
 	finalConn, err := currentClient.Dial("tcp", targetAddr)
@@ -244,23 +238,6 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 
 		jumpAddr := net.JoinHostPort(host, strconv.Itoa(port))
 
-		var conn net.Conn
-		var err error
-		if currentClient == nil {
-			conn, err = dialFirstHop(jumpAddr, fc)
-			if err != nil {
-				return nil, nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
-			}
-			setTCPKeepAlive(conn)
-			firstHopIP = remoteIPFromConn(conn)
-		} else {
-			conn, err = currentClient.Dial("tcp", jumpAddr)
-			if err != nil {
-				return nil, nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
-			}
-		}
-		log.Printf("jump[%d]: connected to %s", i, jumpAddr)
-
 		jumpAC := ac
 		if jh.IdentityPEM != "" {
 			jumpAC.IdentityPEM = jh.IdentityPEM
@@ -269,12 +246,24 @@ func dialViaExplicitJumps(jumps []JumpHostSpec, targetAddr string, targetCfg *ss
 		}
 		jumpCfg, err := BuildSSHConfig(user, jumpAC)
 		if err != nil {
-			conn.Close()
 			return nil, nil, fmt.Errorf("jump[%d] auth: %w", i, err)
 		}
-		currentClient, err = sshClientFromConn(conn, jumpAddr, jumpCfg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("jump[%d] handshake: %w", i, err)
+
+		if currentClient == nil {
+			currentClient, firstHopIP, err = firstHopClient(jumpAddr, jumpCfg, fc)
+			if err != nil {
+				return nil, nil, fmt.Errorf("jump[%d] %s: %w", i, jumpAddr, err)
+			}
+		} else {
+			conn, err := currentClient.Dial("tcp", jumpAddr)
+			if err != nil {
+				return nil, nil, fmt.Errorf("jump[%d] dial %s: %w", i, jumpAddr, err)
+			}
+			log.Printf("jump[%d]: connected to %s", i, jumpAddr)
+			currentClient, err = sshClientFromConn(conn, jumpAddr, jumpCfg)
+			if err != nil {
+				return nil, nil, fmt.Errorf("jump[%d] handshake: %w", i, err)
+			}
 		}
 		log.Printf("jump[%d]: SSH handshake succeeded", i)
 	}
