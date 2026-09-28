@@ -75,9 +75,30 @@ func main() {
 	verbose := false
 	sessionID := ""
 	role := "main"
+	fectunMode := ""
+	fa := fectunArgs{target: fectunTarget()}
 
 	for i := 1; i < len(os.Args); i++ {
 		switch os.Args[i] {
+		case "--fectun-up", "--fectun-serve":
+			fectunMode = os.Args[i]
+		case "--fectun-restart":
+			fa.restart = true
+		case "--fectun-port":
+			i++
+			if i < len(os.Args) {
+				fa.port, _ = strconv.Atoi(os.Args[i])
+			}
+		case "--fectun-rate":
+			i++
+			if i < len(os.Args) {
+				fa.rate, _ = strconv.ParseFloat(os.Args[i], 64)
+			}
+		case "--fectun-target":
+			i++
+			if i < len(os.Args) {
+				fa.target = os.Args[i]
+			}
 		case "--auto-nets":
 			autoNets = true
 		case "--verbose", "-v":
@@ -109,6 +130,18 @@ func main() {
 		log.SetPrefix(" s: ")
 	} else {
 		log.SetOutput(io.Discard)
+	}
+
+	if fectunMode != "" {
+		run := runFectunUp
+		if fectunMode == "--fectun-serve" {
+			run = runFectunServe
+		}
+		if err := run(fa); err != nil {
+			fmt.Fprintf(os.Stderr, "s: %s: %v\n", fectunMode, err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Handle ctrl relay mode: no smux session, just relay bytes to the main
