@@ -196,6 +196,13 @@ type Counters struct {
 
 	connEventCh chan ConnEvent // connection open/close notifications for SSE
 
+	// closeCh stops the broadcaster; ln is the stats HTTP listener. Both are
+	// released by Close, which in-process hosts (the TUI) call between
+	// reconnects so each fresh engine does not leak a server.
+	closeOnce sync.Once
+	closeCh   chan struct{}
+	ln        net.Listener
+
 	mu          sync.Mutex
 	sseClients  map[chan string]struct{}
 	conns       map[uint64]*connStats
@@ -295,6 +302,7 @@ func NewCounters() *Counters {
 	now := time.Now().UnixNano()
 	c := &Counters{
 		connEventCh: make(chan ConnEvent, 512),
+		closeCh:     make(chan struct{}),
 		sseClients:  make(map[chan string]struct{}),
 		conns:       make(map[uint64]*connStats),
 		dests:       make(map[string]*destStats),
@@ -787,14 +795,72 @@ func (c *Counters) ListenAndServe(preferredPort int) (int, error) {
 	mux.HandleFunc("/routes", c.handleRoutes)
 	mux.HandleFunc("/group", c.handleGroup)
 
+	c.mu.Lock()
+	c.ln = ln
+	c.mu.Unlock()
 	go c.broadcaster()
 	go func() {
-		if err := http.Serve(ln, mux); err != nil {
+		if err := http.Serve(ln, mux); err != nil && !c.closed() {
 			log.Printf("stats: server stopped: %v", err)
 		}
 	}()
 
 	return port, nil
+}
+
+// Close stops the stats HTTP server and the SSE broadcaster. The CLI never
+// calls it (the process exits instead); in-process hosts that create one
+// engine per reconnect do.
+func (c *Counters) Close() {
+	c.closeOnce.Do(func() {
+		close(c.closeCh)
+		c.mu.Lock()
+		ln := c.ln
+		c.mu.Unlock()
+		if ln != nil {
+			ln.Close()
+		}
+	})
+}
+
+func (c *Counters) closed() bool {
+	select {
+	case <-c.closeCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// Subscribe registers an in-process listener for exactly the messages the
+// /events SSE stream carries ("event: <name>\ndata: <json>\n\n"), starting with
+// the same connections/destinations snapshots a new SSE client receives.
+// Slow readers drop frames, like SSE clients. Call cancel to unregister.
+func (c *Counters) Subscribe() (<-chan string, func()) {
+	ch := make(chan string, 256)
+	c.mu.Lock()
+	c.sseClients[ch] = struct{}{}
+	snapshot := c.buildConnSnapshotLocked()
+	destSnap := c.buildDestSnapshotLocked(nil, nil, 0)
+	c.mu.Unlock()
+	if len(snapshot) > 0 {
+		if data, err := json.Marshal(snapshot); err == nil {
+			ch <- fmt.Sprintf("event: connections_snapshot\ndata: %s\n\n", data)
+		}
+	}
+	if len(destSnap) > 0 {
+		if data, err := json.Marshal(destSnap); err == nil {
+			ch <- fmt.Sprintf("event: destinations_snapshot\ndata: %s\n\n", data)
+		}
+	}
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			c.mu.Lock()
+			delete(c.sseClients, ch)
+			c.mu.Unlock()
+		})
+	}
 }
 
 const connSnapshotInterval = 3 * time.Second
@@ -827,6 +893,8 @@ func (c *Counters) broadcaster() {
 
 	for {
 		select {
+		case <-c.closeCh:
+			return
 		case <-ticker.C:
 			now := time.Now()
 			curRx := c.RxTotal.Load()

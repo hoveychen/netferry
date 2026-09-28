@@ -79,6 +79,13 @@ type Engine struct {
 	readyCh   chan struct{}
 	readyOnce sync.Once
 	readyOK   atomic.Bool
+
+	// keptFirewall undoes the firewall rules Run deliberately left installed
+	// when it returned ErrExitForReconnect. The CLI never needs it (its caller
+	// re-execs); in-process hosts call ReleaseFirewall when they give up on
+	// reconnecting.
+	keptMu       sync.Mutex
+	keptFirewall func()
 }
 
 // NewEngine creates an engine and starts the stats HTTP/SSE server so the
@@ -126,6 +133,21 @@ func (e *Engine) ReadyCh() <-chan struct{} { return e.readyCh }
 // ReadyOK reports whether the engine reached the operational milestone. Only
 // meaningful after ReadyCh() has closed.
 func (e *Engine) ReadyOK() bool { return e.readyOK.Load() }
+
+// Close stops the engine's stats server. Call after Run has returned.
+func (e *Engine) Close() { e.counters.Close() }
+
+// ReleaseFirewall removes firewall rules that Run kept in place for a
+// reconnect (see ErrExitForReconnect). No-op if Run restored them itself.
+func (e *Engine) ReleaseFirewall() {
+	e.keptMu.Lock()
+	f := e.keptFirewall
+	e.keptFirewall = nil
+	e.keptMu.Unlock()
+	if f != nil {
+		f()
+	}
+}
 
 // signalReady marks the engine operational and unblocks ReadyCh() listeners.
 // Safe to call multiple times; only the first call has effect.
@@ -535,6 +557,14 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 			log.Printf("keeping DNS redirect during reconnect (all SSH endpoints are IP literals)")
 		}
 		skipFWRestore = true
+		e.keptMu.Lock()
+		e.keptFirewall = func() {
+			fw.Restore()
+			if lockdownIPv6 {
+				firewall.RestoreSystemIPv6()
+			}
+		}
+		e.keptMu.Unlock()
 		fmt.Fprintln(os.Stderr, "c : exit-for-reconnect")
 	}
 
