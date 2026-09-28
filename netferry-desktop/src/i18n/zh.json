@@ -180,6 +180,15 @@
     "roundRobin": "轮询",
     "splitConn": "分离控制/数据连接",
     "splitConnDesc": "（独立 TCP 用于流控帧，减少队头阻塞）",
+    "fectun": "FEC over UDP（fectun）",
+    "fectunDesc": "（SSH 首跳走 fectun，仅在丢包严重的链路上有帮助）",
+    "fectunHint": "服务端需运行多对端模式的 fectun server（fectun -mode server -lport <端口> -target 127.0.0.1:22，不带 -peer），且防火墙/安全组放行该 UDP 端口入站。这一跳会忽略远程地址里的 SSH 端口。",
+    "fectunPort": "UDP 端口",
+    "fectunKey": "预共享密钥",
+    "fectunKeyPlaceholder": "与服务端 -key 一致（留空 = 不鉴权）",
+    "fectunShards": "数据 / 校验分片（k / m）",
+    "fectunRate": "上行限速（Mbps）",
+    "fectunRateHint": "含校验分片（k/m = 20/15 时约 43% 用于校验）。切勿超过链路实际容量——超出会造成 FEC 补不回的丢包，甚至断开 SSH。",
     "extraSshOptions": "额外 SSH 选项",
     "extraSshPlaceholder": "-J jump@host",
     "notes": "备注",
@@ -190,7 +199,10 @@
       "subnetRequired": "至少需要一个包含子网。",
       "invalidIncludeSubnet": "无效的包含子网：{{subnet}}",
       "invalidExcludeSubnet": "无效的排除子网：{{subnet}}",
-      "dnsTargetRequired": "DNS 模式为自定义时，必须指定 DNS 目标。"
+      "dnsTargetRequired": "DNS 模式为自定义时，必须指定 DNS 目标。",
+      "fectunPort": "fectun UDP 端口需在 1–65535 之间。",
+      "fectunShards": "fectun 分片需满足 k ≥ 1、m ≥ 1 且 k + m ≤ 255。",
+      "fectunRate": "fectun 限速需大于 0。"
     }
   },
   "connection": {

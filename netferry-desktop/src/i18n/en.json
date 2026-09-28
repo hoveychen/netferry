@@ -180,6 +180,15 @@
     "roundRobin": "Round-Robin",
     "splitConn": "Split Control/Data Connection",
     "splitConnDesc": "(separate TCP for flow-control frames, reduces HOL blocking)",
+    "fectun": "FEC over UDP (fectun)",
+    "fectunDesc": "(carry the first SSH hop over fectun; only helps on lossy links)",
+    "fectunHint": "The server must run a multi-peer fectun server (fectun -mode server -lport <port> -target 127.0.0.1:22, without -peer) and its firewall / security group must allow inbound UDP on that port. The SSH port in Remote is ignored for this hop.",
+    "fectunPort": "UDP Port",
+    "fectunKey": "Pre-shared Key",
+    "fectunKeyPlaceholder": "same as the server's -key (empty = no auth)",
+    "fectunShards": "Data / Parity Shards (k / m)",
+    "fectunRate": "Upload Rate Limit (Mbps)",
+    "fectunRateHint": "Includes parity (k/m = 20/15 spends ~43% on parity). Never set it above the link's real capacity — overshooting causes loss that FEC cannot repair and can drop the SSH session.",
     "extraSshOptions": "Extra SSH Options",
     "extraSshPlaceholder": "-J jump@host",
     "notes": "Notes",
@@ -190,7 +199,10 @@
       "subnetRequired": "At least one included subnet is required.",
       "invalidIncludeSubnet": "Invalid include subnet: {{subnet}}",
       "invalidExcludeSubnet": "Invalid exclude subnet: {{subnet}}",
-      "dnsTargetRequired": "DNS target is required when DNS mode is specific."
+      "dnsTargetRequired": "DNS target is required when DNS mode is specific.",
+      "fectunPort": "fectun UDP port must be between 1 and 65535.",
+      "fectunShards": "fectun shards need k ≥ 1, m ≥ 1 and k + m ≤ 255.",
+      "fectunRate": "fectun rate limit must be greater than 0."
     }
   },
   "connection": {
