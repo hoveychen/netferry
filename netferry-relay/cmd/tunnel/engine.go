@@ -55,6 +55,10 @@ type EngineConfig struct {
 	TProxyMark     int
 	TProxyTable    int
 	Verbose        bool
+
+	// LANSocks5 is a port or host:port for an extra SOCKS5 listener that other
+	// LAN devices can use. Empty disables it; a bare port binds 0.0.0.0.
+	LANSocks5 string
 }
 
 // Engine runs one tunnel session: SSH+deploy → mux pool → firewall → proxy.
@@ -449,6 +453,29 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 				log.Printf("UDP proxy: %v", err)
 			}
 		}()
+	}
+
+	// ── Start LAN SOCKS5 (optional) ──────────────────────────────────────────
+	// Lets other devices on the LAN route through this tunnel by pointing their
+	// proxy settings here. Transparent capture only sees locally originated
+	// traffic, so forwarded (Internet Sharing) packets never reach the tunnel.
+	// A bind failure is logged, not fatal: the local tunnel still works.
+	if cfg.LANSocks5 != "" {
+		addr := cfg.LANSocks5
+		if !strings.Contains(addr, ":") {
+			addr = "0.0.0.0:" + addr
+		}
+		if ln, err := net.Listen("tcp", addr); err != nil {
+			log.Printf("LAN SOCKS5: listen %s: %v", addr, err)
+		} else {
+			defer ln.Close()
+			fmt.Fprintf(os.Stderr, "c : lan-socks5: %s\n", ln.Addr())
+			go func() {
+				if err := proxy.ServeSOCKS5(ln, tunnelClient, e.counters); err != nil && !errors.Is(err, net.ErrClosed) {
+					log.Printf("LAN SOCKS5: %v", err)
+				}
+			}()
+		}
 	}
 
 	// ── Start TCP proxy (transparent on Unix, SOCKS5 on Windows) ─────────────
