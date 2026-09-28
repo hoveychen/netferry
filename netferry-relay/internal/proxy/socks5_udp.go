@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/sockmark"
 	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
@@ -233,7 +234,7 @@ func (r *udpRelay) directConn() (*net.UDPConn, error) {
 	if r.direct != nil {
 		return r.direct, nil
 	}
-	d, err := net.ListenUDP("udp", nil)
+	d, err := sockmark.ListenUDP()
 	if err != nil {
 		return nil, err
 	}

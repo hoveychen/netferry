@@ -11,7 +11,12 @@ import (
 	"strconv"
 	"syscall"
 	"unsafe"
+
+	"github.com/hoveychen/netferry/relay/internal/sockmark"
 )
+
+// bypassMarkStr is sockmark.Bypass formatted for iptables' `-m mark --mark`.
+var bypassMarkStr = fmt.Sprintf("0x%x", sockmark.Bypass)
 
 func newDefault() Method {
 	if _, err := exec.LookPath("nft"); err == nil {
@@ -215,6 +220,17 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	exec.Command("nft", "delete", "table", "inet", "netferry").Run()
 	exec.Command("nft", "delete", "table", "ip", "netferry").Run()
 
+	cmd := exec.Command("nft", "-f", "/dev/stdin")
+	cmd.Stdin = bytes.NewReader(n.buildNftRules(subnets, excludes, proxyPort, dnsPort, dnsServers))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft: %w\n%s", err, out)
+	}
+
+	return nil
+}
+
+func (n *nftMethod) buildNftRules(subnets []SubnetRule, excludes []string, proxyPort, dnsPort int, dnsServers []string) []byte {
 	v4Subnets, v6Subnets := SplitByFamily(subnets)
 	v4Excludes, v6Excludes := SplitExcludesByFamily(excludes)
 	v4DNS, v6DNS := SplitDNSByFamily(dnsServers)
@@ -276,9 +292,10 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	fmt.Fprintf(&b, "  chain output {\n    type nat hook output priority -100;\n")
 	// Local traffic protection first.
 	fmt.Fprintf(&b, "    fib daddr type local return\n")
-	// Skip connections from root (uid 0) so the tunnel's own "direct" dials
-	// are not redirected back to the proxy, which would create an infinite loop.
-	fmt.Fprintf(&b, "    meta skuid 0 return\n")
+	// Skip the tunnel's own "direct" dials (tagged with SO_MARK) so they are
+	// not redirected back to the proxy, which would create an infinite loop.
+	// Matching the mark rather than uid 0 keeps a root user's traffic proxied.
+	fmt.Fprintf(&b, "    meta mark 0x%x return\n", sockmark.Bypass)
 	// Excludes.
 	for _, excl := range v4Excludes {
 		fmt.Fprintf(&b, "    ip daddr %s return\n", excl)
@@ -332,14 +349,7 @@ func (n *nftMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 
 	fmt.Fprintf(&b, "}\n")
 
-	cmd := exec.Command("nft", "-f", "/dev/stdin")
-	cmd.Stdin = &b
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nft: %w\n%s", err, out)
-	}
-
-	return nil
+	return b.Bytes()
 }
 
 func (n *nftMethod) Restore() error {
@@ -436,9 +446,9 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 	// Local traffic protection.
 	ipt("-t", "nat", "-A", "NETFERRY", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
 
-	// Skip connections from root so the tunnel's own "direct" dials are not
-	// redirected back to the proxy (prevents infinite loop).
-	ipt("-t", "nat", "-A", "NETFERRY", "-m", "owner", "--uid-owner", "0", "-j", "RETURN")
+	// Skip the tunnel's own "direct" dials (tagged with SO_MARK) so they are
+	// not redirected back to the proxy (prevents infinite loop).
+	ipt("-t", "nat", "-A", "NETFERRY", "-m", "mark", "--mark", bypassMarkStr, "-j", "RETURN")
 
 	// Exclude specified subnets.
 	for _, excl := range v4Excludes {
@@ -479,8 +489,8 @@ func (p *iptMethod) Setup(subnets []SubnetRule, excludes []string, proxyPort, dn
 		// Local traffic protection.
 		ip6t("-t", "nat", "-A", "NETFERRY6", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
 
-		// Skip connections from root (prevents infinite loop for "direct" dials).
-		ip6t("-t", "nat", "-A", "NETFERRY6", "-m", "owner", "--uid-owner", "0", "-j", "RETURN")
+		// Skip the tunnel's own marked "direct" dials (prevents infinite loop).
+		ip6t("-t", "nat", "-A", "NETFERRY6", "-m", "mark", "--mark", bypassMarkStr, "-j", "RETURN")
 
 		// Exclude specified subnets.
 		for _, excl := range v6Excludes {

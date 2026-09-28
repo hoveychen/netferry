@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoveychen/netferry/relay/internal/mux"
+	"github.com/hoveychen/netferry/relay/internal/sockmark"
 	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
@@ -232,7 +233,7 @@ func handleDirect(clientConn net.Conn, br io.Reader, dstAddr, srcAddr, host stri
 
 	log.Printf("proxy: direct %s -> %s (%s)", srcAddr, dstAddr, host)
 
-	remote, err := net.DialTimeout("tcp", dstAddr, 10*time.Second)
+	remote, err := sockmark.DialTimeout("tcp", dstAddr, 10*time.Second)
 	if err != nil {
 		log.Printf("proxy: direct dial %s: %v", dstAddr, err)
 		return
