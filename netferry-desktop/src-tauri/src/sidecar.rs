@@ -755,8 +755,9 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
     if let Ok(settings) = crate::settings::load_settings(app) {
         if let Some(group_id) = settings.active_group_id.as_deref() {
             if let Ok(Some(group)) = crate::groups::load_group(app, group_id) {
-                if !group.rules.is_empty() {
-                    if let Ok(body) = serde_json::to_string(&group.rules) {
+                let routes = compile_routes(&group.rule_groups, &group.rules);
+                if !routes.is_empty() {
+                    if let Ok(body) = serde_json::to_string(&routes) {
                         if let Err(e) = post("/routes", &body) {
                             log::warn!("push routes to sidecar: {}", e);
                         }
@@ -782,6 +783,42 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
             }
         }
     }
+}
+
+/// Expands rule groups into the flat host→route map the tunnel understands and
+/// lays the per-host overrides on top, mirroring `compileRoutes` in
+/// src/lib/ruleGroups.ts. Both editors persist already-normalized scopes, so
+/// only the cheap part of normalization is repeated here (no public-suffix
+/// check); the frontend re-pushes its own compilation once SSE connects.
+fn compile_routes(
+    groups: &[crate::models::RuleGroup],
+    overrides: &HashMap<String, crate::models::RouteMode>,
+) -> HashMap<String, crate::models::RouteMode> {
+    let mut compiled = HashMap::new();
+    for group in groups {
+        for input in &group.domains {
+            let raw = input.trim().to_lowercase();
+            let raw = raw.strip_suffix('.').unwrap_or(&raw);
+            let (exact, host) = match raw.strip_prefix('=') {
+                Some(h) => (true, h),
+                None => (false, raw),
+            };
+            if host.is_empty()
+                || host.split('.').any(|l| l.is_empty())
+                || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            {
+                continue;
+            }
+            compiled.insert(host.to_string(), group.route.clone());
+            if !exact {
+                compiled.insert(format!("*.{host}"), group.route.clone());
+            }
+        }
+    }
+    for (host, route) in overrides {
+        compiled.insert(host.clone(), route.clone());
+    }
+    compiled
 }
 
 /// Returns true if the line looks like an error or warning from the tunnel/SSH.
@@ -1665,6 +1702,38 @@ mod tests {
         for line in keep {
             assert!(!is_high_frequency_tunnel_line(line), "should be kept: {line}");
         }
+    }
+
+    #[test]
+    fn compile_routes_expands_groups_under_overrides() {
+        use crate::models::{RouteMode, RuleGroup};
+        let route = |kind: &str| RouteMode { kind: kind.to_string(), profile_id: None };
+        let group = |domains: &[&str], kind: &str| RuleGroup {
+            id: kind.to_string(),
+            name: kind.to_string(),
+            domains: domains.iter().map(|d| d.to_string()).collect(),
+            route: route(kind),
+        };
+        let groups = vec![
+            group(&["Baidu.COM.", "=api.example.com", "bad..host"], "direct"),
+            group(&["qq.com"], "blocked"),
+            group(&["qq.com"], "default"), // later group wins
+        ];
+        let overrides = HashMap::from([("www.baidu.com".to_string(), route("tunnel"))]);
+        let got = compile_routes(&groups, &overrides);
+        let kinds: std::collections::BTreeMap<&str, &str> =
+            got.iter().map(|(k, v)| (k.as_str(), v.kind.as_str())).collect();
+        assert_eq!(
+            kinds,
+            std::collections::BTreeMap::from([
+                ("baidu.com", "direct"),
+                ("*.baidu.com", "direct"),
+                ("api.example.com", "direct"),
+                ("qq.com", "default"),
+                ("*.qq.com", "default"),
+                ("www.baidu.com", "tunnel"),
+            ])
+        );
     }
 
     #[test]
