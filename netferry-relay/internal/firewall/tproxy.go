@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+
+	"github.com/hoveychen/netferry/relay/internal/sockmark"
 )
 
 // tproxyMethod implements firewall.Method using TPROXY (nftables or iptables).
@@ -159,6 +161,9 @@ func (t *tproxyMethod) buildNftRules(subnets []SubnetRule, excludes []string, pr
 	fmt.Fprintf(&b, "  chain output {\n    type route hook output priority mangle;\n")
 	// Local traffic protection first.
 	fmt.Fprintf(&b, "    fib daddr type local return\n")
+	// Skip the tunnel's own "direct" dials (tagged with SO_MARK) so they are
+	// not routed back into the TPROXY listener, which would create a loop.
+	fmt.Fprintf(&b, "    meta mark 0x%x return\n", sockmark.Bypass)
 	// Excludes.
 	for _, excl := range v4Excludes {
 		fmt.Fprintf(&b, "    ip daddr %s return\n", excl)
@@ -277,6 +282,8 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 
 	// Local traffic protection.
 	ipt("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
+	// Skip the tunnel's own marked "direct" dials (prevents a TPROXY loop).
+	ipt("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-m", "mark", "--mark", bypassMarkStr, "-j", "RETURN")
 
 	for _, excl := range v4Excludes {
 		ipt("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", excl, "-j", "RETURN")
@@ -340,6 +347,7 @@ func (t *tproxyMethod) setupIpt(subnets []SubnetRule, excludes []string, proxyPo
 
 		// Local traffic protection.
 		ip6t("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-m", "addrtype", "--dst-type", "LOCAL", "-j", "RETURN")
+		ip6t("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-m", "mark", "--mark", bypassMarkStr, "-j", "RETURN")
 
 		for _, excl := range v6Excludes {
 			ip6t("-t", "mangle", "-A", "NETFERRY_OUTPUT", "-d", excl, "-j", "RETURN")
