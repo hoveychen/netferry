@@ -41,6 +41,9 @@ const (
 	pageSettings
 )
 
+// routedMsg is a message for a specific page rather than the visible one.
+type routedMsg interface{ targetPage() int }
+
 // Messages.
 type (
 	sessionMsg struct{ ev Event }
@@ -121,6 +124,12 @@ func Run(opts Options) error {
 	}()
 
 	_, runErr := prog.Run()
+
+	for _, p := range a.pages {
+		if s, ok := p.(interface{ shutdown() }); ok {
+			s.shutdown()
+		}
+	}
 
 	if a.session.Active() {
 		a.session.Disconnect()
@@ -264,6 +273,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case sessionMsg:
 		return a, a.onSession(m.ev)
+	case routedMsg:
+		// Background work owned by one page (e.g. a running trace) must
+		// reach it even while another page is showing.
+		return a, a.pages[m.targetPage()].update(m)
 	case tea.KeyMsg:
 		if a.modal != nil {
 			return a, a.updateModal(m)
