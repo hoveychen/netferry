@@ -36,13 +36,32 @@ type FectunConfig struct {
 	// limits this client's uploads and is passed to the daemon it brings up
 	// (0 = fectun default). Never set it above the link's real capacity.
 	RateMbps float64 `json:"rateMbps,omitempty"`
+	// RateMinMbps is the congestion-control floor: both ends adapt their
+	// send rate within [RateMinMbps, RateMbps] from the loss the peer
+	// reports (0 = DefaultFectunRateMinMbps; negative = fixed RateMbps).
+	RateMinMbps float64 `json:"rateMinMbps,omitempty"`
 }
+
+// DefaultFectunRateMinMbps matches the fectun CLI's -rate-min default.
+const DefaultFectunRateMinMbps = 10
 
 // Enabled reports whether fc selects fectun.
 func (fc *FectunConfig) Enabled() bool { return fc != nil && fc.Port > 0 }
 
+// RateMin resolves RateMinMbps to the floor fectun expects (0 = no
+// congestion control).
+func (fc *FectunConfig) RateMin() float64 {
+	switch {
+	case fc.RateMinMbps < 0:
+		return 0
+	case fc.RateMinMbps == 0:
+		return DefaultFectunRateMinMbps
+	}
+	return fc.RateMinMbps
+}
+
 func (fc *FectunConfig) options() fectun.Options {
-	o := fectun.Options{K: fc.K, M: fc.M, RateMbps: fc.RateMbps}
+	o := fectun.Options{K: fc.K, M: fc.M, RateMbps: fc.RateMbps, RateMinMbps: fc.RateMin()}
 	if fc.Key != "" {
 		o.Key = []byte(fc.Key)
 	}
@@ -195,7 +214,7 @@ func dialFectun(host string, fc *FectunConfig) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fectun resolve %s: %w", host, err)
 	}
-	key := fmt.Sprintf("%s|%d|%d|%g|%s", raddr, fc.K, fc.M, fc.RateMbps, fc.Key)
+	key := fmt.Sprintf("%s|%d|%d|%g|%g|%s", raddr, fc.K, fc.M, fc.RateMbps, fc.RateMin(), fc.Key)
 
 	fectunClients.Lock()
 	e := fectunClients.m[key]
@@ -213,8 +232,8 @@ func dialFectun(host string, fc *FectunConfig) (net.Conn, error) {
 		}
 		e = &fectunEntry{key: key, cli: cli}
 		fectunClients.m[key] = e
-		log.Printf("fectun: new client to %s (k=%d m=%d rate=%g auth=%v)",
-			raddr, fc.K, fc.M, fc.RateMbps, fc.Key != "")
+		log.Printf("fectun: new client to %s (k=%d m=%d rate=%g rate-min=%g auth=%v)",
+			raddr, fc.K, fc.M, fc.RateMbps, fc.RateMin(), fc.Key != "")
 	}
 	if e.idle != nil {
 		e.idle.Stop()

@@ -44,6 +44,7 @@ var fectunIdleExit = 10 * time.Minute
 type fectunArgs struct {
 	port    int
 	rate    float64
+	rateMin float64 // congestion-control floor; 0 = fixed rate
 	target  string
 	restart bool
 }
@@ -193,6 +194,7 @@ func startFectunDaemon(a fectunArgs, key string) error {
 	cmd := exec.Command(exe, "--fectun-serve",
 		"--fectun-port", strconv.Itoa(a.port),
 		"--fectun-rate", strconv.FormatFloat(a.rate, 'g', -1, 64),
+		"--fectun-rate-min", strconv.FormatFloat(a.rateMin, 'g', -1, 64),
 		"--fectun-target", a.target)
 	// The key goes through the environment, not argv, so `ps` can't see it.
 	cmd.Env = append(os.Environ(), fectunKeyEnv+"="+key)
@@ -243,7 +245,7 @@ func runFectunServe(a fectunArgs) error {
 	}
 	conn.SetReadBuffer(4 << 20)
 	conn.SetWriteBuffer(4 << 20)
-	srv, err := fectun.NewServer(conn, a.target, fectun.Options{RateMbps: a.rate, Key: []byte(key)})
+	srv, err := fectun.NewServer(conn, a.target, fectun.Options{RateMbps: a.rate, RateMinMbps: a.rateMin, Key: []byte(key)})
 	if err != nil {
 		conn.Close()
 		return fail(err)
@@ -252,7 +254,7 @@ func runFectunServe(a fectunArgs) error {
 	os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
 	defer os.Remove(pidPath)
 
-	fectun.Logf("fectun daemon %s: udp :%d → %s (rate=%g Mbps/peer)", Version, a.port, a.target, a.rate)
+	fectun.Logf("fectun daemon %s: udp :%d → %s (rate=%g rate-min=%g Mbps/peer)", Version, a.port, a.target, a.rate, a.rateMin)
 	if ready != nil {
 		fmt.Fprintln(ready, "ready")
 		ready.Close()
