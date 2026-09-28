@@ -63,3 +63,21 @@ func TestPfMethod_SetBlockIPv6(t *testing.T) {
 		t.Errorf("SetBlockIPv6(false) did not clear blockIPv6 field")
 	}
 }
+
+func TestPfBuildRules_AllowRootUDP_PassesBeforeBlock(t *testing.T) {
+	subnets, err := ParseSubnetRules([]string{"0.0.0.0/0"})
+	if err != nil {
+		t.Fatalf("ParseSubnetRules: %v", err)
+	}
+	const pass = "pass out quick inet proto udp user root keep state"
+	const block = "block out quick inet proto udp all"
+
+	rules := string((&pfMethod{blockUDP: true, allowRootUDP: true}).buildRules(subnets, []string{"127.0.0.0/8"}, 12345, 0, nil))
+	if i, j := strings.Index(rules, pass), strings.Index(rules, block); i < 0 || j < 0 || i > j {
+		t.Errorf("root UDP pass must precede the UDP block, got:\n%s", rules)
+	}
+	rules = string((&pfMethod{blockUDP: true}).buildRules(subnets, []string{"127.0.0.0/8"}, 12345, 0, nil))
+	if strings.Contains(rules, "proto udp user root") {
+		t.Errorf("root UDP pass must be absent without LAN SOCKS5, got:\n%s", rules)
+	}
+}
