@@ -17,6 +17,11 @@ type GlobalSettings struct {
 	AutoConnectProfileID string `json:"autoConnectProfileId,omitempty"`
 	TrayDisplayMode      string `json:"trayDisplayMode,omitempty"`
 	ActiveGroupID        string `json:"activeGroupId,omitempty"`
+	// LanSocks5Port / LanHTTPPort, when set, make the tunnel also serve a
+	// SOCKS5 (TCP+UDP) / HTTP proxy on 0.0.0.0:<port> for other LAN devices.
+	// nil = off. Mirrors models.rs GlobalSettings.
+	LanSocks5Port *uint16 `json:"lanSocks5Port,omitempty"`
+	LanHTTPPort   *uint16 `json:"lanHttpPort,omitempty"`
 }
 
 // DefaultGlobalSettings returns the desktop default-on-first-launch values.

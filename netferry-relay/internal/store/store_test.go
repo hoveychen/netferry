@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/hoveychen/netferry/relay/internal/profile"
@@ -278,8 +279,33 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got != s {
+	if !reflect.DeepEqual(got, s) {
 		t.Fatalf("round-trip: %+v vs %+v", got, s)
+	}
+}
+
+// The desktop writes the LAN proxy ports into settings.json; a TUI save must
+// not drop them.
+func TestSettingsKeepsDesktopLANPorts(t *testing.T) {
+	dir := withTempDataDir(t)
+	raw := `{"autoConnectProfileId":null,"trayDisplayMode":"speed","activeGroupId":"g1","lanSocks5Port":1080,"lanHttpPort":null}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.LoadSettings()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if s.LanSocks5Port == nil || *s.LanSocks5Port != 1080 || s.LanHTTPPort != nil {
+		t.Fatalf("lan ports: %+v", s)
+	}
+	s.ActiveGroupID = "g2"
+	if err := store.SaveSettings(s); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, _ := store.LoadSettings()
+	if got.LanSocks5Port == nil || *got.LanSocks5Port != 1080 {
+		t.Fatalf("lanSocks5Port lost on save: %+v", got)
 	}
 }
 
