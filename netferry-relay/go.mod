@@ -3,26 +3,29 @@ module github.com/hoveychen/netferry/relay
 go 1.25.5
 
 require (
+	github.com/charmbracelet/bubbles v1.0.0
 	github.com/gone-lib/divert-go v0.0.0-20230130121114-366fa9cb2828
 	github.com/kevinburke/ssh_config v1.2.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/xtaci/smux v1.5.57
-	golang.org/x/crypto v0.28.0
+	golang.org/x/crypto v0.49.0
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
+	golang.org/x/net v0.52.0
 	gvisor.dev/gvisor v0.0.0-20250523182742-eede7a881b20
 )
 
 require (
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/reedsolomon v1.14.1 // indirect
 )
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/charmbracelet/bubbles v1.0.0 // indirect
-	github.com/charmbracelet/bubbletea v1.3.10 // indirect
+	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
-	github.com/charmbracelet/lipgloss v1.1.0 // indirect
-	github.com/charmbracelet/x/ansi v0.11.6 // indirect
+	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.9.0 // indirect
@@ -44,7 +47,7 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.19.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 )

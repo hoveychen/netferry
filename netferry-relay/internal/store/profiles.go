@@ -40,7 +40,26 @@ func SaveProfiles(ps []profile.Profile) error {
 	if err != nil {
 		return err
 	}
-	return writeJSONAtomic(path, ps)
+	out := make([]profile.Profile, len(ps))
+	for i, p := range ps {
+		out[i] = NormalizeProfile(p)
+	}
+	return writeJSONAtomic(path, out)
+}
+
+// NormalizeProfile fills the fields the desktop's serde model requires (a
+// null subnets/excludeSubnets or empty dns/method would fail to deserialize
+// and make the desktop drop the whole profiles.json).
+func NormalizeProfile(p profile.Profile) profile.Profile {
+	p.Subnets = nilToEmpty(p.Subnets)
+	p.ExcludeSubnets = nilToEmpty(p.ExcludeSubnets)
+	if p.Dns == "" {
+		p.Dns = profile.DnsOff
+	}
+	if p.Method == "" {
+		p.Method = "auto"
+	}
+	return p
 }
 
 // UpsertProfile inserts or replaces a profile by id, returning the new full
