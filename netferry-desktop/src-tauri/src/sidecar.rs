@@ -499,13 +499,24 @@ struct PreparedIdentity {
     jump_json: Option<String>,
 }
 
-/// `--lan-socks5` from the global setting. A process-wide knob, so it lives in
-/// GlobalSettings rather than per profile and applies to group mode too.
-fn lan_socks5_args(app: &AppHandle) -> Vec<String> {
-    match crate::settings::load_settings(app).ok().and_then(|s| s.lan_socks5_port) {
-        Some(port) if port > 0 => vec!["--lan-socks5".to_string(), port.to_string()],
-        _ => Vec::new(),
+/// `--lan-socks5` / `--lan-http` from the global settings. Process-wide knobs,
+/// so they live in GlobalSettings rather than per profile and apply to group
+/// mode too.
+fn lan_proxy_args(app: &AppHandle) -> Vec<String> {
+    let Ok(settings) = crate::settings::load_settings(app) else {
+        return Vec::new();
+    };
+    let mut args = Vec::new();
+    for (flag, port) in [
+        ("--lan-socks5", settings.lan_socks5_port),
+        ("--lan-http", settings.lan_http_port),
+    ] {
+        if let Some(port) = port.filter(|p| *p > 0) {
+            args.push(flag.to_string());
+            args.push(port.to_string());
+        }
     }
+    args
 }
 
 fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
@@ -1194,7 +1205,7 @@ pub fn connect(
                 args.push("--group".to_string());
                 args.push(p.display().to_string());
             }
-            args.extend(lan_socks5_args(&app));
+            args.extend(lan_proxy_args(&app));
             log::debug!("Tunnel args: {:?}", args);
             let stream = helper_ipc::start_tunnel(&binary, &args, &prepared.env_vars)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
@@ -1233,7 +1244,7 @@ pub fn connect(
         args.push("--group".to_string());
         args.push(p.display().to_string());
     }
-    args.extend(lan_socks5_args(&app));
+    args.extend(lan_proxy_args(&app));
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     // Inject PEM key material as env vars (never written to disk, not in ps aux).
