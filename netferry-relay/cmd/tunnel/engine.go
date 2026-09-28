@@ -301,7 +301,16 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	}
 	// Apply UDP blocking (default on; prevents QUIC leaks on pf).
 	firewall.SetUDPBlock(fw, !cfg.NoBlockUDP)
-	firewall.SetRootUDPAllow(fw, cfg.LANSocks5 != "")
+	// Root UDP must also pass when any backend rides fectun: its carrier is
+	// UDP from this (root) process, and the block-all rule would otherwise
+	// drop it — killing the very SSH link the firewall is being set up for.
+	usesFectun := false
+	for _, bc := range cfg.Backends {
+		if bc.fectun.Enabled() {
+			usesFectun = true
+		}
+	}
+	firewall.SetRootUDPAllow(fw, cfg.LANSocks5 != "" || usesFectun)
 	// Apply IPv6 blocking. Without this the firewall only stops *redirecting*
 	// IPv6 — apps still reach AAAA destinations directly and bypass the tunnel.
 	firewall.SetIPv6Block(fw, cfg.NoIPv6)
