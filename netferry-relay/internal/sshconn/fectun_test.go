@@ -71,7 +71,13 @@ var errUnauthorized = unauthorized{}
 // startFectunServer puts a multi-peer fectun server in front of target.
 func startFectunServer(t *testing.T, target, key string) int {
 	t.Helper()
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	port, _ := startFectunServerOn(t, 0, target, key)
+	return port
+}
+
+func startFectunServerOn(t *testing.T, port int, target, key string) (int, *fectun.Server) {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +87,7 @@ func startFectunServer(t *testing.T, target, key string) int {
 	}
 	go srv.Serve()
 	t.Cleanup(func() { srv.Close() })
-	return conn.LocalAddr().(*net.UDPAddr).Port
+	return conn.LocalAddr().(*net.UDPAddr).Port, srv
 }
 
 func testIdentity(t *testing.T) (string, ssh.PublicKey) {
@@ -242,6 +248,46 @@ func TestFectunClientClosedWhenIdle(t *testing.T) {
 			t.Fatal("idle shared client was not closed")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// The daemon restarts with the same key file (killed, idled out, host
+// rebooted) while an old session is still open: the next dial must recover.
+// (Against a real daemon the lingering shared client also resets streams
+// opened right after the bootstrap when it notices the peer restart; that
+// race is covered by the docker e2e, not reproducible in-process.)
+func TestDialOverFectunDaemonRestartSameKey(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	resetFectunClients(t)
+	old := fectunHandshakeTimeout
+	fectunHandshakeTimeout = 2 * time.Second
+	t.Cleanup(func() { fectunHandshakeTimeout = old })
+
+	pemKey, pub := testIdentity(t)
+	sshd := startSSHServer(t, pub)
+	port, srv := startFectunServerOn(t, 0, sshd, "k")
+	boots := fakeBootstrap(t, constKey("k"))
+	hc := hostFor(t, sshd, &FectunConfig{Port: port})
+	ac := AuthConfig{IdentityPEM: pemKey}
+
+	// The old SSH session is still open when the daemon dies, as it is when
+	// a pool member notices the drop and re-dials.
+	old1, _, err := Dial(hc, ac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old1.Close()
+	srv.Close()
+	time.Sleep(100 * time.Millisecond)
+	startFectunServerOn(t, port, sshd, "k")
+
+	c, _, err := Dial(hc, ac)
+	if err != nil {
+		t.Fatalf("dial after daemon restart: %v", err)
+	}
+	c.Close()
+	if b := boots.Load(); b > 2 {
+		t.Fatalf("bootstraps = %d, want at most 2", b)
 	}
 }
 

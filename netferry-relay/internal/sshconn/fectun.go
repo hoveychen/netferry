@@ -172,6 +172,10 @@ func (e *fectunEntry) release() {
 	if e.refs > 0 {
 		return
 	}
+	if fectunClients.m[e.key] != e { // evicted: nobody will reuse it
+		e.cli.Close()
+		return
+	}
 	e.idle = time.AfterFunc(fectunIdleClose, func() {
 		fectunClients.Lock()
 		if e.refs > 0 || fectunClients.m[e.key] != e {
@@ -222,6 +226,25 @@ func dialFectun(host string, fc *FectunConfig) (net.Conn, error) {
 	return &fectunConn{Conn: e.cli.OpenStream(), entry: e}, nil
 }
 
+// evict stops handing e out to new dials. A client whose handshake failed
+// may be stuck on session state the server no longer has (the daemon was
+// restarted with the same key), so the retry must get a fresh UDP session.
+// Streams still open on e keep it alive until they close.
+func (e *fectunEntry) evict() {
+	fectunClients.Lock()
+	defer fectunClients.Unlock()
+	if fectunClients.m[e.key] != e {
+		return
+	}
+	delete(fectunClients.m, e.key)
+	if e.refs == 0 {
+		if e.idle != nil {
+			e.idle.Stop()
+		}
+		e.cli.Close()
+	}
+}
+
 // fectunConn is one stream on a shared client; Close drops its reference.
 type fectunConn struct {
 	net.Conn
@@ -263,6 +286,7 @@ func fectunFirstHop(addr string, cfg *ssh.ClientConfig, fc *FectunConfig) (*ssh.
 		ip := remoteIPFromConn(conn)
 		c, err := sshClientFromConn(conn, addr, cfg)
 		if err != nil {
+			conn.(*fectunConn).entry.evict()
 			return nil, nil, err
 		}
 		return c, ip, nil
