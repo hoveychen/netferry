@@ -90,6 +90,10 @@ pub struct GlobalSettings {
     // first launch after upgrade. Runtime still operates in single-profile mode.
     #[serde(default)]
     pub active_group_id: Option<String>,
+    /// When set, the tunnel also serves SOCKS5 on 0.0.0.0:<port> so other LAN
+    /// devices can route through it by configuring a proxy. None = off.
+    #[serde(default)]
+    pub lan_socks5_port: Option<u16>,
 }
 
 /// RouteMode as persisted inside a ProfileGroup's `rules` map.

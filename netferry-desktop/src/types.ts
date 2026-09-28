@@ -45,6 +45,8 @@ export interface GlobalSettings {
   trayDisplayMode: TrayDisplayMode;
   /** P1: set by migrate_v2 on first launch. Runtime still single-profile until P2/P3. */
   activeGroupId?: string | null;
+  /** Also serve SOCKS5 on 0.0.0.0:<port> for other LAN devices. null = off. */
+  lanSocks5Port?: number | null;
 }
 
 // ── ProfileGroup (P1 data layer only; UI continues to use flat Profile list) ──
