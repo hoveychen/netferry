@@ -79,6 +79,20 @@ func TestSettingsSaveKeepsForeignFields(t *testing.T) {
 	}
 }
 
+func TestSettingsSaveKeepsFocus(t *testing.T) {
+	a := settingsApp(t)
+	p := a.pages[pageSettings].(*settingsPage)
+	p.form.FocusKey("http")
+	press(a, "space", "down") // HTTP on, focus its port
+	press(a, "ctrl+s")
+	if fl := p.form.focused(); fl == nil || fl.Key != "httpPort" {
+		t.Fatalf("focus after save = %v, want httpPort", fl.Key)
+	}
+	if !p.form.Capturing() {
+		t.Fatal("restored text field should take input again")
+	}
+}
+
 func TestSettingsRejectsBadPort(t *testing.T) {
 	a := settingsApp(t)
 	p := a.pages[pageSettings].(*settingsPage)

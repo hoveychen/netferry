@@ -123,7 +123,13 @@ func (p *settingsPage) save() tea.Cmd {
 		return a.setFlash(false, err.Error())
 	}
 	a.reload()
+	// Rebuilding resets focus to the first field; keep the cursor where it was.
+	focusKey := ""
+	if fl := p.form.focused(); fl != nil {
+		focusKey = fl.Key
+	}
 	p.build()
+	p.form.FocusKey(focusKey)
 	msg := "Settings saved"
 	if lanChanged && a.session.Active() {
 		msg += " — LAN sharing takes effect on the next connect"
