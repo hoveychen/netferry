@@ -31,7 +31,7 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
-	github.com/hoveychen/fectun v0.0.0-00010101000000-000000000000
+	github.com/hoveychen/fectun v0.1.0
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -48,5 +48,3 @@ require (
 	golang.org/x/time v0.7.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 )
-
-replace github.com/hoveychen/fectun => /Users/hoveychen/workspace/fectun/.worktrees/embed-lib
