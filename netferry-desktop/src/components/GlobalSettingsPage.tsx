@@ -14,6 +14,7 @@ import {
 
 import type { GlobalSettings, Profile, TrayDisplayMode } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { getThemeMode, setThemeMode, type ThemeMode } from "@/lib/theme";
 
@@ -34,6 +35,9 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   const [tunnelVersion, setTunnelVersion] = useState("");
   const [helperStatus, setHelperStatus] = useState<HelperStatus | null>(null);
   const [helperWorking, setHelperWorking] = useState(false);
+  // Keep the last port around while the toggle is off so re-enabling restores it.
+  const [lanPort, setLanPort] = useState(String(settings.lanSocks5Port ?? 1080));
+  const lanEnabled = draft.lanSocks5Port != null;
 
   useEffect(() => {
     getAppVersion().then(setAppVersion).catch(() => {});
@@ -101,6 +105,13 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
         ? "text-warning"
         : "text-t3";
 
+  const setLanSocks5 = (enabled: boolean, portText: string) => {
+    setLanPort(portText);
+    const port = Number(portText);
+    const valid = Number.isInteger(port) && port > 0 && port < 65536;
+    setDraft({ ...draft, lanSocks5Port: enabled && valid ? port : enabled ? draft.lanSocks5Port ?? 1080 : null });
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -156,6 +167,37 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
                 ))}
               </Select>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.lanSharing")}
+            </p>
+            <label className="inline-flex items-center gap-2.5 text-sm font-medium text-t2">
+              <input
+                type="checkbox"
+                checked={lanEnabled}
+                onChange={(e) => setLanSocks5(e.target.checked, lanPort)}
+                className="accent-accent"
+              />
+              {t("settings.lanSocks5")}
+            </label>
+            <p className="mb-2.5 mt-1.5 text-xs leading-relaxed text-t3">
+              {t("settings.lanSocks5Desc")}
+            </p>
+            {lanEnabled && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-t2">{t("settings.lanSocks5Port")}</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={lanPort}
+                  onChange={(e) => setLanSocks5(true, e.target.value)}
+                  className="w-28"
+                />
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
