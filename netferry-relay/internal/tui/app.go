@@ -393,8 +393,20 @@ func (a *App) recordObservedHosts(snap []stats.DestinationSnapshot) {
 	for _, d := range snap {
 		hosts = append(hosts, d.Host)
 	}
-	if RecordKnownHosts(g, hosts) {
-		_ = store.SaveGroup(g)
+	probe := *g
+	probe.KnownHosts = append([]string(nil), g.KnownHosts...)
+	if !RecordKnownHosts(&probe, hosts) {
+		return
+	}
+	// Something is new: merge into the on-disk group so rule edits made
+	// since the last reload (here or in the desktop app) are not overwritten.
+	fresh, err := store.LoadGroup(g.ID)
+	if err != nil || fresh == nil {
+		return
+	}
+	RecordKnownHosts(fresh, hosts)
+	if store.SaveGroup(fresh) == nil {
+		*g = *fresh
 	}
 }
 
