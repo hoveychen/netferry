@@ -67,7 +67,7 @@ func groupSession(a *App) {
 	p2 := profile.Profile{ID: "p2", Name: "frankfurt", Remote: "me@fra.example.com"}
 	g := store.Group{ID: "g", Name: "Work", ChildrenIDs: []string{"p1", "p2"}}
 	a.sess = SessionState{Status: StatusConnected, Message: "Tunnel established",
-		Spec: &ConnectSpec{Profile: p1, Group: &g, Children: []profile.Profile{p1, p2}},
+		Spec:   &ConnectSpec{Profile: p1, Group: &g, Children: []profile.Profile{p1, p2}},
 		Errors: []TunnelError{{Message: "c : warning: something odd happened on the link and this line is long enough to wrap around", At: time.Now()}}}
 	snap := stats.Snapshot{RxBytesPerSec: 3 << 20, TxBytesPerSec: 200 << 10, TotalRxBytes: 5 << 30, ActiveConns: 2, TotalConns: 9, DNSQueries: 12,
 		Tunnels: []stats.TunnelSnapshot{

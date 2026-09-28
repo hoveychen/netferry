@@ -103,8 +103,8 @@ func (f *Field) SetText(v string) {
 	}
 }
 
-func (f *Field) On() bool       { return f.on }
-func (f *Field) SetOn(on bool)  { f.on = on }
+func (f *Field) On() bool      { return f.on }
+func (f *Field) SetOn(on bool) { f.on = on }
 func (f *Field) Value() string {
 	if f.sel >= 0 && f.sel < len(f.options) {
 		return f.options[f.sel].Value
