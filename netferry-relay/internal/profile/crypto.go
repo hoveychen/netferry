@@ -3,6 +3,7 @@ package profile
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -63,4 +64,32 @@ func Decrypt(encrypted string) ([]byte, error) {
 		return nil, fmt.Errorf("decryption failed — wrong key or corrupted data")
 	}
 	return plaintext, nil
+}
+
+// Encrypt is the inverse of Decrypt (the desktop's crypto::encrypt): AES-256-GCM
+// with a random 12-byte nonce, returned as base64(nonce || ciphertext+tag).
+func Encrypt(plaintext []byte) (string, error) {
+	key, err := exportKeyBytes()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, plaintext, nil)), nil
+}
+
+// ExportAvailable reports whether this build can export/import .nfprofile data.
+func ExportAvailable() bool {
+	_, err := exportKeyBytes()
+	return err == nil
 }

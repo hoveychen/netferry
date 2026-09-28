@@ -93,6 +93,11 @@ type App struct {
 // Run starts the TUI and blocks until the user quits. A running tunnel is
 // stopped (and its firewall rules removed) before Run returns.
 func Run(opts Options) error {
+	// Same first-launch bootstrap the desktop runs, so a machine that never
+	// ran the desktop app still gets its Default group.
+	if err := store.MigrateV2(); err != nil {
+		return err
+	}
 	data, err := LoadData()
 	if err != nil {
 		return err

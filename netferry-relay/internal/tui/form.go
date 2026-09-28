@@ -309,7 +309,7 @@ const formLabelWidth = 22
 // View renders the visible fields; width is the available cells.
 func (f *Form) View(width int) string {
 	var b strings.Builder
-	valueW := width - formLabelWidth - 3
+	valueW := width - formLabelWidth - 4 // textinput draws a cursor cell past Width
 	if valueW < 10 {
 		valueW = 10
 	}
