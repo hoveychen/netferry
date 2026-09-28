@@ -519,7 +519,9 @@ fn lan_proxy_args(app: &AppHandle) -> Vec<String> {
     args
 }
 
-fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
+/// `extra_flags` (e.g. `--group`, `--lan-socks5`) are placed before the
+/// positional subnets; appending them afterwards would turn them into subnets.
+fn build_args(profile: &Profile, prepared: &PreparedIdentity, extra_flags: &[String]) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
 
     // Verbose: tunnel logs individual connections to stderr (parsed by this process).
@@ -622,6 +624,7 @@ fn build_args(profile: &Profile, prepared: &PreparedIdentity) -> Vec<String> {
             args.push(exclude_cidrs.join(","));
         }
     }
+    args.extend_from_slice(extra_flags);
 
     // Subnets are positional arguments and MUST come last.
     // Go's flag.Parse() stops at the first non-flag argument, so any flags
@@ -1194,6 +1197,13 @@ pub fn connect(
     // so the tunnel binary can read it via --identity.
     let prepared = prepare_identity_args(&profile)?;
 
+    let mut extra_flags: Vec<String> = Vec::new();
+    if let Some(p) = group_arg_path.as_ref() {
+        extra_flags.push("--group".to_string());
+        extra_flags.push(p.display().to_string());
+    }
+    extra_flags.extend(lan_proxy_args(&app));
+
     // ── macOS 13+: route through the privileged helper daemon ─────────────────
     // On success the helper manages the tunnel process (running as root) and we
     // communicate via a Unix socket — no per-connection sudo prompt needed.
@@ -1204,12 +1214,7 @@ pub fn connect(
             log::info!("Using privileged helper daemon for connection");
             // The Go tunnel reads SSH config natively and receives HOME/USER/SSH_AUTH_SOCK
             // from the helper's env injection — no SSH wrapper script needed.
-            let mut args = build_args(&profile, &prepared);
-            if let Some(p) = group_arg_path.as_ref() {
-                args.push("--group".to_string());
-                args.push(p.display().to_string());
-            }
-            args.extend(lan_proxy_args(&app));
+            let args = build_args(&profile, &prepared, &extra_flags);
             log::debug!("Tunnel args: {:?}", args);
             let stream = helper_ipc::start_tunnel(&binary, &args, &prepared.env_vars)
                 .map_err(|e| format!("Helper IPC: {e}"))?;
@@ -1243,12 +1248,7 @@ pub fn connect(
         }
     }
 
-    let mut args = build_args(&profile, &prepared);
-    if let Some(p) = group_arg_path.as_ref() {
-        args.push("--group".to_string());
-        args.push(p.display().to_string());
-    }
-    args.extend(lan_proxy_args(&app));
+    let args = build_args(&profile, &prepared, &extra_flags);
     let mut cmd = Command::new(binary);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     // Inject PEM key material as env vars (never written to disk, not in ps aux).
@@ -1680,14 +1680,34 @@ mod tests {
             ..Profile::default()
         };
         let prepared = prepare_identity_args(&profile).unwrap();
-        let args = build_args(&profile, &prepared);
+        let args = build_args(&profile, &prepared, &[]);
         let i = args.iter().position(|a| a == "--fectun").expect("--fectun passed");
         let v: serde_json::Value = serde_json::from_str(&args[i + 1]).unwrap();
         assert_eq!(v, serde_json::json!({"port": 55700, "k": 20, "m": 15, "rateMbps": 25.0}));
 
         let plain = Profile::default();
-        assert!(!build_args(&plain, &prepare_identity_args(&plain).unwrap())
+        assert!(!build_args(&plain, &prepare_identity_args(&plain).unwrap(), &[])
             .iter()
             .any(|a| a == "--fectun"));
+    }
+
+    #[test]
+    fn extra_flags_precede_positional_subnets() {
+        let profile = Profile {
+            remote: "u@h".to_string(),
+            subnets: vec!["0.0.0.0/0".to_string(), "10.0.0.0/8".to_string()],
+            ..Profile::default()
+        };
+        let prepared = prepare_identity_args(&profile).unwrap();
+        let extra: Vec<String> = ["--group", "/tmp/g.json", "--lan-socks5", "1080", "--lan-http", "8080"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let args = build_args(&profile, &prepared, &extra);
+        // Go's flag.Parse stops at the first positional arg, so the subnets
+        // must be exactly the tail and every extra flag must come before them.
+        assert_eq!(&args[args.len() - 2..], &["0.0.0.0/0", "10.0.0.0/8"]);
+        let tail = &args[args.len() - 2 - extra.len()..args.len() - 2];
+        assert_eq!(tail, extra.as_slice());
     }
 }
