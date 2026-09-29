@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActiveConnection } from "@/stores/connectionStore";
-import { joinGroupProfiles } from "@/stores/groupStore";
-import { useProfileStore } from "@/stores/profileStore";
-import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, ProfileGroup, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
+import type { ConnectionEvent, ConnectionStatus, DeployProgress, DestinationSnapshot, Profile, TunnelError, TunnelSnapshot, TunnelStats } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
@@ -12,12 +10,6 @@ import { tunnelColor } from "@/lib/tunnelColor";
 interface Props {
   status: ConnectionStatus;
   activeProfile: Profile | null;
-  /**
-   * Currently active profile group, if any. When present with 2+ children we
-   * render a per-profile summary row. When null/single-child we fall back to
-   * the legacy single-profile layout.
-   */
-  activeGroup?: ProfileGroup | null;
   logs: string[];
   tunnelStats: TunnelStats | null;
   activeConnections: Map<number, ActiveConnection>;
@@ -361,99 +353,9 @@ function parseHost(dstAddr: string, resolvedHost?: string): { host: string; port
   return { host: resolvedHost || addrHost, port, scheme };
 }
 
-// Per-profile summary rendered above the per-tunnel breakdown when the active
-// group has multiple profiles. Each card shows profile name + its tunnel stats.
-function PerProfileBreakdown({
-  profiles,
-  tunnels,
-  perProfileActiveConns,
-}: {
-  profiles: Profile[];
-  tunnels: TunnelSnapshot[];
-  perProfileActiveConns: Map<string, number>;
-}) {
-  const { t } = useTranslation();
-
-  // Profile-id → TunnelSnapshot mapping. The relay stamps profileId on every
-  // TunnelSnapshot; positional alignment is retained as a fallback for older
-  // relay builds or if profileId is ever dropped from the wire.
-  const snapshotByProfileId = new Map<string, TunnelSnapshot>();
-  for (const tun of tunnels) {
-    if (tun.profileId) snapshotByProfileId.set(tun.profileId, tun);
-  }
-  const positional = tunnels.length === profiles.length;
-
-  const cols = Math.min(profiles.length, 4);
-
-  return (
-    <div
-      className="grid gap-2"
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-    >
-      {profiles.map((profile, idx) => {
-        const tun =
-          snapshotByProfileId.get(profile.id) ??
-          (positional ? tunnels[idx] : undefined);
-        const c = tunnelColor(idx + 1);
-        const activeConns = perProfileActiveConns.get(profile.id) ?? 0;
-        const isDefault = idx === 0;
-        const hasTunStats = !!tun;
-        return (
-          <div
-            key={profile.id}
-            className="rounded-xl border border-sep bg-ov-4 px-3 py-2.5 shadow-[inset_0_1px_0_var(--inset-highlight)]"
-          >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-              <span className={`truncate text-[11px] font-semibold uppercase tracking-wider ${c.text}`}>
-                {profile.name}
-              </span>
-              {isDefault && (
-                <span className="ml-auto text-[10px] text-t5">
-                  {t("connection.groupDefault", { defaultValue: "default" })}
-                </span>
-              )}
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-t4">↓</span>
-                <span className={`font-mono text-xs font-semibold ${c.text}`}>
-                  {hasTunStats ? `${formatBytes(tun!.rxBytesPerSec)}/s` : "—"}
-                </span>
-              </div>
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-t4">↑</span>
-                <span className="font-mono text-xs text-t3">
-                  {hasTunStats ? `${formatBytes(tun!.txBytesPerSec)}/s` : "—"}
-                </span>
-              </div>
-              <div className="flex justify-between items-baseline mt-0.5">
-                <span className="text-[10px] text-t4">{t("connection.conns")}</span>
-                <span className="font-mono text-xs text-t3">{activeConns}</span>
-              </div>
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] text-t4">{t("connection.rtt")}</span>
-                <span className={`font-mono text-xs ${hasTunStats ? rttColor(tun!.lastRttUs) : "text-t5"}`}>
-                  {hasTunStats ? formatRtt(tun!.lastRttUs) : "—"}
-                </span>
-              </div>
-              {!hasTunStats && (
-                <p className="mt-1 text-[10px] leading-tight text-t5">
-                  {t("connection.perProfilePending", { defaultValue: "(pending per-profile stats)" })}
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export function ConnectionPage({
   status,
   activeProfile,
-  activeGroup,
   logs,
   tunnelStats,
   activeConnections,
@@ -555,44 +457,6 @@ export function ConnectionPage({
     { id: "logs", label: t("connection.logs") },
     { id: "errors", label: t("connection.errors"), badge: tunnelErrors.length || undefined },
   ];
-
-  // Resolve the active group's profile-id references to concrete Profile
-  // objects. Orphan ids (missing from profileStore) are dropped by the join.
-  const profilesSnapshot = useProfileStore((s) => s.profiles);
-  const groupChildren = useMemo<Profile[]>(
-    () => (activeGroup ? joinGroupProfiles(activeGroup, profilesSnapshot) : []),
-    [activeGroup, profilesSnapshot],
-  );
-
-  // Multi-profile view is only engaged when the caller passed an active group
-  // with 2+ children. Everything else (no group, 1-child group, legacy single-
-  // profile mode) uses the original single-profile layout.
-  const isMultiProfile = groupChildren.length > 1;
-
-  // Count active connections per profile. Connections without an
-  // activeProfileId (e.g. direct-routed or legacy relays) are attributed to
-  // the group's default profile (children[0]) so counts still render.
-  const perProfileActiveConns = new Map<string, number>();
-  if (isMultiProfile) {
-    const defaultId = groupChildren[0]?.id ?? "";
-    for (const conn of activeConnections.values()) {
-      const key = conn.activeProfileId ?? defaultId;
-      perProfileActiveConns.set(key, (perProfileActiveConns.get(key) ?? 0) + 1);
-    }
-  }
-
-  // Pre-group active connections by profile id so the Connections tab can
-  // render one section per profile when we are in multi-profile mode.
-  const connsByProfile = new Map<string, ActiveConnection[]>();
-  if (isMultiProfile) {
-    const defaultId = groupChildren[0]?.id ?? "";
-    for (const conn of activeConnections.values()) {
-      const key = conn.activeProfileId ?? defaultId;
-      const list = connsByProfile.get(key);
-      if (list) list.push(conn);
-      else connsByProfile.set(key, [conn]);
-    }
-  }
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -766,18 +630,6 @@ export function ConnectionPage({
                   </div>
                   <span className="ml-auto text-xs text-t5">{t("connection.lastNSeconds", { count: speedHistory.length })}</span>
                 </div>
-                {isMultiProfile && (
-                  <>
-                    <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-t4">
-                      {t("connection.perProfile", { defaultValue: "per profile" })}
-                    </p>
-                    <PerProfileBreakdown
-                      profiles={groupChildren}
-                      tunnels={tunnelStats?.tunnels ?? []}
-                      perProfileActiveConns={perProfileActiveConns}
-                    />
-                  </>
-                )}
                 {tunnelStats?.tunnels && tunnelStats.tunnels.length > 1 && (
                   <>
                     <p className="mt-5 mb-1 px-1 text-[11px] font-semibold uppercase tracking-widest text-t4">
@@ -807,20 +659,6 @@ export function ConnectionPage({
                       .map((conn) => {
                         const { host, port, scheme } = parseHost(conn.dstAddr, conn.host);
                         const tc = conn.tunnelIndex ? tunnelColor(conn.tunnelIndex) : null;
-                        // In multi-profile mode, attribute the connection to a
-                        // specific profile (fall back to default child if the
-                        // relay didn't stamp activeProfileId yet).
-                        let profileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
-                        if (isMultiProfile) {
-                          const pid = conn.activeProfileId ?? groupChildren[0]?.id;
-                          const idx = groupChildren.findIndex((p) => p.id === pid);
-                          if (idx >= 0) {
-                            profileBadge = {
-                              name: groupChildren[idx].name,
-                              color: tunnelColor(idx + 1),
-                            };
-                          }
-                        }
                         return (
                           <div
                             key={conn.id}
@@ -828,14 +666,6 @@ export function ConnectionPage({
                           >
                             <span className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-success" />
                             <span className="shrink-0 text-t5">{formatTime(conn.openedAt)}</span>
-                            {profileBadge && (
-                              <span
-                                className={`shrink-0 truncate max-w-[10rem] rounded px-1 py-0.5 text-[10px] font-semibold ${profileBadge.color.bg} ${profileBadge.color.text}`}
-                                title={profileBadge.name}
-                              >
-                                {profileBadge.name}
-                              </span>
-                            )}
                             {tc && (
                               <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${tc.bg} ${tc.text}`}>
                                 T{conn.tunnelIndex}
@@ -935,26 +765,6 @@ export function ConnectionPage({
                     const isActive = dest.activeConns > 0;
                     const isBlocked = dest.route === "blocked";
                     const isDirect = dest.route === "direct";
-                    // In multi-profile mode, surface where this host's traffic
-                    // flows. Pinned (assignedProfileId from a tunnel:X rule) wins
-                    // over currently-routing (activeProfileId) so users can tell
-                    // sticky rules from incidental dispatches.
-                    let profileAttr: { label: string; color: ReturnType<typeof tunnelColor> } | null = null;
-                    if (isMultiProfile && !isBlocked && !isDirect) {
-                      const pinnedId = dest.assignedProfileId;
-                      const liveId = dest.activeProfileId;
-                      const pid = pinnedId ?? liveId;
-                      const idx = pid ? groupChildren.findIndex((p) => p.id === pid) : -1;
-                      if (idx >= 0) {
-                        const name = groupChildren[idx].name;
-                        profileAttr = {
-                          label: pinnedId
-                            ? t("connection.pinnedTo", { name })
-                            : t("connection.routedVia", { name }),
-                          color: tunnelColor(idx + 1),
-                        };
-                      }
-                    }
                     return (
                       <div
                         key={dest.host}
@@ -984,14 +794,6 @@ export function ConnectionPage({
                             </span>
                           </div>
                           <div className="flex items-center gap-3 shrink-0 ml-3">
-                            {profileAttr && (
-                              <span
-                                className={`truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${profileAttr.color.bg} ${profileAttr.color.text}`}
-                                title={profileAttr.label}
-                              >
-                                {profileAttr.label}
-                              </span>
-                            )}
                             {totalSpeed > 0 && (
                               <span className="text-success text-[11px]">
                                 {formatBytes(totalSpeed)}/s

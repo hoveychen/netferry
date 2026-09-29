@@ -14,7 +14,7 @@ import { ProfileList } from "@/components/ProfileList";
 import { SshConfigImporter } from "@/components/SshConfigImporter";
 import { WindowsChrome } from "@/components/WindowsChrome";
 import { useConnectionStore } from "@/stores/connectionStore";
-import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
+import { useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -90,7 +90,7 @@ function App() {
     stopSSE,
   } = useConnectionStore();
 
-  const { loadRules, activeGroup, connectionMode, setConnectionMode } = useRuleStore();
+  const { loadRules } = useRuleStore();
   const { fetch: fetchGroups } = useGroupStore();
 
   /**
@@ -226,23 +226,7 @@ function App() {
   };
 
   const handleConnect = async (profile: Profile) => {
-    // Clicking a single profile disengages the group's multi-profile mode —
-    // the sidecar receives a null group so ConnectionPage shows single-profile UI.
-    setConnectionMode("solo");
     await connect(profile);
-  };
-
-  const handleConnectGroup = async () => {
-    const group = useRuleStore.getState().activeGroup;
-    if (!group) return;
-    const profiles = useProfileStore.getState().profiles;
-    const children = joinGroupProfiles(group, profiles);
-    const seed = children[0];
-    if (!seed) return;
-    setConnectionMode("group");
-    // Pass full group + children so the sidecar writes a temp group.json and
-    // spawns the Go tunnel with --group, bringing up N SSH connections.
-    await connect(seed, group, children);
   };
 
   const activeProfile =
@@ -407,7 +391,6 @@ function App() {
           <ConnectionPage
             status={status}
             activeProfile={activeProfile}
-            activeGroup={connectionMode === "group" ? activeGroup : null}
             logs={logs}
             tunnelStats={tunnelStats}
             activeConnections={activeConnections}
@@ -424,10 +407,8 @@ function App() {
           <>
             <ProfileList
               connectedProfileId={isConnected ? status.profileId : undefined}
-              groupConnected={isConnected && connectionMode === "group"}
               onNew={() => setNewProfileDialogOpen(true)}
               onConnect={handleConnect}
-              onConnectGroup={handleConnectGroup}
               onEdit={(id) => {
                 const profile = profiles.find((p) => p.id === id);
                 if (profile) setSubPage({ kind: "detail", profile, isNew: false });

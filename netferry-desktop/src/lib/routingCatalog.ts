@@ -8,7 +8,7 @@ export interface RoutingSuggestion {
   nameZh: string;
   source: string;
   sourceZh?: string;
-  suggestedRoute: "default" | "direct";
+  suggestedRoute: "tunnel" | "direct";
   domains: string[];
   hosts: string[];
   coveredHosts: number;
@@ -63,7 +63,9 @@ export function suggestRoutingScopes(hosts: string[], existing: RuleGroup[]): Ro
     nameZh: entry.nameZh,
     source: entry.source,
     sourceZh: "sourceZh" in entry ? entry.sourceZh : undefined,
-    suggestedRoute: entry.suggestedRoute as "default" | "direct",
+    // The generated catalog predates the tunnel/direct/blocked route set and
+    // may still say "default"; anything but direct means tunnel.
+    suggestedRoute: entry.suggestedRoute === "direct" ? "direct" : "tunnel",
     domains: [...found[i].domains].sort(),
     hosts: found[i].hosts,
     coveredHosts: found[i].coveredHosts,

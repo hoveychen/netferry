@@ -8,7 +8,6 @@ import type {
   DeployProgress,
   DestinationSnapshot,
   Profile,
-  ProfileGroup,
   TunnelError,
   TunnelStats,
 } from "@/types";
@@ -20,12 +19,6 @@ export interface ActiveConnection {
   dstAddr: string;
   host?: string;
   tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
-  /**
-   * Profile that dispatched this connection in multi-profile mode; undefined
-   * in legacy single-profile mode or when the relay has not yet started
-   * emitting the field on SSE events (see ConnectionEvent.activeProfileId).
-   */
-  activeProfileId?: string;
   openedAt: number;
 }
 
@@ -43,12 +36,7 @@ interface ConnectionStore {
   deployProgress: DeployProgress | null;
   deployReason: string | null;
   syncStatus: () => Promise<void>;
-  /**
-   * Connect using `profile` as the seed. When `group` + `children` are passed,
-   * the sidecar spawns the tunnel with `--group`, bringing up one SSH per
-   * child profile. Solo mode (single tunnel) omits both.
-   */
-  connect: (profile: Profile, group?: ProfileGroup, children?: Profile[]) => Promise<void>;
+  connect: (profile: Profile) => Promise<void>;
   disconnect: () => Promise<void>;
   pushLog: (line: string) => void;
   setStatus: (status: ConnectionStatus) => void;
@@ -113,7 +101,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
   },
 
-  connect: async (profile, group, children) => {
+  connect: async (profile) => {
     // Guard: a previous connection is still alive. Don't touch store/SSE —
     // otherwise the in-flight tunnel becomes invisible to the UI while still
     // running in the sidecar, and the user can't reach the disconnect button.
@@ -136,7 +124,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     });
     stopSSEInternal();
     try {
-      const status = await connectProfile(profile, group, children);
+      const status = await connectProfile(profile);
       set({ status });
     } catch (e) {
       const message = typeof e === "string" ? e : (e as Error)?.message ?? "Unknown error";
@@ -176,7 +164,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           dstAddr: event.dstAddr,
           host: event.host,
           tunnelIndex: event.tunnelIndex,
-          activeProfileId: event.activeProfileId,
           openedAt: event.timestampMs,
         });
       } else {
@@ -201,7 +188,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             dstAddr: event.dstAddr,
             host: event.host,
             tunnelIndex: event.tunnelIndex,
-            activeProfileId: event.activeProfileId,
             openedAt: event.timestampMs,
           });
         } else {
@@ -222,7 +208,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           dstAddr: ev.dstAddr,
           host: ev.host,
           tunnelIndex: ev.tunnelIndex,
-          activeProfileId: ev.activeProfileId,
           openedAt: ev.timestampMs,
         });
       }
