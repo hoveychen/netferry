@@ -18,8 +18,9 @@ interface Props {
 }
 
 // Matches the fectun CLI defaults. 55700 is the port the existing fectun
-// deployments use; rate stays well under a typical cross-border link.
-const DEFAULT_FECTUN: FectunConfig = { port: 55700, k: 20, m: 15, rateMbps: 25 };
+// deployments use. rate is only a ceiling: congestion control adapts the
+// real send rate below it from the loss the peer reports.
+const DEFAULT_FECTUN: FectunConfig = { port: 55700, k: 20, m: 15, rateMbps: 100 };
 
 // Empty/whitespace identityKey must collapse to undefined: the tab picker
 // distinguishes File Path vs PEM Text by `=== undefined`, so a stored "" would

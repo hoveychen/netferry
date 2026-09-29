@@ -700,7 +700,7 @@ fun ProfileDetailScreen(
                                     port = fectunPort.coerceIn(1, 65535),
                                     k = k,
                                     m = fectunM.coerceIn(1, 255 - k),
-                                    rateMbps = fectunRate.toDoubleOrNull()?.takeIf { it > 0 } ?: 25.0
+                                    rateMbps = fectunRate.toDoubleOrNull()?.takeIf { it > 0 } ?: 100.0
                                 )
                             } else null,
                             tcpBalanceMode = tcpBalanceMode,

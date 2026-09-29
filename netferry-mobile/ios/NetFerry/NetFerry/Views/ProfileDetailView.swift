@@ -245,7 +245,7 @@ struct ProfileDetailView: View {
                 Stepper(L("profile.fectun.k") + ": \(f.k)", value: fectunField(\.k), in: 1...254)
                 Stepper(L("profile.fectun.m") + ": \(f.m)", value: fectunField(\.m), in: 1...max(1, 255 - f.k))
                 LabeledContent(L("profile.fectun.rate")) {
-                    TextField("25", value: fectunField(\.rateMbps), format: .number)
+                    TextField("100", value: fectunField(\.rateMbps), format: .number)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }

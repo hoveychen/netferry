@@ -41,7 +41,7 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		lanSocks5      = fs.String("lan-socks5", "", "also serve SOCKS5 for other LAN devices on this port or host:port (e.g. 1080 binds 0.0.0.0:1080)")
 		lanHTTP        = fs.String("lan-http", "", "also serve an HTTP proxy (CONNECT + plain http) for other LAN devices on this port or host:port")
 		tcpBalance     = fs.String("tcp-balance", "least-loaded", "TCP load-balancing strategy across pool members: round-robin|least-loaded")
-		fectunJSON     = fs.String("fectun", "", "carry the first SSH hop over fectun (FEC over UDP) as JSON: {\"port\":55700,\"k\":20,\"m\":15,\"rateMbps\":25}; the server side is brought up over SSH automatically, only the UDP port must be open")
+		fectunJSON     = fs.String("fectun", "", "carry the first SSH hop over fectun (FEC over UDP) as JSON: {\"port\":55700,\"k\":20,\"m\":15,\"rateMbps\":100}; the server side is brought up over SSH automatically, only the UDP port must be open")
 		showVersion    = fs.Bool("version", false, "print version and exit")
 		listFeatures   = fs.Bool("list-features", false, "print method features as JSON and exit")
 		profilePath    = fs.String("profile", "", "path to encrypted .nfprofile file (all values are used unless overridden by explicit flags)")
