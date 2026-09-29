@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Shield, Zap, Ban, Gauge, Search, X, Plus, ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { Shield, Zap, Ban, Gauge, Search, X, Plus, ArrowLeft, Pencil, Trash2, ChevronUp, ChevronDown, ChevronRight } from "lucide-react";
 import { parse } from "tldts";
-import type { DestinationSnapshot, Profile, RouteModeV2, RuleGroup } from "@/types";
+import type { FinalRoute, RouteMode, RouteRule, RuleGroup } from "@/types";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
-import { joinGroupProfiles, useGroupStore } from "@/stores/groupStore";
-import { useProfileStore } from "@/stores/profileStore";
-import { useSettingsStore } from "@/stores/settingsStore";
-import { tunnelColor } from "@/lib/tunnelColor";
-import { compileRoutes, matchesDomain, normalizeDomain } from "@/lib/ruleGroups";
+import { matchesDomain, normalizeDomain, overrideKeyFor, resolveRoute, ruleGroupFor, type RouteSource } from "@/lib/ruleGroups";
 import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
 import { suggestRoutingScopes, type RoutingSuggestion } from "@/lib/routingCatalog";
 
@@ -23,36 +20,37 @@ const PRIORITY_META: Record<number, { label: string; color: string; ring: string
   5: { label: "Crit", color: "text-danger",  ring: "ring-danger/30", bg: "bg-danger/10",    dotColor: "bg-danger" },
 };
 
-type RouteKind = RouteModeV2["kind"];
+const ROUTE_KINDS: RouteMode[] = ["tunnel", "direct", "blocked"];
 
-const ROUTE_STYLE: Record<RouteKind, { color: string; ring: string; bg: string; Icon: typeof Shield }> = {
-  default: { color: "text-accent",  ring: "ring-accent/30",  bg: "bg-accent/10",  Icon: Shield },
+const ROUTE_STYLE: Record<RouteMode, { color: string; ring: string; bg: string; Icon: typeof Shield }> = {
   tunnel:  { color: "text-accent",  ring: "ring-accent/30",  bg: "bg-accent/10",  Icon: Shield },
   direct:  { color: "text-success", ring: "ring-success/30", bg: "bg-success/10", Icon: Zap },
   blocked: { color: "text-danger",  ring: "ring-danger/30",  bg: "bg-danger/10",  Icon: Ban },
 };
 
-function routeKey(mode: RouteModeV2): string {
-  return mode.kind === "tunnel" ? `tunnel:${mode.profileId}` : mode.kind;
-}
-
-function routeLabel(mode: RouteModeV2, defaultChildName: string | undefined, tunnelChildName: string | undefined): string {
-  switch (mode.kind) {
-    case "default":
-      return defaultChildName ? `Default (→ ${defaultChildName})` : "Default";
+function routeLabel(kind: RouteMode, t: TFunction): string {
+  switch (kind) {
     case "tunnel":
-      return tunnelChildName ? `Tunnel: ${tunnelChildName}` : "Tunnel";
+      return t("destinationsPage.routeTunnel");
     case "direct":
-      return "Direct";
+      return t("destinationsPage.routeDirect");
     case "blocked":
-      return "Blocked";
+      return t("destinationsPage.routeBlocked");
   }
 }
 
-function sameRoute(a: RouteModeV2, b: RouteModeV2): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === "tunnel" && b.kind === "tunnel") return a.profileId === b.profileId;
-  return true;
+/** Why a host ends up on its route, e.g. "规则组 · Google". */
+function sourceLabel(source: RouteSource, host: string, t: TFunction): string {
+  switch (source.type) {
+    case "override":
+      return source.key === host
+        ? t("destinationsPage.sourceOverride")
+        : t("destinationsPage.sourceOverrideVia", { pattern: source.key });
+    case "group":
+      return t("destinationsPage.sourceGroup", { name: source.group.name });
+    case "final":
+      return t("destinationsPage.sourceFinal");
+  }
 }
 
 /**
@@ -70,19 +68,6 @@ function wildcardCandidates(host: string): string[] {
   return out;
 }
 
-/** Effective route for a host: exact rule, else the most specific wildcard. */
-function resolveRoute(
-  host: string,
-  routes: Record<string, RouteModeV2>,
-): { mode: RouteModeV2; via: string | null } {
-  const exact = routes[host];
-  if (exact) return { mode: exact, via: null };
-  for (const c of wildcardCandidates(host)) {
-    if (routes[c]) return { mode: routes[c], via: c };
-  }
-  return { mode: { kind: "default" }, via: null };
-}
-
 /** Effective priority for a host: exact rule, else the most specific wildcard. */
 function resolvePriority(
   host: string,
@@ -97,24 +82,15 @@ function resolvePriority(
 
 function RouteBadge({
   route,
-  children,
   onChange,
 }: {
-  route: RouteModeV2;
-  children: Profile[];
-  onChange: (r: RouteModeV2) => void;
+  route: RouteRule;
+  onChange: (r: RouteMode) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  const defaultChild = children[0];
-  const tunnelChild =
-    route.kind === "tunnel"
-      ? children.find((c) => c.id === route.profileId)
-      : undefined;
-
   const style = ROUTE_STYLE[route.kind];
-  const label = routeLabel(route, defaultChild?.name, tunnelChild?.name);
 
   useEffect(() => {
     if (!open) return;
@@ -125,17 +101,6 @@ function RouteBadge({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Build the option list: Default, one Tunnel per child, Direct, Blocked.
-  const options: RouteModeV2[] = useMemo(() => {
-    const opts: RouteModeV2[] = [{ kind: "default" }];
-    for (const child of children) {
-      opts.push({ kind: "tunnel", profileId: child.id });
-    }
-    opts.push({ kind: "direct" });
-    opts.push({ kind: "blocked" });
-    return opts;
-  }, [children]);
-
   return (
     <div ref={ref} className="relative">
       <button
@@ -143,34 +108,56 @@ function RouteBadge({
         className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition-all hover:brightness-125 ${style.bg} ${style.color} ${style.ring}`}
       >
         <style.Icon size={11} />
-        {label}
+        {routeLabel(route.kind, t)}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
-          {options.map((mode) => {
-            const m = ROUTE_STYLE[mode.kind];
-            const active = sameRoute(mode, route);
-            const tunnelName =
-              mode.kind === "tunnel"
-                ? children.find((c) => c.id === mode.profileId)?.name
-                : undefined;
-            const optLabel = routeLabel(mode, defaultChild?.name, tunnelName);
+        <div className="absolute right-0 top-full z-50 mt-1 w-32 rounded-lg border border-bdr bg-elevated p-1 shadow-xl">
+          {ROUTE_KINDS.map((kind) => {
+            const m = ROUTE_STYLE[kind];
+            const active = kind === route.kind;
             return (
               <button
-                key={routeKey(mode)}
-                onClick={(e) => { e.stopPropagation(); onChange(mode); setOpen(false); }}
+                key={kind}
+                onClick={(e) => { e.stopPropagation(); onChange(kind); setOpen(false); }}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors ${
                   active ? `${m.bg} ${m.color}` : "text-t2 hover:bg-ov-6"
                 }`}
               >
                 <m.Icon size={13} className={active ? m.color : "text-t3"} />
-                <span className="truncate">{optLabel}</span>
+                <span className="truncate">{routeLabel(kind, t)}</span>
                 {active && <span className="ml-auto text-[10px]">✓</span>}
               </button>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Segmented tunnel/direct toggle for the final (catch-all) route. */
+function FinalRouteToggle({ route, onChange }: { route: FinalRoute; onChange: (r: FinalRoute) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="inline-flex shrink-0 rounded-full bg-ov-6 p-0.5 ring-1 ring-sep">
+      {(["tunnel", "direct"] as const).map((kind) => {
+        const m = ROUTE_STYLE[kind];
+        const active = route.kind === kind;
+        return (
+          <button
+            key={kind}
+            type="button"
+            aria-pressed={active}
+            onClick={() => !active && onChange({ kind })}
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+              active ? `${m.bg} ${m.color} ring-1 ${m.ring}` : "text-t4 hover:text-t2"
+            }`}
+          >
+            <m.Icon size={11} />
+            {routeLabel(kind, t)}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -226,36 +213,37 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
 /**
  * Standalone Destinations page accessible from the main nav bar.
  * Shows all destinations with non-default routes or priorities.
- * Rules are read from and written to the shared ruleStore, which mirrors
- * the active ProfileGroup's `rules` map.
+ * Rules are read from and written to the shared ruleStore, which holds the
+ * single global RuleSet (independent of profile groups).
  */
 export function DestinationsPage() {
   const { t, i18n } = useTranslation();
-  const { priorities, routes, setPriority, setRule, deleteRule, activeGroup, saveRuleGroup, deleteRuleGroup } = useRuleStore();
-  const { fetch: fetchGroups } = useGroupStore();
-  const { profiles, loadProfiles } = useProfileStore();
-  const { loadSettings } = useSettingsStore();
+  const { priorities, ruleSet, loaded, loadRules, setPriority, setRoute, deleteRule, saveRuleGroup, deleteRuleGroup, moveRuleGroup, setFinalRoute } = useRuleStore();
+  const routes = ruleSet.rules;
   // Live-session observed hosts; empty when disconnected.
   const liveDestinations = useConnectionStore((s) => s.destinations);
   const [filter, setFilter] = useState("");
   const [showAllSites, setShowAllSites] = useState(false);
+  const [showOverrides, setShowOverrides] = useState(false);
   const [selectedScope, setSelectedScope] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<RuleGroup | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftDomains, setDraftDomains] = useState("");
-  const [draftRoute, setDraftRoute] = useState("default");
+  const [draftRoute, setDraftRoute] = useState<RouteMode>("tunnel");
   const [draftEvidence, setDraftEvidence] = useState<RoutingSuggestion["evidence"]>([]);
-  const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
-  const effectiveRoutes = useMemo(() => compileRoutes(ruleGroups, routes), [ruleGroups, routes]);
+  const ruleGroups = ruleSet.ruleGroups;
+  const finalRoute = ruleSet.finalRoute;
+  const knownHosts = ruleSet.knownHosts;
+  const overrideKeys = useMemo(() => Object.keys(routes).sort((a, b) => a.localeCompare(b)), [routes]);
   const suggestionName = (suggestion: ServiceSuggestion | RoutingSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
 
   const openEditor = (group?: RuleGroup, suggestedDomain?: string) => {
     setDraftEvidence([]);
     const suggestedScope = suggestedDomain && !normalizeDomain(suggestedDomain) ? `=${suggestedDomain}` : suggestedDomain;
-    setEditingGroup(group ?? { id: crypto.randomUUID(), name: "", domains: [], route: { kind: "default" } });
+    setEditingGroup(group ?? { id: crypto.randomUUID(), name: "", domains: [], route: { kind: "tunnel" } });
     setDraftName(group?.name ?? suggestedDomain ?? "");
     setDraftDomains(group?.domains.join("\n") ?? suggestedScope ?? "");
-    setDraftRoute(group?.route.kind === "tunnel" ? `tunnel:${group.route.profileId}` : group?.route.kind ?? "default");
+    setDraftRoute(group?.route.kind ?? "tunnel");
   };
   const openSuggestion = (suggestion: ServiceSuggestion) => {
     const group = ruleGroups.find((item) => item.name === suggestion.name || item.name === suggestion.nameZh);
@@ -272,39 +260,22 @@ export function DestinationsPage() {
     if (!group) setDraftRoute(suggestion.suggestedRoute);
   };
 
-  // Ensure groups + profiles + settings are loaded so we can join ids → Profile[].
+  // App loads the rules at startup; retry here if that hasn't succeeded yet.
   useEffect(() => {
-    fetchGroups();
-    loadProfiles();
-    loadSettings();
-  }, [fetchGroups, loadProfiles, loadSettings]);
-
-  const children = useMemo<Profile[]>(
-    () => (activeGroup ? joinGroupProfiles(activeGroup, profiles) : []),
-    [activeGroup, profiles],
-  );
-
-  const isMultiProfile = children.length > 1;
-
-  // Index live destinations by host for O(1) lookup so per-row render can
-  // surface "currently routing via X profile" without scanning the array.
-  const liveDestMap = useMemo(() => {
-    const m = new Map<string, DestinationSnapshot>();
-    for (const d of liveDestinations) m.set(d.host, d);
-    return m;
-  }, [liveDestinations]);
+    if (!loaded) loadRules();
+  }, [loaded, loadRules]);
 
   // Union of hosts that have any configured rule, hosts observed in the live
-  // session, and hosts accumulated across sessions (`activeGroup.knownHosts`).
+  // session, and hosts accumulated across sessions (`ruleSet.knownHosts`).
   // `knownHosts` is what gives this list continuity after disconnect.
   const sorted = useMemo(() => {
     const all = new Set<string>();
     for (const h of Object.keys(priorities)) all.add(h);
     for (const h of Object.keys(routes)) all.add(h);
     for (const d of liveDestinations) if (d.host) all.add(d.host);
-    for (const h of activeGroup?.knownHosts ?? []) if (h) all.add(h);
+    for (const h of knownHosts) if (h) all.add(h);
     return [...all].sort((a, b) => a.localeCompare(b));
-  }, [priorities, routes, liveDestinations, activeGroup]);
+  }, [priorities, routes, liveDestinations, knownHosts]);
 
   const siteGroups = useMemo(() => {
     const groups = new Map<string, string[]>();
@@ -348,19 +319,22 @@ export function DestinationsPage() {
   const invalidDomains = useMemo(() => domainInputs.filter((input) => !normalizeDomain(input)), [domainInputs]);
   const normalizedDraftDomains = useMemo(() => [...new Set(domainInputs.map(normalizeDomain).filter((d): d is string => !!d))], [domainInputs]);
   const previewHosts = useMemo(() => sorted.filter((host) => normalizedDraftDomains.some((domain) => matchesDomain(host, domain))), [sorted, normalizedDraftDomains]);
-  const previewGroupOverlap = useMemo(() => previewHosts.filter((host) => ruleGroups.some((group) => group.id !== editingGroup?.id && group.domains.some((domain) => matchesDomain(host, domain)))).length, [previewHosts, ruleGroups, editingGroup]);
-  const previewRuleOverrides = useMemo(() => previewHosts.filter((host) => !!routes[host]).length, [previewHosts, routes]);
+  // Groups evaluated before the one being edited (a new group is appended, so
+  // every existing group comes first). Hosts they match never reach this group.
+  const groupsBefore = useMemo(() => {
+    const index = ruleGroups.findIndex((group) => group.id === editingGroup?.id);
+    return index >= 0 ? ruleGroups.slice(0, index) : ruleGroups;
+  }, [ruleGroups, editingGroup]);
+  const previewRuleOverrides = useMemo(() => previewHosts.filter((host) => !!overrideKeyFor(routes, host)).length, [previewHosts, routes]);
+  const previewGroupOverlap = useMemo(() => previewHosts.filter((host) => !overrideKeyFor(routes, host) && !!ruleGroupFor(groupsBefore, host)).length, [previewHosts, routes, groupsBefore]);
 
   const saveEditor = () => {
     if (!editingGroup || !draftName.trim() || normalizedDraftDomains.length === 0 || invalidDomains.length > 0) return;
-    const route: RouteModeV2 = draftRoute.startsWith("tunnel:")
-      ? { kind: "tunnel", profileId: draftRoute.slice(7) }
-      : { kind: draftRoute as "default" | "direct" | "blocked" };
-    saveRuleGroup({ ...editingGroup, name: draftName.trim(), domains: normalizedDraftDomains, route });
+    saveRuleGroup({ ...editingGroup, name: draftName.trim(), domains: normalizedDraftDomains, route: { kind: draftRoute } });
     setEditingGroup(null);
   };
 
-  const noGroup = !activeGroup;
+  const notLoaded = !loaded;
 
   // Draft-rule creation: when the user types something that looks like a rule
   // target (a hostname or a `*.x` wildcard) that isn't already in the list,
@@ -368,7 +342,7 @@ export function DestinationsPage() {
   const query = filter.trim();
   const knownSet = useMemo(() => new Set(sorted), [sorted]);
   const looksLikeTarget = query.startsWith("*.") || query.includes(".");
-  const showDraft = !noGroup && selectedScope !== null && query !== "" && looksLikeTarget && !knownSet.has(query);
+  const showDraft = !notLoaded && selectedScope !== null && query !== "" && looksLikeTarget && !knownSet.has(query);
   // Nudge a bare domain toward its wildcard form (wildcard the typed host's parent).
   const wildcardSuggestion = useMemo(() => {
     if (!query || query.startsWith("*.")) return null;
@@ -380,26 +354,11 @@ export function DestinationsPage() {
   }, [query, knownSet]);
 
   const renderRow = (host: string, draft: boolean) => {
-    const { mode: route, via: routeVia } = resolveRoute(host, effectiveRoutes);
-    const groupVia = ruleGroups.find((group) => group.domains.some((domain) => matchesDomain(host, domain)));
+    const { route, source } = resolveRoute(host, routes, ruleGroups, finalRoute);
     const { value: priority } = resolvePriority(host, priorities);
     const isBlocked = route.kind === "blocked";
     const isDirect = route.kind === "direct";
-
-    // Live attribution: only show in multi-profile mode, only for hosts that
-    // are currently routing through the tunnel (skip direct/blocked since those
-    // bypass the profile dispatcher). The pinned-profile case is already
-    // covered by RouteBadge's "Tunnel: X" label, so this badge is purely a
-    // "where is traffic *actually* going right now" hint.
-    let liveProfileBadge: { name: string; color: ReturnType<typeof tunnelColor> } | null = null;
-    if (!draft && isMultiProfile && !isBlocked && !isDirect) {
-      const live = liveDestMap.get(host);
-      const pid = live?.activeProfileId;
-      const idx = pid ? children.findIndex((c) => c.id === pid) : -1;
-      if (idx >= 0) {
-        liveProfileBadge = { name: children[idx].name, color: tunnelColor(idx + 1) };
-      }
-    }
+    const why = sourceLabel(source, host, t);
 
     return (
       <div
@@ -431,31 +390,17 @@ export function DestinationsPage() {
               <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-accent/15 text-accent">
                 {t("destinationsPage.draftBadge")}
               </span>
-            ) : routeVia ? (
+            ) : (
               <span
-                className="shrink-0 truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-medium bg-ov-8 text-t4"
-                title={t("destinationsPage.inheritedVia", { pattern: routeVia })}
+                className={`shrink-0 truncate max-w-[14rem] rounded px-1.5 py-0.5 text-[10px] font-medium ${source.type === "override" ? "bg-warning/10 text-warning" : "bg-ov-8 text-t4"}`}
+                title={why}
               >
-                {t("destinationsPage.inheritedVia", { pattern: routeVia })}
-              </span>
-            ) : groupVia && !routes[host] ? (
-              <span className="shrink-0 truncate max-w-[12rem] rounded px-1.5 py-0.5 text-[10px] font-medium bg-ov-8 text-t4">{groupVia.name}</span>
-            ) : null}
-            {liveProfileBadge && (
-              <span
-                className={`shrink-0 truncate max-w-[10rem] rounded px-1.5 py-0.5 text-[10px] font-semibold ${liveProfileBadge.color.bg} ${liveProfileBadge.color.text}`}
-                title={t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
-              >
-                {t("destinationsPage.liveVia", { name: liveProfileBadge.name })}
+                {why}
               </span>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-3">
-            <RouteBadge
-              route={route}
-              children={children}
-              onChange={(r) => setRule(host, r)}
-            />
+            <RouteBadge route={route} onChange={(r) => setRoute(host, r)} />
             <PriorityBadge priority={priority} onChange={(p) => setPriority(host, p)} />
             {routes[host] && <button type="button" onClick={() => deleteRule(host)} title={t("destinationsPage.resetOverride")} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1"><X className="h-3.5 w-3.5" /></button>}
           </div>
@@ -494,7 +439,7 @@ export function DestinationsPage() {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [noGroup]);
+  }, [notLoaded]);
 
   // Measure the real row height once rows are on screen (offsetHeight excludes
   // the mb-1.5 = 6px margin, so add it back). Self-corrects any estimate drift.
@@ -521,11 +466,11 @@ export function DestinationsPage() {
         {selectedScope && <button type="button" onClick={() => { setSelectedScope(null); setFilter(""); }} className="rounded p-1 text-t3 hover:bg-ov-6" aria-label={t("destinationsPage.back")}><ArrowLeft className="h-4 w-4" /></button>}
         <h1 className="text-[15px] font-semibold text-t1">{selectedScope?.startsWith("group:") ? ruleGroups.find((g) => g.id === selectedScope.slice(6))?.name : selectedScope?.startsWith("site:") ? selectedScope.slice(5) : selectedScope === "ip" ? t("destinationsPage.ipAddresses") : t("destinationsPage.title")}</h1>
         {!selectedScope && <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>}
-        {!noGroup && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
+        {!notLoaded && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
       </div>
 
       {/* Filter bar */}
-      {!noGroup && (
+      {!notLoaded && (
         <div className="px-4 pt-2 pb-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t4" />
@@ -573,36 +518,69 @@ export function DestinationsPage() {
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
         className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs"
       >
-        {noGroup ? (
-          <p className="text-t4">{t("destinationsPage.noGroup")}</p>
+        {notLoaded ? (
+          <p className="text-t4">{t("destinationsPage.loadingRules")}</p>
         ) : !selectedScope ? (
           <div className="space-y-5 font-sans">
+            <p className="rounded-lg bg-ov-2 px-3 py-2 text-xs text-t3">{t("destinationsPage.evalOrder")}</p>
+            <section>
+              <button
+                type="button"
+                onClick={() => setShowOverrides((value) => !value)}
+                disabled={overrideKeys.length === 0}
+                className="mb-2 flex w-full items-center gap-1.5 border-b border-sep pb-2 text-left text-[11px] font-semibold tracking-wide text-t4 enabled:hover:text-t2"
+              >
+                {overrideKeys.length > 0 && <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showOverrides ? "rotate-90" : ""}`} />}
+                <span>{t("destinationsPage.overrides")} · {overrideKeys.length}</span>
+                <span className="ml-auto truncate font-normal">{overrideKeys.length === 0 ? t("destinationsPage.noOverrides") : t("destinationsPage.overridesHint")}</span>
+              </button>
+              {showOverrides && overrideKeys.length > 0 && <div className="space-y-1">
+                {overrideKeys.filter((key) => !filter || key.includes(filter.toLowerCase())).map((key) => <div key={key} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-t2">{key}</span>
+                  <RouteBadge route={routes[key]} onChange={(r) => setRoute(key, r)} />
+                  <button type="button" onClick={() => deleteRule(key)} title={t("destinationsPage.resetOverride")} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1"><X className="h-3.5 w-3.5" /></button>
+                </div>)}
+              </div>}
+            </section>
             <section>
               <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4">
                 <span>{t("destinationsPage.namedGroups")} · {ruleGroups.length}</span>
               </div>
-              {ruleGroups.length === 0 && <p className="py-5 text-sm text-t4">{t("destinationsPage.noNamedGroups")}</p>}
-              <div className="space-y-1">
-                {ruleGroups.filter((g) => !filter || g.name.toLowerCase().includes(filter.toLowerCase()) || g.domains.some((d) => d.includes(filter.toLowerCase()))).map((group) => {
+              <ol className="space-y-1">
+                {ruleGroups.map((group, index) => ({ group, index })).filter(({ group: g }) => !filter || g.name.toLowerCase().includes(filter.toLowerCase()) || g.domains.some((d) => d.includes(filter.toLowerCase()))).map(({ group, index }) => {
                   const matched = sorted.filter((host) => group.domains.some((domain) => matchesDomain(host, domain)));
-                  return <div key={group.id} className="group flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                  return <li key={group.id} className="group flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
+                    <span className="w-5 shrink-0 text-right font-mono text-xs text-t4">{index + 1}</span>
                     <button type="button" onClick={() => { setSelectedScope(`group:${group.id}`); setFilter(""); setScrollTop(0); }} className="min-w-0 flex-1 text-left">
                       <div className="truncate text-sm font-medium text-t1">{group.name}</div>
-                      <div className="mt-0.5 truncate text-[11px] text-t4">{group.domains.join(" · ")}</div>
+                      <div className="mt-0.5 truncate text-[11px] text-t4">{t("destinationsPage.scopeCount", { count: group.domains.length })} · {group.domains.join(" · ")}</div>
                     </button>
-                    <span className="shrink-0 text-xs text-t3">{routeLabel(group.route, children[0]?.name, children.find((p) => group.route.kind === "tunnel" && p.id === group.route.profileId)?.name)}</span>
-                    <span className="w-12 shrink-0 text-right font-mono text-xs text-t4">{matched.length}</span>
+                    <span className="w-10 shrink-0 text-right font-mono text-xs text-t4" title={t("destinationsPage.matchedCount", { count: matched.length })}>{matched.length}</span>
+                    <RouteBadge route={group.route} onChange={(kind) => saveRuleGroup({ ...group, route: { kind } })} />
+                    <div className="flex shrink-0 flex-col">
+                      <button type="button" disabled={index === 0} onClick={() => moveRuleGroup(group.id, -1)} className="rounded text-t4 hover:bg-ov-8 hover:text-t1 disabled:opacity-25 disabled:hover:bg-transparent" aria-label={t("destinationsPage.moveUp")} title={t("destinationsPage.moveUp")}><ChevronUp className="h-3.5 w-3.5" /></button>
+                      <button type="button" disabled={index === ruleGroups.length - 1} onClick={() => moveRuleGroup(group.id, 1)} className="rounded text-t4 hover:bg-ov-8 hover:text-t1 disabled:opacity-25 disabled:hover:bg-transparent" aria-label={t("destinationsPage.moveDown")} title={t("destinationsPage.moveDown")}><ChevronDown className="h-3.5 w-3.5" /></button>
+                    </div>
                     <button type="button" onClick={() => openEditor(group)} className="rounded p-1 text-t4 hover:bg-ov-8 hover:text-t1" aria-label={t("destinationsPage.editGroup")}><Pencil className="h-3.5 w-3.5" /></button>
-                  </div>;
+                  </li>;
                 })}
-              </div>
+                {ruleGroups.length === 0 && <li className="py-3 text-sm text-t4">{t("destinationsPage.noNamedGroups")}</li>}
+                <li className="flex items-center gap-3 rounded-lg border border-dashed border-bdr bg-ov-4 px-3 py-2.5">
+                  <span className="w-5 shrink-0 text-right font-mono text-xs text-t4">∗</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-t1">{t("destinationsPage.finalRoute")}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-t4">{t("destinationsPage.finalRouteHint")}</div>
+                  </div>
+                  <FinalRouteToggle route={finalRoute} onChange={setFinalRoute} />
+                </li>
+              </ol>
             </section>
             {routingSuggestions.length > 0 && <section>
               <div className="mb-2 flex items-center justify-between border-b border-sep pb-2 text-[11px] font-semibold tracking-wide text-t4"><span>{t("destinationsPage.routingScopes")} · {routingSuggestions.length}</span><span>{t("destinationsPage.routingSourceSummary")}</span></div>
               <p className="mb-2 text-xs text-t4">{t("destinationsPage.routingScopeHint")}</p>
               <div className="space-y-1">
                 {routingSuggestions.filter((s) => !filter || suggestionName(s).toLowerCase().includes(filter.toLowerCase()) || s.name.toLowerCase().includes(filter.toLowerCase()) || s.hosts.some((host) => host.includes(filter.toLowerCase()))).map((suggestion) => <div key={suggestion.id} className="flex items-center gap-3 rounded-lg border border-sep bg-ov-2 px-3 py-2.5">
-                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{i18n.language.startsWith("zh") ? suggestion.sourceZh ?? suggestion.source : suggestion.source} · {suggestion.suggestedRoute === "direct" ? t("destinationsPage.routeDirect") : t("destinationsPage.routeDefault")}{suggestion.coveredHosts > 0 && ` · ${t("destinationsPage.alreadyGrouped", { count: suggestion.coveredHosts })}`}</div></div>
+                  <div className="min-w-0 flex-1"><div className="text-sm font-medium text-t1">{suggestionName(suggestion)}</div><div className="mt-0.5 text-[11px] text-t4">{i18n.language.startsWith("zh") ? suggestion.sourceZh ?? suggestion.source : suggestion.source} · {routeLabel(suggestion.suggestedRoute, t)}{suggestion.coveredHosts > 0 && ` · ${t("destinationsPage.alreadyGrouped", { count: suggestion.coveredHosts })}`}</div></div>
                   <span className="shrink-0 font-mono text-xs text-t4">{suggestion.hosts.length}</span>
                   <button type="button" onClick={() => openRoutingSuggestion(suggestion)} className="shrink-0 rounded-md border border-bdr px-2 py-1 text-xs text-t2 hover:border-accent hover:text-accent">{t("destinationsPage.reviewSuggestion")}</button>
                 </div>)}
@@ -663,7 +641,7 @@ export function DestinationsPage() {
           <label className="mb-3 block text-xs font-medium text-t3">{t("destinationsPage.groupDomains")}<textarea value={draftDomains} onChange={(e) => setDraftDomains(e.target.value)} rows={5} className="mt-1 w-full resize-y rounded-md border border-bdr bg-ov-2 px-3 py-2 font-mono text-sm text-t1 outline-none focus:border-accent" /></label>
           <p className="mb-3 text-xs text-t4">{t("destinationsPage.domainHint")}</p>
           {invalidDomains.length > 0 && <p className="mb-3 text-xs text-danger">{t("destinationsPage.invalidDomains", { domains: invalidDomains.join(", ") })}</p>}
-          <label className="mb-4 block text-xs font-medium text-t3">{t("destinationsPage.route")}<select value={draftRoute} onChange={(e) => setDraftRoute(e.target.value)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1"><option value="default">{t("destinationsPage.routeDefault")}</option>{children.map((p) => <option key={p.id} value={`tunnel:${p.id}`}>{p.name}</option>)}<option value="direct">{t("destinationsPage.routeDirect")}</option><option value="blocked">{t("destinationsPage.routeBlocked")}</option></select></label>
+          <label className="mb-4 block text-xs font-medium text-t3">{t("destinationsPage.route")}<select value={draftRoute} onChange={(e) => setDraftRoute(e.target.value as RouteMode)} className="mt-1 w-full rounded-md border border-bdr bg-ov-2 px-3 py-2 text-sm text-t1">{ROUTE_KINDS.map((kind) => <option key={kind} value={kind}>{routeLabel(kind, t)}</option>)}</select></label>
           <div className="mb-4 border-t border-sep pt-3 text-xs text-t3"><div className="font-medium">{t("destinationsPage.previewCount", { count: previewHosts.length })}</div><div className="mt-1 max-h-20 overflow-y-auto font-mono text-t4">{previewHosts.slice(0, 8).join(" · ")}</div></div>
           {(previewGroupOverlap > 0 || previewRuleOverrides > 0) && <p className="mb-4 text-xs text-warning">{t("destinationsPage.previewOverlap", { groups: previewGroupOverlap, rules: previewRuleOverrides })}</p>}
           {draftEvidence.length > 0 && <div className="mb-4 space-y-1 text-xs text-t3"><div className="font-medium">{t("destinationsPage.officialEvidence")}</div>{draftEvidence.map((item) => <button key={item.domain} type="button" onClick={() => openUrl(item.url)} className="block text-left text-accent hover:underline">{item.product} · {item.domain.slice(1)} ↗</button>)}</div>}

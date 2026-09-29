@@ -117,7 +117,7 @@ func (d *Data) SelectGroup(id string) error {
 // activates it.
 func (d *Data) CreateGroup() (string, error) {
 	g := &store.Group{ID: store.NewID(), Name: "New Group", ChildrenIDs: []string{},
-		Rules: map[string]store.RouteMode{}, Priorities: map[string]int{}}
+		Priorities: map[string]int{}}
 	if err := store.SaveGroup(g); err != nil {
 		return "", err
 	}

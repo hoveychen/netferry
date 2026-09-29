@@ -110,16 +110,7 @@ func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort i
 		return
 	}
 
-	dispatchClient := client
-	var profileID string
-	if sm, ok := client.(*mux.SessionManager); ok {
-		if id, pool := sm.PoolFor(dstAddr, host); pool != nil {
-			dispatchClient = pool
-			profileID = id
-		}
-	}
-
-	muxConn, err := dispatchClient.OpenTCP(family, dstIP, dstPort, priority)
+	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("%s: open channel to %s:%d: %v", tag, dstIP, dstPort, err)
 		return
@@ -128,7 +119,7 @@ func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort i
 
 	var connID uint64
 	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex, profileID)
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex)
 	}
 
 	touch := func() {

@@ -17,8 +17,8 @@ import (
 )
 
 // backendConfig holds the per-profile SSH + pool parameters needed to bring up
-// one tunnel backend. Populated either from CLI flags (single-profile mode) or
-// from a ProfileGroup child (--group mode).
+// the tunnel backend. Populated from CLI flags (+ optional --profile) or, in
+// the TUI, from a stored profile.
 type backendConfig struct {
 	profileID    string
 	remote       string
@@ -148,17 +148,12 @@ func backendCfgFromProfile(p *profile.Profile) *backendConfig {
 
 // connectBackend performs the full SSH-dial → deploy → mux-pool → reconnect
 // flow for one backendConfig. The returned backend is ready to serve traffic.
-//
-// primaryRTT controls whether this backend's first tunnel feeds the global
-// keepalive RTT on stats.Counters — used for the legacy single-number display.
-// In multi-profile mode, only one backend (conventionally the first) should
-// pass true.
+// Its first pool member feeds the global keepalive RTT on stats.Counters.
 func connectBackend(
 	cfg *backendConfig,
 	serverArgs []string,
 	counters *stats.Counters,
 	muxErrCh chan<- error,
-	primaryRTT bool,
 ) (*backend, error) {
 	hc, err := sshconn.ParseSSHConfig(cfg.remote)
 	if err != nil {
@@ -216,14 +211,14 @@ func connectBackend(
 	clients := make([]*mux.MuxClient, n)
 	tunnelCounters := make([]*stats.TunnelCounters, n)
 	for i, sc := range sshClients {
-		tc := counters.RegisterTunnel(cfg.profileID, i+1)
+		tc := counters.RegisterTunnel(i + 1)
 		tunnelCounters[i] = tc
-		rttCb := buildRTTCallback(counters, tc, primaryRTT && i == 0)
+		rttCb := buildRTTCallback(counters, tc, i == 0)
 		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
 
 		var c *mux.MuxClient
 		if cfg.splitConn {
-			c, err = trySplitMuxClient(sc, hc, ac, cfg.jumpHosts, remoteCmd, i+1, n, buildCtrlRTTCallback(counters, primaryRTT && i == 0))
+			c, err = trySplitMuxClient(sc, hc, ac, cfg.jumpHosts, remoteCmd, i+1, n, buildCtrlRTTCallback(counters, i == 0))
 		} else {
 			c, err = tryMuxClient(sc, remoteCmd, i+1, n)
 		}

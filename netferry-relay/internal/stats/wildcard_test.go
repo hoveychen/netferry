@@ -25,20 +25,20 @@ func TestWildcardCandidates(t *testing.T) {
 
 func TestLookupRouteModeWildcard(t *testing.T) {
 	c := NewCounters()
-	c.SetRouteModes(map[string]RouteMode{
+	c.SetRouteTable(RouteTable{Overrides: map[string]RouteMode{
 		"*.eastmoney.com":     {Kind: RouteDirect},
 		"push2.eastmoney.com": {Kind: RouteBlocked}, // exact override of the wildcard
-	})
+	}})
 
 	cases := []struct {
 		host string
 		want RouteKind
 	}{
-		{"push2.eastmoney.com", RouteBlocked},        // exact wins over wildcard
-		{"11.push2.eastmoney.com", RouteDirect},      // wildcard matches across sub-levels
-		{"newspush.eastmoney.com", RouteDirect},      // wildcard matches one sub-level
-		{"eastmoney.com", RouteTunnel},               // apex not matched by *.eastmoney.com
-		{"example.org", RouteTunnel},                 // unrelated host falls back to tunnel
+		{"push2.eastmoney.com", RouteBlocked},   // exact wins over wildcard
+		{"11.push2.eastmoney.com", RouteDirect}, // wildcard matches across sub-levels
+		{"newspush.eastmoney.com", RouteDirect}, // wildcard matches one sub-level
+		{"eastmoney.com", RouteTunnel},          // apex not matched by *.eastmoney.com
+		{"example.org", RouteTunnel},            // unrelated host falls back to tunnel
 	}
 	for _, tc := range cases {
 		if got := c.LookupRouteMode("", tc.host).Kind; got != tc.want {
@@ -49,10 +49,10 @@ func TestLookupRouteModeWildcard(t *testing.T) {
 
 func TestLookupRouteModeMostSpecificWildcard(t *testing.T) {
 	c := NewCounters()
-	c.SetRouteModes(map[string]RouteMode{
+	c.SetRouteTable(RouteTable{Overrides: map[string]RouteMode{
 		"*.eastmoney.com":       {Kind: RouteDirect},
 		"*.push2.eastmoney.com": {Kind: RouteBlocked},
-	})
+	}})
 
 	// The narrower wildcard wins for hosts it covers.
 	if got := c.LookupRouteMode("", "11.push2.eastmoney.com").Kind; got != RouteBlocked {

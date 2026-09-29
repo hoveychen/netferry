@@ -12,36 +12,13 @@ import (
 
 // engineConfigForSpec resolves a TUI connect request into an EngineConfig the
 // same way the desktop's sidecar resolves it into CLI flags: process-wide
-// knobs and capture subnets come from the solo profile or the group seed
-// (children[0]); every child gets its own backend; the LAN proxy ports come
-// from global settings.
+// knobs, capture subnets and the backend come from the profile; the LAN proxy
+// ports come from global settings.
 func engineConfigForSpec(spec tui.ConnectSpec, verbose bool) (*EngineConfig, error) {
 	seed := spec.Profile
-	var backends []*backendConfig
-	var gf *GroupFile
-	if spec.Group != nil {
-		if len(spec.Children) == 0 {
-			return nil, fmt.Errorf("group %q has no profiles", spec.Group.Name)
-		}
-		seed = spec.Children[0]
-		defaultID := seed.ID
-		for _, id := range spec.Group.ChildrenIDs {
-			if id != "" {
-				defaultID = id
-				break
-			}
-		}
-		gf = &GroupFile{ID: spec.Group.ID, Name: spec.Group.Name, DefaultProfileID: defaultID, Children: spec.Children}
-		for i := range spec.Children {
-			backends = append(backends, backendCfgFromProfile(&spec.Children[i]))
-		}
-	} else {
-		backends = []*backendConfig{backendCfgFromProfile(&seed)}
-	}
-	for _, b := range backends {
-		if strings.TrimSpace(b.remote) == "" {
-			return nil, fmt.Errorf("profile %q has no remote", b.profileID)
-		}
+	backend := backendCfgFromProfile(&seed)
+	if strings.TrimSpace(backend.remote) == "" {
+		return nil, fmt.Errorf("profile %q has no remote", backend.profileID)
 	}
 
 	var subnets []string
@@ -58,8 +35,7 @@ func engineConfigForSpec(spec tui.ConnectSpec, verbose bool) (*EngineConfig, err
 		method = "auto"
 	}
 	cfg := &EngineConfig{
-		Backends:       backends,
-		GroupFile:      gf,
+		Backend:        backend,
 		SubnetStrings:  subnets,
 		FirewallMethod: method,
 		AutoNets:       seed.AutoNets,

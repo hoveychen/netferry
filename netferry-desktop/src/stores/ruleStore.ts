@@ -1,64 +1,52 @@
 import { create } from "zustand";
-import {
-  getGlobalSettings,
-  getGroup,
-  getPriorities,
-  savePriorities,
-  saveGroup,
-} from "@/api";
+import { getPriorities, getRules, savePriorities, saveRules } from "@/api";
 import type {
   DestinationPriorities,
-  ProfileGroup,
+  FinalRoute,
   RouteMode,
-  RouteModeV2,
+  RouteRule,
   RuleGroup,
+  RuleSet,
 } from "@/types";
-import { compileRoutes } from "@/lib/ruleGroups";
+import { routesPayload } from "@/lib/ruleGroups";
+
+const EMPTY_RULE_SET: RuleSet = {
+  rules: {},
+  ruleGroups: [],
+  finalRoute: { kind: "tunnel" },
+  knownHosts: [],
+};
 
 /**
- * Routes are persisted inside the active ProfileGroup's `rules` map as
- * `RouteModeV2` tagged unions and pushed to the sidecar in the same shape.
- * Priorities remain in the legacy priorities.json for now (separate scope).
+ * Routing rules are one global RuleSet (`rules.json`), independent of profile
+ * groups: per-host overrides (`rules`), ordered rule groups and the final
+ * route. They are pushed to the sidecar as-is; the tunnel does the matching.
+ * Priorities remain in the legacy priorities.json (separate scope).
  */
 interface RuleStore {
   priorities: DestinationPriorities;
-  /** Destination host → RouteModeV2. Mirrors active group's `rules`. */
-  routes: Record<string, RouteModeV2>;
-  /** In-memory copy of active group (needed so setRule/deleteRule can persist). */
-  activeGroup: ProfileGroup | null;
-  /**
-   * "solo"  = user clicked a single profile directly. We suppress the `/group`
-   *           push so ConnectionPage renders the single-profile UI.
-   * "group" = user clicked Connect All on a multi-profile group; the group
-   *           payload is pushed so ConnectionPage shows the per-profile breakdown.
-   * Default "solo".
-   */
-  connectionMode: "solo" | "group";
-  /**
-   * Called right before the next connect attempt. Updates which payload gets
-   * sent to the sidecar when SSE connects.
-   */
-  setConnectionMode: (mode: "solo" | "group") => void;
-  /** Load persisted rules (priorities + active group's rules) from Tauri. */
+  /** The global rule set. Empty until `loadRules` resolves. */
+  ruleSet: RuleSet;
+  /** True once the rule set has been read from disk. Setters are no-ops before
+   *  that so an early write can't clobber `rules.json` with the empty default. */
+  loaded: boolean;
+  /** Load persisted priorities and the global rule set from Tauri. */
   loadRules: () => Promise<void>;
   /** Set priority for a single host. Persists and syncs to sidecar. */
   setPriority: (host: string, priority: number) => void;
-  /** Set a RouteModeV2 rule for a host. Persists to the active group. */
-  setRule: (host: string, mode: RouteModeV2) => void;
-  /** Remove a rule for a host. Persists to the active group. */
+  /** Set a per-host override. */
+  setRoute: (host: string, route: RouteMode) => void;
+  /** Remove a per-host override. */
   deleteRule: (host: string) => void;
   saveRuleGroup: (group: RuleGroup) => void;
   deleteRuleGroup: (id: string) => void;
+  /** Move a rule group up (-1) or down (+1); order decides which group wins. */
+  moveRuleGroup: (id: string, delta: -1 | 1) => void;
+  setFinalRoute: (route: FinalRoute) => void;
   /**
-   * Back-compat: accept the legacy `RouteMode` string and forward to setRule.
-   * ConnectionPage still calls this with legacy strings.
-   */
-  setRoute: (host: string, route: RouteMode) => void;
-  /**
-   * Merge observed hosts into the active group's `knownHosts`. Called from
-   * connectionStore whenever the relay emits a destinations snapshot, so
-   * DestinationsPage can surface cross-session history. Skips the disk write
-   * when there's nothing new.
+   * Merge observed hosts into `ruleSet.knownHosts`. Called from connectionStore
+   * whenever the relay emits a destinations snapshot, so DestinationsPage can
+   * surface cross-session history. Skips the disk write when there's nothing new.
    */
   recordObservedHosts: (hosts: string[]) => void;
 }
@@ -66,12 +54,12 @@ interface RuleStore {
 let currentStatsUrl: string | null = null;
 
 /**
- * Upper bound on the observed-host history persisted in a group's `knownHosts`.
+ * Upper bound on the observed-host history persisted in `knownHosts`.
  * A long browsing session touches thousands of unique hosts; left unbounded this
  * list grows forever (and is rewritten to disk on every new host), and it is the
  * dominant contributor to the destinations/rules page row count. We keep only
  * the most-recently-observed hosts. Hosts with a configured route/priority are
- * surfaced independently from the `routes`/`priorities` maps, so trimming here
+ * surfaced independently from the `rules`/`priorities` maps, so trimming here
  * never hides a configured rule.
  */
 const MAX_KNOWN_HOSTS = 1000;
@@ -90,39 +78,14 @@ async function syncPrioritiesToSidecar(priorities: DestinationPriorities) {
   }
 }
 
-/** Push all route modes to the Go sidecar via its HTTP API as V2 tagged unions. */
-async function syncRoutesToSidecar(rules: Record<string, RouteModeV2>, groups: RuleGroup[] = []) {
+/** Push the routing rules to the Go sidecar. */
+async function syncRoutesToSidecar(ruleSet: RuleSet) {
   if (!currentStatsUrl) return;
   try {
     await fetch(`${currentStatsUrl}/routes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(compileRoutes(groups, rules)),
-    });
-  } catch {
-    // Sidecar may not be ready yet; ignore.
-  }
-}
-
-/**
- * Push the active group payload to the Go sidecar's `/group` endpoint. Matches
- * `stats.ActiveGroup` on the relay side. Pass `null` to clear (legacy mode).
- */
-async function syncActiveGroupToSidecar(group: ProfileGroup | null) {
-  if (!currentStatsUrl) return;
-  try {
-    const body = group
-      ? JSON.stringify({
-          id: group.id,
-          name: group.name,
-          defaultProfileId: group.childrenIds[0] ?? "",
-          profileIds: group.childrenIds,
-        })
-      : "null";
-    await fetch(`${currentStatsUrl}/group`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
+      body: JSON.stringify(routesPayload(ruleSet.rules, ruleSet.ruleGroups, ruleSet.finalRoute)),
     });
   } catch {
     // Sidecar may not be ready yet; ignore.
@@ -132,12 +95,11 @@ async function syncActiveGroupToSidecar(group: ProfileGroup | null) {
 /** Called by connectionStore when SSE connects to set the sidecar URL and push current rules. */
 export function onSidecarConnected(url: string) {
   currentStatsUrl = url;
-  const { priorities, routes, activeGroup, connectionMode } = useRuleStore.getState();
+  const { priorities, ruleSet, loaded } = useRuleStore.getState();
   syncPrioritiesToSidecar(priorities);
-  syncRoutesToSidecar(routes, activeGroup?.ruleGroups ?? []);
-  // Solo mode explicitly clears the group on the sidecar so legacy/single-profile
-  // UI paths kick in on ConnectionPage.
-  syncActiveGroupToSidecar(connectionMode === "group" ? activeGroup : null);
+  // Before the first load the sidecar already has the rules the desktop pushed
+  // at startup; don't overwrite them with the empty default.
+  if (loaded) syncRoutesToSidecar(ruleSet);
 }
 
 /** Called by connectionStore when SSE disconnects. */
@@ -145,159 +107,121 @@ export function onSidecarDisconnected() {
   currentStatsUrl = null;
 }
 
-/** Translate a legacy `RouteMode` string into a `RouteModeV2` tagged union. */
-function legacyToV2(route: RouteMode): RouteModeV2 {
-  switch (route) {
-    case "tunnel":
-      return { kind: "default" };
-    case "direct":
-      return { kind: "direct" };
-    case "blocked":
-      return { kind: "blocked" };
-  }
-}
+export const useRuleStore = create<RuleStore>((set, get) => {
+  /** Persist a new rule set; push it to the sidecar when routing changed. */
+  const commit = (next: RuleSet, pushRoutes = true) => {
+    set({ ruleSet: next });
+    saveRules(next).catch((err) => console.error("Failed to persist rules:", err));
+    if (pushRoutes) syncRoutesToSidecar(next);
+  };
 
-export const useRuleStore = create<RuleStore>((set, get) => ({
-  priorities: {},
-  routes: {},
-  activeGroup: null,
-  connectionMode: "solo",
+  /** Apply `update` to the loaded rule set; no-op before the first load. */
+  const update = (fn: (current: RuleSet) => RuleSet | null) => {
+    if (!get().loaded) return;
+    const next = fn(get().ruleSet);
+    if (next) commit(next);
+  };
 
-  setConnectionMode: (mode) => {
-    if (get().connectionMode === mode) return;
-    set({ connectionMode: mode });
-    // Re-push the group payload so a live sidecar sees the mode flip without
-    // requiring a reconnect.
-    const group = get().activeGroup;
-    syncActiveGroupToSidecar(mode === "group" ? group : null);
-  },
+  return {
+    priorities: {},
+    ruleSet: EMPTY_RULE_SET,
+    loaded: false,
 
-  loadRules: async () => {
-    const [priorities, settings] = await Promise.all([
-      getPriorities(),
-      getGlobalSettings(),
-    ]);
-    let activeGroup: ProfileGroup | null = null;
-    let routes: Record<string, RouteModeV2> = {};
-    const activeId = settings.activeGroupId ?? null;
-    if (activeId) {
-      try {
-        const group = await getGroup(activeId);
-        if (group) {
-          activeGroup = group;
-          routes = { ...group.rules };
+    loadRules: async () => {
+      const [priorities, ruleSet] = await Promise.all([
+        getPriorities().catch((err) => {
+          console.error("Failed to load priorities:", err);
+          return {} as DestinationPriorities;
+        }),
+        getRules().catch((err) => {
+          console.error("Failed to load rules:", err);
+          return null;
+        }),
+      ]);
+      set({ priorities });
+      syncPrioritiesToSidecar(priorities);
+      if (!ruleSet) return;
+      const normalized: RuleSet = {
+        rules: ruleSet.rules ?? {},
+        ruleGroups: ruleSet.ruleGroups ?? [],
+        finalRoute: ruleSet.finalRoute ?? EMPTY_RULE_SET.finalRoute,
+        knownHosts: ruleSet.knownHosts ?? [],
+      };
+      set({ ruleSet: normalized, loaded: true });
+      // Re-push so a mid-session reload propagates without reconnecting.
+      // No-op when not connected.
+      syncRoutesToSidecar(normalized);
+    },
+
+    setPriority: (host, priority) => {
+      const next = { ...get().priorities };
+      if (priority === 3) {
+        delete next[host];
+      } else {
+        next[host] = priority;
+      }
+      set({ priorities: next });
+      savePriorities(next).catch(() => {});
+      syncPrioritiesToSidecar(next);
+    },
+
+    setRoute: (host, route) =>
+      update((rs) => ({ ...rs, rules: { ...rs.rules, [host]: { kind: route } as RouteRule } })),
+
+    deleteRule: (host) =>
+      update((rs) => {
+        if (!(host in rs.rules)) return null;
+        const rules = { ...rs.rules };
+        delete rules[host];
+        return { ...rs, rules };
+      }),
+
+    saveRuleGroup: (ruleGroup) =>
+      update((rs) => {
+        const ruleGroups = [...rs.ruleGroups];
+        const index = ruleGroups.findIndex((item) => item.id === ruleGroup.id);
+        if (index >= 0) ruleGroups[index] = ruleGroup;
+        else ruleGroups.push(ruleGroup);
+        return { ...rs, ruleGroups };
+      }),
+
+    deleteRuleGroup: (id) =>
+      update((rs) => ({ ...rs, ruleGroups: rs.ruleGroups.filter((item) => item.id !== id) })),
+
+    moveRuleGroup: (id, delta) =>
+      update((rs) => {
+        const from = rs.ruleGroups.findIndex((item) => item.id === id);
+        const to = from + delta;
+        if (from < 0 || to < 0 || to >= rs.ruleGroups.length) return null;
+        const ruleGroups = [...rs.ruleGroups];
+        [ruleGroups[from], ruleGroups[to]] = [ruleGroups[to], ruleGroups[from]];
+        return { ...rs, ruleGroups };
+      }),
+
+    setFinalRoute: (finalRoute) => update((rs) => ({ ...rs, finalRoute })),
+
+    recordObservedHosts: (hosts) => {
+      const { loaded, ruleSet } = get();
+      if (!loaded) return;
+      const existing = new Set(ruleSet.knownHosts);
+      const additions: string[] = [];
+      for (const h of hosts) {
+        if (!h) continue;
+        if (!existing.has(h)) {
+          existing.add(h);
+          additions.push(h);
         }
-      } catch (err) {
-        console.error("Failed to load active group:", err);
       }
-    }
-    set({ priorities, routes, activeGroup });
-    // Re-push to the sidecar so mid-session reloads (e.g. active-group
-    // switch) propagate without reconnecting. No-op when not connected.
-    syncPrioritiesToSidecar(priorities);
-    syncRoutesToSidecar(routes, activeGroup?.ruleGroups ?? []);
-    syncActiveGroupToSidecar(get().connectionMode === "group" ? activeGroup : null);
-  },
-
-  setPriority: (host, priority) => {
-    const next = { ...get().priorities };
-    if (priority === 3) {
-      delete next[host];
-    } else {
-      next[host] = priority;
-    }
-    set({ priorities: next });
-    savePriorities(next).catch(() => {});
-    syncPrioritiesToSidecar(next);
-  },
-
-  setRule: (host, mode) => {
-    const group = get().activeGroup;
-    const nextRoutes: Record<string, RouteModeV2> = { ...get().routes };
-    // An explicit default may override a broader scope group's route.
-    nextRoutes[host] = mode;
-    set({ routes: nextRoutes });
-    if (group) {
-      const nextGroup: ProfileGroup = { ...group, rules: nextRoutes };
-      set({ activeGroup: nextGroup });
-      saveGroup(nextGroup).catch((err) => {
-        console.error("Failed to persist group rules:", err);
-      });
-    }
-    syncRoutesToSidecar(nextRoutes, group?.ruleGroups ?? []);
-  },
-
-  deleteRule: (host) => {
-    const group = get().activeGroup;
-    const nextRoutes: Record<string, RouteModeV2> = { ...get().routes };
-    delete nextRoutes[host];
-    set({ routes: nextRoutes });
-    if (group) {
-      const nextGroup: ProfileGroup = { ...group, rules: nextRoutes };
-      set({ activeGroup: nextGroup });
-      saveGroup(nextGroup).catch((err) => {
-        console.error("Failed to persist group rules:", err);
-      });
-    }
-    syncRoutesToSidecar(nextRoutes, group?.ruleGroups ?? []);
-  },
-
-  saveRuleGroup: (ruleGroup) => {
-    const group = get().activeGroup;
-    if (!group) return;
-    const ruleGroups = [...(group.ruleGroups ?? [])];
-    const index = ruleGroups.findIndex((item) => item.id === ruleGroup.id);
-    if (index >= 0) ruleGroups[index] = ruleGroup;
-    else ruleGroups.push(ruleGroup);
-    const nextGroup = { ...group, ruleGroups };
-    set({ activeGroup: nextGroup });
-    saveGroup(nextGroup).catch((err) => console.error("Failed to save rule group:", err));
-    syncRoutesToSidecar(get().routes, ruleGroups);
-  },
-
-  deleteRuleGroup: (id) => {
-    const group = get().activeGroup;
-    if (!group) return;
-    const ruleGroups = (group.ruleGroups ?? []).filter((item) => item.id !== id);
-    const nextGroup = { ...group, ruleGroups };
-    set({ activeGroup: nextGroup });
-    saveGroup(nextGroup).catch((err) => console.error("Failed to delete rule group:", err));
-    syncRoutesToSidecar(get().routes, ruleGroups);
-  },
-
-  setRoute: (host, route) => {
-    // Legacy callers (ConnectionPage) pass the old `"tunnel"|"direct"|"blocked"`
-    // string. Forward through the V2 path.
-    get().setRule(host, legacyToV2(route));
-  },
-
-  recordObservedHosts: (hosts) => {
-    const group = get().activeGroup;
-    if (!group) return;
-    const existing = new Set(group.knownHosts ?? []);
-    const additions: string[] = [];
-    for (const h of hosts) {
-      if (!h) continue;
-      if (!existing.has(h)) {
-        existing.add(h);
-        additions.push(h);
+      if (additions.length === 0) return;
+      let knownHosts = [...ruleSet.knownHosts, ...additions];
+      // Cap the history to the most-recent MAX_KNOWN_HOSTS (additions are appended,
+      // so the tail is the newest). Trimming the front drops only stale observed
+      // hosts, never configured rules.
+      if (knownHosts.length > MAX_KNOWN_HOSTS) {
+        knownHosts = knownHosts.slice(knownHosts.length - MAX_KNOWN_HOSTS);
       }
-    }
-    if (additions.length === 0) return;
-    let nextKnown = [...(group.knownHosts ?? []), ...additions];
-    // Cap the history to the most-recent MAX_KNOWN_HOSTS (additions are appended,
-    // so the tail is the newest). Trimming the front drops only stale observed
-    // hosts, never configured rules.
-    if (nextKnown.length > MAX_KNOWN_HOSTS) {
-      nextKnown = nextKnown.slice(nextKnown.length - MAX_KNOWN_HOSTS);
-    }
-    const nextGroup: ProfileGroup = {
-      ...group,
-      knownHosts: nextKnown,
-    };
-    set({ activeGroup: nextGroup });
-    saveGroup(nextGroup).catch((err) => {
-      console.error("Failed to persist group knownHosts:", err);
-    });
-  },
-}));
+      // knownHosts doesn't affect routing; skip the sidecar push.
+      commit({ ...ruleSet, knownHosts }, false);
+    },
+  };
+});

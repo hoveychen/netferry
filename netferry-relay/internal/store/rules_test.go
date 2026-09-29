@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/hoveychen/netferry/relay/internal/store"
@@ -54,21 +53,15 @@ func TestMatchesDomain(t *testing.T) {
 	}
 }
 
-func TestCompileRoutes(t *testing.T) {
-	direct := store.RouteMode{Kind: "direct"}
-	blocked := store.RouteMode{Kind: "blocked"}
-	tun := store.RouteMode{Kind: "tunnel", ProfileID: "p2"}
+func TestRuleGroupForFirstMatch(t *testing.T) {
 	groups := []store.RuleGroup{
-		{ID: "1", Domains: []string{"example.com", "=api.x.com", "bad domain"}, Route: direct},
-		{ID: "2", Domains: []string{"example.com"}, Route: blocked},
+		{ID: "broad", Domains: []string{"example.com", "bad domain"}, Route: store.RouteMode{Kind: "direct"}},
+		{ID: "exact", Domains: []string{"=api.example.com"}, Route: store.RouteMode{Kind: "blocked"}},
 	}
-	got := store.CompileRoutes(groups, map[string]store.RouteMode{"example.com": tun})
-	want := map[string]store.RouteMode{
-		"example.com":   tun,
-		"*.example.com": blocked,
-		"api.x.com":     direct,
+	if g := store.RuleGroupFor(groups, "api.example.com"); g == nil || g.ID != "broad" {
+		t.Fatalf("first matching group should win, got %+v", g)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("CompileRoutes = %+v, want %+v", got, want)
+	if g := store.RuleGroupFor(groups, "other.net"); g != nil {
+		t.Fatalf("unexpected match %+v", g)
 	}
 }

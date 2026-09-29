@@ -30,18 +30,19 @@ func wildcardCandidates(host string) []string {
 	return out
 }
 
-// resolveRoute is a host's effective route: exact rule, else the most specific
-// wildcard; via names the wildcard that matched.
-func resolveRoute(host string, routes map[string]store.RouteMode) (mode store.RouteMode, via string) {
-	if m, ok := routes[host]; ok {
-		return m, ""
+// resolveOverride is a host's per-host override: exact rule, else the most
+// specific wildcard; via names the wildcard that matched. ok is false when no
+// override applies.
+func resolveOverride(host string, rules map[string]store.RouteMode) (mode store.RouteMode, via string, ok bool) {
+	if m, ok := rules[host]; ok {
+		return m, "", true
 	}
 	for _, c := range wildcardCandidates(host) {
-		if m, ok := routes[c]; ok {
-			return m, c
+		if m, ok := rules[c]; ok {
+			return m, c, true
 		}
 	}
-	return store.RouteMode{Kind: "default"}, ""
+	return store.RouteMode{}, "", false
 }
 
 // resolvePriority mirrors resolveRoute for the global priority map.
@@ -57,22 +58,12 @@ func resolvePriority(host string, prios map[string]int) int {
 	return stats.DefaultPriority
 }
 
-func sameRoute(a, b store.RouteMode) bool {
-	return a.Kind == b.Kind && (a.Kind != "tunnel" || a.ProfileID == b.ProfileID)
-}
-
-func routeKey(m store.RouteMode) string {
-	if m.Kind == "tunnel" {
-		return "tunnel:" + m.ProfileID
-	}
-	return m.Kind
-}
+// routeKey / parseRouteKey map a route to and from its option value; legacy
+// kinds (e.g. the catalog's "default") collapse to tunnel.
+func routeKey(m store.RouteMode) string { return store.NormalizeRouteKind(m.Kind) }
 
 func parseRouteKey(k string) store.RouteMode {
-	if id, ok := strings.CutPrefix(k, "tunnel:"); ok {
-		return store.RouteMode{Kind: "tunnel", ProfileID: id}
-	}
-	return store.RouteMode{Kind: k}
+	return store.RouteMode{Kind: store.NormalizeRouteKind(k)}
 }
 
 // isIPHost matches tldts parse().isIp for the hosts the tunnel reports.
@@ -137,12 +128,11 @@ type siteGroup struct {
 // destModel is everything the Destinations page derives from the store and
 // the live snapshot; rebuilt only when either changes.
 type destModel struct {
-	group      *store.Group
 	ruleGroups []store.RuleGroup
 	matcher    *groupMatcher
 	priorities map[string]int
-	rules      map[string]store.RouteMode // per-host overrides (group.rules)
-	effective  map[string]store.RouteMode // compiled rule groups + overrides
+	rules      map[string]store.RouteMode // per-host overrides (rules.json rules)
+	final      store.RouteMode            // fallback when nothing matches
 	hosts      []string                   // sorted union
 	known      map[string]bool
 	live       map[string]stats.DestinationSnapshot
@@ -154,17 +144,14 @@ type destModel struct {
 
 func buildDestModel(d *Data, live []stats.DestinationSnapshot) *destModel {
 	m := &destModel{priorities: d.Priorities, live: map[string]stats.DestinationSnapshot{}, known: map[string]bool{}}
-	g := d.ActiveGroup()
-	m.group = g
-	if g != nil {
-		m.ruleGroups = g.RuleGroups
-		m.rules = g.Rules
-	}
+	rs := &d.RuleSet
+	m.ruleGroups = rs.RuleGroups
+	m.rules = rs.Rules
+	m.final = store.NormalizeFinalRoute(rs.FinalRoute)
 	if m.rules == nil {
 		m.rules = map[string]store.RouteMode{}
 	}
 	m.matcher = newGroupMatcher(m.ruleGroups)
-	m.effective = store.CompileRoutes(m.ruleGroups, m.rules)
 
 	add := func(h string) {
 		if h != "" {
@@ -181,10 +168,8 @@ func buildDestModel(d *Data, live []stats.DestinationSnapshot) *destModel {
 		m.live[s.Host] = s
 		add(s.Host)
 	}
-	if g != nil {
-		for _, h := range g.KnownHosts {
-			add(h)
-		}
+	for _, h := range rs.KnownHosts {
+		add(h)
 	}
 	for h := range m.known {
 		m.hosts = append(m.hosts, h)
@@ -218,6 +203,19 @@ func buildDestModel(d *Data, live []stats.DestinationSnapshot) *destModel {
 	m.services = catalog.SuggestServiceGroups(m.hosts, m.ruleGroups)
 	m.routing = catalog.SuggestRoutingScopes(m.hosts, m.ruleGroups)
 	return m
+}
+
+// route is host's effective route with the tunnel's precedence (stats
+// routes.go): per-host override (via names a matching wildcard), then the
+// first matching rule group, then the fallback.
+func (m *destModel) route(host string) (mode store.RouteMode, via string) {
+	if r, via, ok := resolveOverride(host, m.rules); ok {
+		return parseRouteKey(r.Kind), via
+	}
+	if gi := m.matcher.group(host); gi >= 0 {
+		return parseRouteKey(m.ruleGroups[gi].Route.Kind), ""
+	}
+	return m.final, ""
 }
 
 // groupHosts lists the known hosts covered by rule group i.

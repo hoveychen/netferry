@@ -204,22 +204,13 @@ func TestGroupsLegacyNormalize(t *testing.T) {
 }
 
 func TestGroupsCRUD(t *testing.T) {
-	withTempDataDir(t)
+	dir := withTempDataDir(t)
 
 	g := &store.Group{
 		ID:          "g1",
 		Name:        "main",
 		ChildrenIDs: []string{"p1", "p2"},
-		Rules: map[string]store.RouteMode{
-			"example.com": {Kind: "tunnel", ProfileID: "p2"},
-			"badhost":     {Kind: "blocked"},
-		},
-		Priorities: map[string]int{"example.com": 5},
-		RuleGroups: []store.RuleGroup{{
-			ID: "service", Name: "Service", Domains: []string{"example.com", "=api.other.test"},
-			Route: store.RouteMode{Kind: "direct"},
-		}},
-		KnownHosts: []string{"example.com", "badhost", "other"},
+		Priorities:  map[string]int{"example.com": 5},
 	}
 	if err := store.SaveGroup(g); err != nil {
 		t.Fatalf("save: %v", err)
@@ -229,17 +220,23 @@ func TestGroupsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got == nil || got.Name != "main" {
+	if got == nil || got.Name != "main" || !reflect.DeepEqual(got.ChildrenIDs, []string{"p1", "p2"}) {
 		t.Fatalf("load mismatch: %+v", got)
-	}
-	if got.Rules["example.com"].Kind != "tunnel" || got.Rules["example.com"].ProfileID != "p2" {
-		t.Fatalf("rules round-trip: %+v", got.Rules)
 	}
 	if got.Priorities["example.com"] != 5 {
 		t.Fatalf("priorities: %+v", got.Priorities)
 	}
-	if len(got.RuleGroups) != 1 || got.RuleGroups[0].Name != "Service" || got.RuleGroups[0].Route.Kind != "direct" {
-		t.Fatalf("rule groups round-trip: %+v", got.RuleGroups)
+
+	// A saved group carries no rule fields.
+	raw, _ := os.ReadFile(filepath.Join(dir, "groups", "g1.json"))
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"rules", "ruleGroups", "finalRoute", "knownHosts"} {
+		if _, has := generic[k]; has {
+			t.Fatalf("group file still has %q: %s", k, raw)
+		}
 	}
 
 	all, err := store.ListGroups()

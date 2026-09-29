@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hoveychen/netferry/relay/internal/catalog"
-	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
@@ -24,28 +23,17 @@ type ruleGroupEditor struct {
 	onCancel func() tea.Cmd
 }
 
-// routeOptions lists Default, one Tunnel per group child, Direct, Blocked.
-func routeOptions(children []profile.Profile, withDefaultChild bool) []Option {
-	def, prefix := "Default tunnel", ""
-	if withDefaultChild {
-		def, prefix = "Default", "Tunnel: "
-		if len(children) > 0 {
-			def = "Default (→ " + children[0].Name + ")"
-		}
-	}
-	opts := []Option{{def, "default"}}
-	for _, c := range children {
-		opts = append(opts, Option{prefix + c.Name, "tunnel:" + c.ID})
-	}
-	return append(opts, Option{"Direct", "direct"}, Option{"Blocked", "blocked"})
+// routeOptions lists the three routes: Tunnel, Direct, Blocked.
+func routeOptions() []Option {
+	return []Option{{"Tunnel", store.RouteTunnel}, {"Direct", store.RouteDirect}, {"Blocked", store.RouteBlocked}}
 }
 
-func newRuleGroupEditor(rg store.RuleGroup, exists bool, m *destModel, children []profile.Profile) *ruleGroupEditor {
+func newRuleGroupEditor(rg store.RuleGroup, exists bool, m *destModel) *ruleGroupEditor {
 	e := &ruleGroupEditor{id: rg.ID, exists: exists, model: m}
 	name := textField("name", "Name", rg.Name, "e.g. Streaming")
 	domains := areaField("domains", "Domain scopes", strings.Join(rg.Domains, "\n"), 6)
 	domains.Help = "example.com includes itself and all subdomains; =api.example.com matches only that host."
-	route := selectField("route", "Route", routeOptions(children, false), routeKey(rg.Route))
+	route := selectField("route", "Route", routeOptions(), routeKey(rg.Route))
 	e.form = newForm(name, domains, route)
 	return e
 }
@@ -143,7 +131,7 @@ func (e *ruleGroupEditor) view(width, height int) string {
 		tail = append(tail, sMuted.Render(truncate(strings.Join(shown, " · "), width)))
 	}
 	if overlap > 0 || overrides > 0 {
-		tail = append(tail, sWarn.Width(width).Render(fmt.Sprintf("%d destinations already belong to other scope groups, and %d have individual rules. Saving may change overlapping routes; individual rules still win.", overlap, overrides)))
+		tail = append(tail, sWarn.Width(width).Render(fmt.Sprintf("%d destinations also match other scope groups, and %d have individual rules. The first matching group (top of the list) wins; individual rules always win.", overlap, overrides)))
 	}
 	if len(e.evidence) > 0 {
 		tail = append(tail, "", sSection.Render("OFFICIAL PRODUCT AVAILABILITY"))

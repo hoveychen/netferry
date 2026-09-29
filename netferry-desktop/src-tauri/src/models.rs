@@ -117,22 +117,75 @@ pub struct GlobalSettings {
     pub lan_http_port: Option<u16>,
 }
 
-/// RouteMode as persisted inside a ProfileGroup's `rules` map.
+/// RouteMode as persisted in the global rule set (`rules.json`).
 ///
-/// `kind`:
-///   - "tunnel"  : route through `profile_id`'s child tunnel
-///   - "default" : route through `children[0]` of the owning group
+/// `kind` is always one of:
+///   - "tunnel"  : route through the (single) connected tunnel
 ///   - "direct"  : bypass the tunnel, direct-dial
 ///   - "blocked" : reject the connection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// Serialized as `{"kind":"..."}`. Deserialization is lenient for legacy data:
+/// `"default"`, `{"kind":"tunnel","profileId":..}`, bare strings, and unknown or
+/// empty values all normalise (unknown → tunnel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RawRouteMode")]
 pub struct RouteMode {
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl RouteMode {
+    pub fn tunnel() -> Self {
+        Self::from_kind("tunnel")
+    }
+
+    /// Normalise any legacy/unknown kind string to tunnel/direct/blocked.
+    pub fn from_kind(kind: &str) -> Self {
+        let k = match kind.trim().to_ascii_lowercase().as_str() {
+            "direct" => "direct",
+            "blocked" => "blocked",
+            _ => "tunnel",
+        };
+        Self { kind: k.to_string() }
+    }
+
+    /// Fallback routes may only be tunnel or direct; blocked is coerced to tunnel.
+    pub fn as_final(&self) -> Self {
+        if self.kind == "direct" {
+            self.clone()
+        } else {
+            Self::tunnel()
+        }
+    }
+}
+
+impl Default for RouteMode {
+    fn default() -> Self {
+        Self::tunnel()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawRouteMode {
+    Str(String),
+    Obj {
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    Other(#[allow(dead_code)] serde_json::Value),
+}
+
+impl From<RawRouteMode> for RouteMode {
+    fn from(raw: RawRouteMode) -> Self {
+        match raw {
+            RawRouteMode::Str(s) => RouteMode::from_kind(&s),
+            RawRouteMode::Obj { kind } => RouteMode::from_kind(kind.as_deref().unwrap_or("")),
+            RawRouteMode::Other(_) => RouteMode::tunnel(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleGroup {
     pub id: String,
@@ -142,11 +195,11 @@ pub struct RuleGroup {
     pub route: RouteMode,
 }
 
-/// A ProfileGroup bundles an ordered list of profile-id references with a set
-/// of destination rules. `children_ids[0]` is the group's default profile.
-/// Profile objects themselves live in `profiles.json`; the group only holds
-/// references. One group is active at a time (see
-/// `GlobalSettings.active_group_id`).
+/// A ProfileGroup is a folder of profile-id references; it has nothing to do
+/// with routing (rules are global, see `rules.rs`). Profile objects live in
+/// `profiles.json`. Legacy group files may still carry `rules`, `ruleGroups`,
+/// `finalRoute` and `knownHosts`; those are ignored here (read once by the
+/// rules.json migration) and disappear on the next save.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileGroup {
@@ -160,17 +213,7 @@ pub struct ProfileGroup {
     #[serde(default, skip_serializing, rename = "children")]
     pub legacy_children: Vec<Profile>,
     #[serde(default)]
-    pub rules: std::collections::HashMap<String, RouteMode>,
-    #[serde(default)]
-    pub rule_groups: Vec<RuleGroup>,
-    #[serde(default)]
     pub priorities: std::collections::HashMap<String, i32>,
-    /// Accumulates every destination host/IP the relay has observed for this
-    /// group across sessions. DestinationsPage unions this with live traffic
-    /// so the user can set rules on hosts they've ever seen, not just ones
-    /// currently active. Append-only; dedup happens client-side.
-    #[serde(default)]
-    pub known_hosts: Vec<String>,
 }
 
 impl ProfileGroup {

@@ -50,15 +50,12 @@ func (p *profilesPage) title() string { return "Profiles" }
 
 func (p *profilesPage) capturing() bool { return p.mode != profList }
 
-// row is one list entry: the "Connect all" card (profile == nil) or a profile.
+// row is one list entry: a profile of the active group.
 type profRow struct{ profile *profile.Profile }
 
 func (p *profilesPage) rows() []profRow {
 	children := p.app.data.Children(p.app.data.ActiveGroup())
 	var rows []profRow
-	if len(children) > 1 {
-		rows = append(rows, profRow{})
-	}
 	for i := range children {
 		rows = append(rows, profRow{profile: &children[i]})
 	}
@@ -196,24 +193,16 @@ func (p *profilesPage) update(msg tea.Msg) tea.Cmd {
 	case "enter":
 		return p.connect(row)
 	case "e":
-		if row.profile != nil {
-			p.openEditor(*row.profile, false)
-		}
+		p.openEditor(*row.profile, false)
 	case "x":
-		if row.profile != nil {
-			return p.openExportMenu(*row.profile)
-		}
+		return p.openExportMenu(*row.profile)
 	case "D":
-		if row.profile != nil {
-			p.confirmDeleteProfile(*row.profile)
-		}
+		p.confirmDeleteProfile(*row.profile)
 	case "R":
-		if row.profile != nil {
-			pr := *row.profile
-			a.confirm("Remove from group?", fmt.Sprintf("Remove %q from %q? The profile itself is kept.", pr.Name, a.data.ActiveGroup().Name), func() tea.Cmd {
-				return p.do(a.data.RemoveFromActiveGroup(pr.ID), "Removed from group")
-			})
-		}
+		pr := *row.profile
+		a.confirm("Remove from group?", fmt.Sprintf("Remove %q from %q? The profile itself is kept.", pr.Name, a.data.ActiveGroup().Name), func() tea.Cmd {
+			return p.do(a.data.RemoveFromActiveGroup(pr.ID), "Removed from group")
+		})
 	}
 	return nil
 }
@@ -236,9 +225,6 @@ func (p *profilesPage) connect(row *profRow) tea.Cmd {
 		}
 		return a.setFlash(false, "a tunnel is already running — press d to disconnect first")
 	}
-	if row.profile == nil {
-		return a.connectGroup()
-	}
 	return a.connectProfile(*row.profile)
 }
 
@@ -248,10 +234,7 @@ func (p *profilesPage) isConnected(row *profRow) bool {
 	if s == nil || !p.app.session.Active() {
 		return false
 	}
-	if row.profile == nil {
-		return s.Group != nil
-	}
-	return s.Group == nil && s.Profile.ID == row.profile.ID
+	return s.Profile.ID == row.profile.ID
 }
 
 func (p *profilesPage) openEditor(pr profile.Profile, isNew bool) {
@@ -270,7 +253,7 @@ func (p *profilesPage) openEditor(pr profile.Profile, isNew bool) {
 		}
 		p.back()
 		msg := "Profile saved"
-		if a.session.Active() && a.sess.Spec != nil && (a.sess.Spec.Profile.ID == saved.ID || a.childIndex(saved.ID) >= 0) {
+		if a.session.Active() && a.sess.Spec != nil && a.sess.Spec.Profile.ID == saved.ID {
 			msg += " — reconnect to apply"
 		}
 		return p.do(nil, msg)
@@ -517,11 +500,6 @@ func (p *profilesPage) renderRow(r profRow, selected bool, width int) []string {
 	state := ""
 	if connected {
 		state = "  " + sOK.Render("● "+string(a.sess.Status))
-	}
-	if r.profile == nil {
-		n := len(a.data.Children(a.data.ActiveGroup()))
-		title := sTitle.Render("⇉ Connect all") + sMuted.Render(fmt.Sprintf("  %d profiles, per-host routing", n)) + state
-		return []string{marker + title, "    " + sInfo.Render("multi-profile")}
 	}
 	pr := r.profile
 	nameS := sBold

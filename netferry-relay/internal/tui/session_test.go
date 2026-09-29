@@ -9,7 +9,6 @@ import (
 
 	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/stats"
-	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
 var errDrop = errors.New("drop")
@@ -104,15 +103,15 @@ func TestSessionAppliesRulesAndReconnects(t *testing.T) {
 	h := newHarness(t)
 	h.s.SetRules(Rules{
 		Priorities: map[string]int{"a.com": 5},
-		Routes:     map[string]store.RouteMode{"*.b.com": {Kind: "direct"}},
+		Routes:     stats.RouteTable{Overrides: map[string]stats.RouteMode{"*.b.com": {Kind: stats.RouteDirect}}},
 	})
 	if err := h.s.Connect(spec()); err != nil {
 		t.Fatal(err)
 	}
 	h.waitFor(StatusConnected)
 	e0 := h.engine(0)
-	if got := e0.c.RouteModes()["*.b.com"]; got.Kind != stats.RouteDirect {
-		t.Fatalf("routes not applied before run: %+v", e0.c.RouteModes())
+	if got := e0.c.LookupRouteMode("", "a.b.com"); got.Kind != stats.RouteDirect {
+		t.Fatalf("routes not applied before run: %+v", e0.c.RouteTable())
 	}
 	if e0.c.Priorities()["a.com"] != 5 {
 		t.Fatalf("priorities not applied: %+v", e0.c.Priorities())
@@ -122,8 +121,8 @@ func TestSessionAppliesRulesAndReconnects(t *testing.T) {
 	}
 
 	// Live rule change reaches the running engine.
-	h.s.SetRules(Rules{Routes: map[string]store.RouteMode{"x.com": {Kind: "blocked"}}})
-	if e0.c.RouteModes()["x.com"].Kind != stats.RouteBlocked {
+	h.s.SetRules(Rules{Routes: stats.RouteTable{Groups: []stats.RouteGroup{{Domains: []string{"x.com"}, Route: stats.RouteMode{Kind: stats.RouteBlocked}}}}})
+	if e0.c.LookupRouteMode("", "x.com").Kind != stats.RouteBlocked {
 		t.Fatal("live SetRules not applied")
 	}
 
@@ -132,7 +131,7 @@ func TestSessionAppliesRulesAndReconnects(t *testing.T) {
 	h.waitFor(StatusReconnecting)
 	h.waitFor(StatusConnected)
 	e1 := h.engine(1)
-	if e1.c.RouteModes()["x.com"].Kind != stats.RouteBlocked {
+	if e1.c.LookupRouteMode("", "www.x.com").Kind != stats.RouteBlocked {
 		t.Fatal("reconnected engine missing rules")
 	}
 	if !e0.closed.Load() {

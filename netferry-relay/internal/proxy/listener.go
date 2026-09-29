@@ -151,20 +151,8 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 		return
 	}
 
-	// Resolve which pool to dispatch to when the tunnel client is a
-	// multi-profile SessionManager; single-profile callers stay on the
-	// existing code path.
-	dispatchClient := client
-	var profileID string
-	if sm, ok := client.(*mux.SessionManager); ok {
-		if id, pool := sm.PoolFor(dstAddr, host); pool != nil {
-			dispatchClient = pool
-			profileID = id
-		}
-	}
-
 	// Open a mux channel first so we can record the tunnel index in ConnOpen.
-	muxConn, err := dispatchClient.OpenTCP(family, dstIP, dstPort, priority)
+	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("proxy: open channel to %s:%d: %v", dstIP, dstPort, err)
 		return
@@ -173,7 +161,7 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 
 	var connID uint64
 	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex, profileID)
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, muxConn.TunnelIndex)
 	}
 
 	// touch resets the idle deadline on both ends. Called after each successful
@@ -242,7 +230,7 @@ func handleDirect(clientConn net.Conn, br io.Reader, dstAddr, srcAddr, host stri
 
 	var connID uint64
 	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host, 0, "")
+		connID = counters.ConnOpen(srcAddr, dstAddr, host, 0)
 	}
 
 	touch := func() {

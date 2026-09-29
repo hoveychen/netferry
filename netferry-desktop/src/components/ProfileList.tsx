@@ -13,7 +13,6 @@ import {
   QrCode,
   Share2,
   Trash2,
-  Users,
   X,
 } from "lucide-react";
 import { save as showSaveDialog } from "@tauri-apps/plugin-dialog";
@@ -26,20 +25,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { ImportProfileDialog } from "@/components/ImportProfileDialog";
 import { QrCodeExportDialog } from "@/components/QrCodeExportDialog";
-import { joinGroupProfiles, newGroup, useGroupStore } from "@/stores/groupStore";
+import { joinGroupProfiles, newGroup, useActiveGroup, useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
-import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
 interface Props {
   connectedProfileId?: string;
-  /** True when the active group was connected via Connect All (multi-profile mode). */
-  groupConnected?: boolean;
   onNew: () => void;
   onConnect: (profile: Profile) => void;
-  /** Engages the group's multi-profile connection mode (default profile seeds it). */
-  onConnectGroup: () => void;
   onEdit: (id: string) => void;
   onImport: (data: string) => Promise<void>;
   onImportFile: (path: string) => Promise<void>;
@@ -384,10 +378,8 @@ function GroupSwitcher({
 
 export function ProfileList({
   connectedProfileId,
-  groupConnected,
   onNew,
   onConnect,
-  onConnectGroup,
   onEdit,
   onImport,
   onImportFile,
@@ -402,7 +394,7 @@ export function ProfileList({
 
   const { groups, fetch: fetchGroups, save: saveGroup, remove: removeGroup } = useGroupStore();
   const { profiles, removeProfile } = useProfileStore();
-  const { activeGroup, loadRules } = useRuleStore();
+  const activeGroup = useActiveGroup();
   const { settings, updateSettings } = useSettingsStore();
 
   // Make sure the group list is populated (for the switcher) on mount.
@@ -471,7 +463,6 @@ export function ProfileList({
     setRemovingId(null);
     try {
       await apiRemoveProfileFromGroup(activeGroup.id, profile.id);
-      await loadRules();
       await fetchGroups();
     } catch (err) {
       alert(String(err));
@@ -486,14 +477,12 @@ export function ProfileList({
   const handleRenameGroup = async (nextName: string) => {
     if (!activeGroup) return;
     await saveGroup({ ...activeGroup, name: nextName });
-    await loadRules();
   };
 
   const handleCreateEmptyGroup = async () => {
     const g = newGroup();
     await saveGroup(g);
     await updateSettings({ ...settings, activeGroupId: g.id });
-    await loadRules();
     return g.id;
   };
 
@@ -514,13 +503,11 @@ export function ProfileList({
     const survivors = groups.filter((g) => g.id !== deletedId);
     const nextId = survivors[0]?.id ?? null;
     await updateSettings({ ...settings, activeGroupId: nextId });
-    await loadRules();
     await fetchGroups();
   };
 
   // Header label → the group's own name, shown via GroupSwitcher below.
   const noGroup = !activeGroup;
-  const isMultiProfile = groupProfiles.length > 1;
 
   return (
     <div className="flex h-full flex-col">
@@ -604,51 +591,6 @@ export function ProfileList({
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {isMultiProfile && (
-              <div
-                className={`group relative flex flex-col rounded-2xl border p-5 shadow-[inset_0_1px_0_var(--inset-highlight)] transition-all duration-200 ${
-                  groupConnected
-                    ? "border-accent/30 bg-accent/[0.06] ring-1 ring-accent/20"
-                    : "cursor-pointer border-accent/30 bg-gradient-to-br from-accent/[0.08] to-[#5e5ce6]/[0.08] hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-2xl hover:shadow-black/40"
-                }`}
-                onClick={() => !groupConnected && !connectedProfileId && onConnectGroup()}
-              >
-                <div className="mb-4 flex items-center gap-3">
-                  <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5e5ce6] text-white shadow-lg">
-                    <Users className="h-5 w-5" />
-                    {groupConnected && (
-                      <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-semibold text-t1">
-                      {t("profileList.connectAll")}
-                    </p>
-                    <p className="truncate text-xs text-t3 mt-0.5">
-                      {t("profileList.connectAllSubtitle", { count: groupProfiles.length })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-auto flex flex-wrap items-center gap-1.5 border-t border-sep pt-3">
-                  <span className="rounded-md bg-accent/10 px-2 py-0.5 text-[11px] text-accent">
-                    {t("profileList.multiProfile")}
-                  </span>
-                  <span
-                    className={`ml-auto text-[11px] transition-colors ${
-                      groupConnected
-                        ? "font-medium text-success"
-                        : "text-t5 group-hover:text-accent"
-                    }`}
-                  >
-                    {groupConnected ? t("profileList.connected") : t("profileList.connect")}
-                  </span>
-                </div>
-              </div>
-            )}
             {groupProfiles.map((profile) => {
               const isActive = profile.id === connectedProfileId;
               const confirmingRemove = removingId === profile.id;
@@ -660,7 +602,7 @@ export function ProfileList({
                       ? "border-accent/30 bg-accent/[0.06] ring-1 ring-accent/20"
                       : "cursor-pointer border-sep bg-ov-4 hover:-translate-y-0.5 hover:border-edge hover:bg-ov-6 hover:shadow-2xl hover:shadow-black/40"
                   }`}
-                  onClick={() => !isActive && !connectedProfileId && !groupConnected && onConnect(profile)}
+                  onClick={() => !isActive && !connectedProfileId && onConnect(profile)}
                 >
                   {/* Action buttons */}
                   <div className="absolute right-3.5 top-3.5 flex gap-1 opacity-0 transition-all group-hover:opacity-100">

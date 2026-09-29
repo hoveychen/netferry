@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { deleteGroup, listGroups, saveGroup } from "@/api";
+import { useSettingsStore } from "@/stores/settingsStore";
 import type { Profile, ProfileGroup } from "@/types";
 
 export function newGroup(): ProfileGroup {
@@ -7,10 +8,6 @@ export function newGroup(): ProfileGroup {
     id: crypto.randomUUID(),
     name: "New Group",
     childrenIds: [],
-    rules: {},
-    ruleGroups: [],
-    priorities: {},
-    knownHosts: [],
   };
 }
 
@@ -58,3 +55,9 @@ export const useGroupStore = create<GroupStore>((set) => ({
     set({ groups });
   },
 }));
+
+/** The profile group selected in settings (`activeGroupId`), or null. */
+export function useActiveGroup(): ProfileGroup | null {
+  const activeGroupId = useSettingsStore((s) => s.settings.activeGroupId ?? null);
+  return useGroupStore((s) => s.groups.find((g) => g.id === activeGroupId) ?? null);
+}

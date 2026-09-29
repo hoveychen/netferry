@@ -11,14 +11,58 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/profile"
 )
 
-// RouteMode mirrors the desktop RouteMode enum-as-tagged-struct. Kind is one
-// of "tunnel" | "default" | "direct" | "blocked"; ProfileID is required when
-// Kind == "tunnel".
-type RouteMode struct {
-	Kind      string `json:"kind"`
-	ProfileID string `json:"profileId,omitempty"`
+// Route kinds. Only these three exist; anything else read from disk is
+// normalized (see NormalizeRouteKind).
+const (
+	RouteTunnel  = "tunnel"
+	RouteDirect  = "direct"
+	RouteBlocked = "blocked"
+)
+
+// NormalizeRouteKind maps a stored kind to tunnel/direct/blocked. The legacy
+// "default" kind and unknown/empty values become tunnel.
+func NormalizeRouteKind(kind string) string {
+	switch k := strings.ToLower(strings.TrimSpace(kind)); k {
+	case RouteDirect, RouteBlocked:
+		return k
+	default:
+		return RouteTunnel
+	}
 }
 
+// RouteMode mirrors the desktop RouteMode tagged struct: {"kind":"tunnel"}.
+// On read it also accepts a bare string and the legacy
+// {"kind":"tunnel","profileId":"..."} form (profileId is dropped).
+type RouteMode struct {
+	Kind string `json:"kind"`
+}
+
+// UnmarshalJSON accepts a bare string or a {kind} object and normalizes kind.
+func (r *RouteMode) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		r.Kind = NormalizeRouteKind(s)
+		return nil
+	}
+	var x struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(b, &x); err != nil {
+		return err
+	}
+	r.Kind = NormalizeRouteKind(x.Kind)
+	return nil
+}
+
+// NormalizeFinalRoute restricts a fallback route to tunnel/direct.
+func NormalizeFinalRoute(m RouteMode) RouteMode {
+	if NormalizeRouteKind(m.Kind) == RouteDirect {
+		return RouteMode{Kind: RouteDirect}
+	}
+	return RouteMode{Kind: RouteTunnel}
+}
+
+// RuleGroup is a named, ordered scope of domains sharing one route.
 type RuleGroup struct {
 	ID      string    `json:"id"`
 	Name    string    `json:"name"`
@@ -26,21 +70,19 @@ type RuleGroup struct {
 	Route   RouteMode `json:"route"`
 }
 
-// Group mirrors models.rs::ProfileGroup. ChildrenIDs[0] is the default
-// profile when Rules contain a "default" entry without an explicit ProfileID.
+// Group mirrors models.rs::ProfileGroup. A group is only a folder of
+// profiles; routing rules are global (see RuleSet / rules.json). Rule fields
+// left in older group files are ignored on read and dropped on the next save.
 //
 // LegacyChildren is the pre-children-ids form: full Profile objects embedded
 // in the group. We accept it on read but never write it back; NormalizeLegacy
 // fills ChildrenIDs from it on the first load.
 type Group struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	ChildrenIDs    []string             `json:"childrenIds,omitempty"`
-	LegacyChildren []profile.Profile    `json:"children,omitempty"`
-	Rules          map[string]RouteMode `json:"rules,omitempty"`
-	RuleGroups     []RuleGroup          `json:"ruleGroups,omitempty"`
-	Priorities     map[string]int       `json:"priorities,omitempty"`
-	KnownHosts     []string             `json:"knownHosts,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	ChildrenIDs    []string          `json:"childrenIds,omitempty"`
+	LegacyChildren []profile.Profile `json:"children,omitempty"`
+	Priorities     map[string]int    `json:"priorities,omitempty"`
 }
 
 // NormalizeLegacy fills ChildrenIDs from LegacyChildren if the group is in
@@ -63,13 +105,10 @@ func (g *Group) NormalizeLegacy() bool {
 // with LegacyChildren omitted unconditionally (mirrors serde's
 // skip_serializing on the `children` field).
 type groupOnDisk struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	ChildrenIDs []string             `json:"childrenIds"`
-	Rules       map[string]RouteMode `json:"rules"`
-	RuleGroups  []RuleGroup          `json:"ruleGroups"`
-	Priorities  map[string]int       `json:"priorities"`
-	KnownHosts  []string             `json:"knownHosts"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	ChildrenIDs []string       `json:"childrenIds"`
+	Priorities  map[string]int `json:"priorities"`
 }
 
 func (g *Group) marshalForDisk() any {
@@ -77,10 +116,7 @@ func (g *Group) marshalForDisk() any {
 		ID:          g.ID,
 		Name:        g.Name,
 		ChildrenIDs: nilToEmpty(g.ChildrenIDs),
-		Rules:       g.Rules,
-		RuleGroups:  nilToEmpty(g.RuleGroups),
 		Priorities:  g.Priorities,
-		KnownHosts:  nilToEmpty(g.KnownHosts),
 	}
 }
 
@@ -179,6 +215,11 @@ func SaveGroup(g *Group) error {
 	if err != nil {
 		return err
 	}
+	// Rewriting a group drops any legacy rule fields, so make sure they have
+	// been migrated into rules.json first.
+	if err := ensureRulesMigrated(); err != nil {
+		return err
+	}
 	return writeJSONAtomic(path, g.marshalForDisk())
 }
 
@@ -186,6 +227,10 @@ func SaveGroup(g *Group) error {
 func DeleteGroup(id string) error {
 	path, err := groupPath(id)
 	if err != nil {
+		return err
+	}
+	// The group may still carry legacy rules that belong in rules.json.
+	if err := ensureRulesMigrated(); err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, ProfileGroup, SshHostEntry, UpdateInfo } from "@/types";
+import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, ProfileGroup, RuleSet, SshHostEntry, UpdateInfo } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -21,22 +21,8 @@ export function getDefaultIdentityFile() {
   return invoke<string | null>("get_default_identity_file");
 }
 
-/**
- * `group` + `children` are passed together for multi-tunnel (group) mode.
- * Backend writes the children to a temp group.json and spawns the Go tunnel
- * with `--group <path>`, which brings up one SSH connection per child.
- * Solo mode (single tunnel) leaves both undefined.
- */
-export function connectProfile(
-  profile: Profile,
-  group?: ProfileGroup,
-  children?: Profile[],
-) {
-  return invoke<ConnectionStatus>("connect_profile", {
-    profile,
-    group: group ?? null,
-    children: children ?? null,
-  });
+export function connectProfile(profile: Profile) {
+  return invoke<ConnectionStatus>("connect_profile", { profile });
 }
 
 export function disconnectProfile() {
@@ -73,6 +59,16 @@ export function saveRoutes(routes: DestinationRoutes) {
 
 export function getStatsUrl() {
   return invoke<string | null>("get_stats_url");
+}
+
+// ── Routing rules (global) ──
+
+export function getRules() {
+  return invoke<RuleSet>("get_rules");
+}
+
+export function saveRules(rules: RuleSet) {
+  return invoke<void>("save_rules", { rules });
 }
 
 // ── Profile groups ──

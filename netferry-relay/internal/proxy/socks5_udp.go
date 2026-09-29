@@ -39,7 +39,7 @@ func handleSOCKS5UDP(conn net.Conn, client mux.TunnelClient, counters *stats.Cou
 		client:   client,
 		counters: counters,
 		clientIP: conn.RemoteAddr().(*net.TCPAddr).IP,
-		tunnels:  make(map[string]*mux.UDPChannel),
+		tunnels:  make(map[int]*mux.UDPChannel),
 		resolved: make(map[string]resolvedIP),
 	}
 	log.Printf("socks5: udp associate %s via %s", conn.RemoteAddr(), pc.LocalAddr())
@@ -60,8 +60,8 @@ type udpRelay struct {
 	clientIP net.IP
 
 	mu         sync.Mutex
-	clientAddr *net.UDPAddr               // learned from the first datagram
-	tunnels    map[string]*mux.UDPChannel // key: profileID/family
+	clientAddr *net.UDPAddr            // learned from the first datagram
+	tunnels    map[int]*mux.UDPChannel // key: address family
 	direct     *net.UDPConn
 	resolved   map[string]resolvedIP
 	closed     bool
@@ -132,14 +132,7 @@ func (r *udpRelay) forward(host string, port int, payload []byte) {
 		return
 	}
 
-	dispatch := r.client
-	profileID := ""
-	if sm, ok := r.client.(*mux.SessionManager); ok {
-		if id, pool := sm.PoolFor(dstAddr, name); pool != nil {
-			dispatch, profileID = pool, id
-		}
-	}
-	ip, err := r.resolve(tunnelResolver(dispatch), profileID, host)
+	ip, err := r.resolve(tunnelResolver(r.client), "tunnel", host)
 	if err != nil {
 		log.Printf("socks5: udp resolve %s via tunnel: %v", host, err)
 		return
@@ -148,7 +141,7 @@ func (r *udpRelay) forward(host string, port int, payload []byte) {
 	if ip.To4() == nil {
 		family = 10 // AF_INET6
 	}
-	ch, err := r.tunnelChannel(dispatch, profileID, family)
+	ch, err := r.tunnelChannel(family)
 	if err != nil {
 		log.Printf("socks5: udp open channel: %v", err)
 		return
@@ -193,8 +186,8 @@ func (r *udpRelay) resolve(res *net.Resolver, scope, host string) (net.IP, error
 	return ip, nil
 }
 
-func (r *udpRelay) tunnelChannel(dispatch mux.TunnelClient, profileID string, family int) (*mux.UDPChannel, error) {
-	key := fmt.Sprintf("%s/%d", profileID, family)
+func (r *udpRelay) tunnelChannel(family int) (*mux.UDPChannel, error) {
+	key := family
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -203,7 +196,7 @@ func (r *udpRelay) tunnelChannel(dispatch mux.TunnelClient, profileID string, fa
 	if ch, ok := r.tunnels[key]; ok {
 		return ch, nil
 	}
-	ch, err := dispatch.OpenUDP(family)
+	ch, err := r.client.OpenUDP(family)
 	if err != nil {
 		return nil, err
 	}

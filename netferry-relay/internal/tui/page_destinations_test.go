@@ -21,13 +21,13 @@ func TestWildcardResolution(t *testing.T) {
 		t.Fatal("wildcards and single labels have no candidates")
 	}
 	routes := map[string]store.RouteMode{"*.example.com": {Kind: "direct"}, "=x": {Kind: "blocked"}, "api.example.com": {Kind: "blocked"}}
-	if m, via := resolveRoute("a.b.example.com", routes); m.Kind != "direct" || via != "*.example.com" {
+	if m, via, ok := resolveOverride("a.b.example.com", routes); !ok || m.Kind != "direct" || via != "*.example.com" {
 		t.Fatalf("wildcard route = %v via %q", m, via)
 	}
-	if m, via := resolveRoute("api.example.com", routes); m.Kind != "blocked" || via != "" {
+	if m, via, ok := resolveOverride("api.example.com", routes); !ok || m.Kind != "blocked" || via != "" {
 		t.Fatalf("exact route = %v via %q", m, via)
 	}
-	if m, _ := resolveRoute("example.com", routes); m.Kind != "default" {
+	if _, _, ok := resolveOverride("example.com", routes); ok {
 		t.Fatal("the apex is not matched by *.example.com")
 	}
 	if resolvePriority("a.example.com", map[string]int{"*.example.com": 5}) != 5 || resolvePriority("z.org", nil) != 3 {
@@ -63,12 +63,11 @@ func TestNormalizeDomainsSplitsAndDedupes(t *testing.T) {
 func TestDestModelBuckets(t *testing.T) {
 	d := &Data{
 		Priorities: map[string]int{"prio.org": 4},
-		Groups: []store.Group{{ID: "g", Name: "G",
+		RuleSet: store.RuleSet{
 			RuleGroups: []store.RuleGroup{{ID: "w", Name: "Work", Domains: []string{"example.com"}, Route: store.RouteMode{Kind: "direct"}}},
 			Rules:      map[string]store.RouteMode{"rule.net": {Kind: "blocked"}},
 			KnownHosts: []string{"a.example.com", "1.2.3.4", "x.foo.co.uk", "y.foo.co.uk", "::1"},
-		}},
-		Settings: store.GlobalSettings{ActiveGroupID: "g"},
+		},
 	}
 	m := buildDestModel(d, []stats.DestinationSnapshot{{Host: "live.io"}})
 	if want := []string{"1.2.3.4", "::1", "a.example.com", "live.io", "prio.org", "rule.net", "x.foo.co.uk", "y.foo.co.uk"}; !reflect.DeepEqual(m.hosts, want) {
@@ -88,8 +87,14 @@ func TestDestModelBuckets(t *testing.T) {
 	if got := m.groupHosts(0); !reflect.DeepEqual(got, []string{"a.example.com"}) {
 		t.Fatalf("group hosts = %v", got)
 	}
-	if r, via := resolveRoute("a.example.com", m.effective); r.Kind != "direct" || via != "*.example.com" {
-		t.Fatalf("compiled group route = %v via %q", r, via)
+	if r, via := m.route("a.example.com"); r.Kind != "direct" || via != "" {
+		t.Fatalf("group route = %v via %q", r, via)
+	}
+	if r, _ := m.route("rule.net"); r.Kind != "blocked" {
+		t.Fatalf("override route = %v", r)
+	}
+	if r, _ := m.route("live.io"); r.Kind != "tunnel" {
+		t.Fatalf("fallback route = %v, want tunnel by default", r)
 	}
 }
 
@@ -104,13 +109,13 @@ func destApp(t *testing.T) *App {
 	if err := store.MigrateV2(); err != nil {
 		t.Fatal(err)
 	}
-	g, err := store.LoadGroup(store.DefaultGroupID)
-	if err != nil || g == nil {
+	rs, err := store.LoadRules()
+	if err != nil {
 		t.Fatal(err)
 	}
-	g.RuleGroups = []store.RuleGroup{{ID: "w", Name: "Work", Domains: []string{"example.com"}, Route: store.RouteMode{Kind: "direct"}}}
-	g.KnownHosts = []string{"a.example.com", "b.example.com", "www.youtube.com", "i.ytimg.com", "api.openai.com", "1.2.3.4"}
-	if err := store.SaveGroup(g); err != nil {
+	rs.RuleGroups = []store.RuleGroup{{ID: "w", Name: "Work", Domains: []string{"example.com"}, Route: store.RouteMode{Kind: "direct"}}}
+	rs.KnownHosts = []string{"a.example.com", "b.example.com", "www.youtube.com", "i.ytimg.com", "api.openai.com", "1.2.3.4"}
+	if err := store.SaveRules(rs); err != nil {
 		t.Fatal(err)
 	}
 	a := loadedApp(t)
@@ -120,13 +125,13 @@ func destApp(t *testing.T) *App {
 
 func screen(a *App) string { return ansi.Strip(a.View()) }
 
-func diskGroup(t *testing.T) *store.Group {
+func diskRules(t *testing.T) *store.RuleSet {
 	t.Helper()
-	g, err := store.LoadGroup(store.DefaultGroupID)
-	if err != nil || g == nil {
+	rs, err := store.LoadRules()
+	if err != nil {
 		t.Fatal(err)
 	}
-	return g
+	return &rs
 }
 
 func TestDestinationsOverview(t *testing.T) {
@@ -164,30 +169,30 @@ func TestDestinationsHostRules(t *testing.T) {
 		t.Fatalf("scope = %q", p.scope)
 	}
 	s := screen(a)
-	if !strings.Contains(s, "a.example.com") || !strings.Contains(s, "via *.example.com") || !strings.Contains(s, "2 / 2 hosts") {
+	if !strings.Contains(s, "a.example.com") || !strings.Contains(s, "2 / 2 hosts") {
 		t.Fatalf("drill-down:\n%s", s)
 	}
 
-	// Route menu: Default, Tunnel: Alpha, Tunnel: Beta, Direct(current), Blocked.
+	// Route menu: Tunnel, Direct (current), Blocked — no per-profile choices.
 	press(a, "r")
-	if !strings.Contains(screen(a), "Tunnel: Beta") {
-		t.Fatalf("route menu:\n%s", screen(a))
+	if s := screen(a); !strings.Contains(s, "Tunnel") || strings.Contains(s, "Alpha") || strings.Contains(s, "Default") {
+		t.Fatalf("route menu:\n%s", s)
 	}
 	press(a, "down", "enter")
-	if r := diskGroup(t).Rules["a.example.com"]; r.Kind != "blocked" {
+	if r := diskRules(t).Rules["a.example.com"]; r.Kind != "blocked" {
 		t.Fatalf("rule on disk = %v", r)
 	}
-	if r := a.session.rules.Routes["a.example.com"]; r.Kind != "blocked" {
+	if r := a.session.rules.Routes.Overrides["a.example.com"]; r.Kind != stats.RouteBlocked {
 		t.Fatalf("rule pushed to the session = %v", r)
 	}
 	if !strings.Contains(screen(a), "Blocked") {
 		t.Fatal("row does not show the override")
 	}
 
-	// Pin to a group child.
+	// Override back to the tunnel.
 	press(a, "r", "up", "up", "enter")
-	if r := diskGroup(t).Rules["a.example.com"]; r.Kind != "tunnel" || r.ProfileID != "pb" {
-		t.Fatalf("pinned rule = %v", r)
+	if r := diskRules(t).Rules["a.example.com"]; r.Kind != "tunnel" {
+		t.Fatalf("tunnel rule = %v", r)
 	}
 
 	// Priority: Norm → High.
@@ -204,7 +209,7 @@ func TestDestinationsHostRules(t *testing.T) {
 	}
 
 	press(a, "x")
-	if _, ok := diskGroup(t).Rules["a.example.com"]; ok {
+	if _, ok := diskRules(t).Rules["a.example.com"]; ok {
 		t.Fatal("x did not remove the override")
 	}
 
@@ -215,14 +220,60 @@ func TestDestinationsHostRules(t *testing.T) {
 	if !strings.Contains(screen(a), "[New rule]") {
 		t.Fatalf("no draft row:\n%s", screen(a))
 	}
-	press(a, "r", "end", "enter") // the menu opens on Default; Blocked is last
-	if r, ok := diskGroup(t).Rules["*.new.dev"]; !ok || r.Kind != "blocked" {
+	press(a, "r", "end", "enter") // Blocked is last
+	if r, ok := diskRules(t).Rules["*.new.dev"]; !ok || r.Kind != "blocked" {
 		t.Fatalf("draft rule = %v %v", r, ok)
 	}
 
 	press(a, "esc", "esc")
 	if p.scope != "" {
 		t.Fatal("esc should return to the overview")
+	}
+}
+
+func TestDestinationsReorderGroupsAndFinalRoute(t *testing.T) {
+	a := destApp(t)
+	if err := a.data.PutRuleGroup(store.RuleGroup{ID: "v", Name: "Video", Domains: []string{"=a.example.com"}, Route: store.RouteMode{Kind: "blocked"}}); err != nil {
+		t.Fatal(err)
+	}
+	a.reload()
+	s := screen(a)
+	if !strings.Contains(s, "first match wins") || !strings.Contains(s, "1. Work") || !strings.Contains(s, "2. Video") || !strings.Contains(s, "Everything else") {
+		t.Fatalf("overview:\n%s", s)
+	}
+	// a.example.com is matched by Work first, so the later exact group loses.
+	if r, _ := a.pages[pageDestinations].(*destinationsPage).model().route("a.example.com"); r.Kind != "direct" {
+		t.Fatalf("first match = %v", r)
+	}
+
+	// Move Video above Work.
+	press(a, "down", "K")
+	if g := diskRules(t); g.RuleGroups[0].ID != "v" || g.RuleGroups[1].ID != "w" {
+		t.Fatalf("order after K = %+v", g.RuleGroups)
+	}
+	if gs := a.session.rules.Routes.Groups; gs[0].Route.Kind != stats.RouteBlocked {
+		t.Fatalf("reorder not pushed: %+v", gs)
+	}
+	if r, _ := a.pages[pageDestinations].(*destinationsPage).model().route("a.example.com"); r.Kind != "blocked" {
+		t.Fatalf("after reorder = %v", r)
+	}
+	press(a, "J") // selection follows the moved group
+	if g := diskRules(t); g.RuleGroups[0].ID != "w" {
+		t.Fatalf("order after J = %+v", g.RuleGroups)
+	}
+
+	// The fixed fallback row (right after the last group) toggles Tunnel ↔
+	// Direct and persists.
+	press(a, "down", "enter")
+	if g := diskRules(t); g.FinalRoute.Kind != "direct" {
+		t.Fatalf("final = %+v", g.FinalRoute)
+	}
+	if a.session.rules.Routes.Final.Kind != stats.RouteDirect {
+		t.Fatalf("final not pushed: %+v", a.session.rules.Routes.Final)
+	}
+	press(a, "enter")
+	if g := diskRules(t); g.FinalRoute.Kind != "tunnel" {
+		t.Fatalf("final after second toggle = %+v", g.FinalRoute)
 	}
 }
 
@@ -268,12 +319,12 @@ func TestDestinationsScopeGroupEditor(t *testing.T) {
 	if p.mode != destBrowse {
 		t.Fatalf("editor still open:\n%s", screen(a))
 	}
-	g := diskGroup(t)
-	if len(g.RuleGroups) != 2 || g.RuleGroups[1].Name != "Video" || !reflect.DeepEqual(g.RuleGroups[1].Domains, []string{"youtube.com"}) || g.RuleGroups[1].Route.Kind != "default" {
+	g := diskRules(t)
+	if len(g.RuleGroups) != 2 || g.RuleGroups[1].Name != "Video" || !reflect.DeepEqual(g.RuleGroups[1].Domains, []string{"youtube.com"}) || g.RuleGroups[1].Route.Kind != "tunnel" {
 		t.Fatalf("rule groups = %+v", g.RuleGroups)
 	}
-	if r := a.session.rules.Routes["*.youtube.com"]; r.Kind != "default" {
-		t.Fatalf("compiled routes not pushed: %v", a.session.rules.Routes)
+	if gs := a.session.rules.Routes.Groups; len(gs) != 2 || gs[1].Domains[0] != "youtube.com" || gs[1].Route.Kind != stats.RouteTunnel {
+		t.Fatalf("route table not pushed: %+v", a.session.rules.Routes)
 	}
 
 	// Edit Work: route Direct → Blocked, then delete it.
@@ -283,13 +334,13 @@ func TestDestinationsScopeGroupEditor(t *testing.T) {
 	}
 	press(a, "tab", "tab", "right")
 	press(a, "ctrl+s")
-	if g := diskGroup(t); g.RuleGroups[0].Route.Kind != "blocked" {
+	if g := diskRules(t); g.RuleGroups[0].Route.Kind != "blocked" {
 		t.Fatalf("route = %v", g.RuleGroups[0].Route)
 	}
 	press(a, "home", "e")
 	a.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	press(a, "y")
-	if g := diskGroup(t); len(g.RuleGroups) != 1 || g.RuleGroups[0].Name != "Video" {
+	if g := diskRules(t); len(g.RuleGroups) != 1 || g.RuleGroups[0].Name != "Video" {
 		t.Fatalf("delete left %+v", g.RuleGroups)
 	}
 }
@@ -313,8 +364,8 @@ func TestDestinationsSuggestionsOpenEditor(t *testing.T) {
 		t.Fatalf("no evidence:\n%s", screen(a))
 	}
 	press(a, "ctrl+s")
-	g := diskGroup(t)
-	if len(g.RuleGroups) != 2 || g.RuleGroups[1].Route.Kind != m.routing[region].SuggestedRoute {
+	g := diskRules(t)
+	if len(g.RuleGroups) != 2 || g.RuleGroups[1].Route.Kind != store.NormalizeRouteKind(m.routing[region].SuggestedRoute) {
 		t.Fatalf("routing group = %+v", g.RuleGroups)
 	}
 
@@ -338,7 +389,7 @@ func TestDestinationsSuggestionsOpenEditor(t *testing.T) {
 		t.Fatal("service suggestion should open the existing same-named group")
 	}
 	press(a, "ctrl+s")
-	for _, rg := range diskGroup(t).RuleGroups {
+	for _, rg := range diskRules(t).RuleGroups {
 		if rg.ID == "yt" && (rg.Domains[0] != "=keep.me" || len(rg.Domains) < 2 || rg.Route.Kind != "direct") {
 			t.Fatalf("merge lost data: %+v", rg)
 		}
@@ -354,30 +405,52 @@ func TestDestinationsSuggestionsOpenEditor(t *testing.T) {
 func TestRecordObservedHostsKeepsDiskEdits(t *testing.T) {
 	a := destApp(t)
 	// Another writer (the desktop, or a page) adds a rule after our load.
-	g := diskGroup(t)
-	g.Rules = map[string]store.RouteMode{"late.com": {Kind: "direct"}}
-	if err := store.SaveGroup(g); err != nil {
+	rs := diskRules(t)
+	rs.Rules = map[string]store.RouteMode{"late.com": {Kind: "direct"}}
+	if err := store.SaveRules(*rs); err != nil {
 		t.Fatal(err)
 	}
 	a.recordObservedHosts([]stats.DestinationSnapshot{{Host: "fresh.io"}})
-	g = diskGroup(t)
-	if g.Rules["late.com"].Kind != "direct" {
+	rs = diskRules(t)
+	if rs.Rules["late.com"].Kind != "direct" {
 		t.Fatal("recording hosts overwrote a concurrent rule edit")
 	}
-	if g.KnownHosts[len(g.KnownHosts)-1] != "fresh.io" {
-		t.Fatalf("known hosts = %v", g.KnownHosts)
+	if rs.KnownHosts[len(rs.KnownHosts)-1] != "fresh.io" {
+		t.Fatalf("known hosts = %v", rs.KnownHosts)
+	}
+	if a.data.RuleSet.KnownHosts[len(a.data.RuleSet.KnownHosts)-1] != "fresh.io" {
+		t.Fatal("in-memory rules not refreshed")
 	}
 }
 
-func TestDestinationsNoGroup(t *testing.T) {
+// Rules are global: they are editable with no profile group at all, and
+// switching the active group does not change them.
+func TestDestinationsIndependentOfGroup(t *testing.T) {
+	b := destApp(t)
+	id, err := b.data.CreateGroup() // also activates it
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.reload()
+	if b.data.Settings.ActiveGroupID != id {
+		t.Fatalf("active = %q", b.data.Settings.ActiveGroupID)
+	}
+	if !strings.Contains(screen(b), "Work") {
+		t.Fatalf("rules page lost the global scope group after switching groups:\n%s", screen(b))
+	}
+	if len(b.data.Rules().Routes.Groups) != 1 {
+		t.Fatalf("pushed rules changed with the active group: %+v", b.data.Rules().Routes)
+	}
+
+	// No group at all (isolated store from destApp above).
 	a := newTestApp(nil)
 	a.width, a.height = 80, 20
 	a.cur = pageDestinations
-	if !strings.Contains(screen(a), "No active profile group") {
+	if strings.Contains(screen(a), "No active profile group") {
 		t.Fatal(screen(a))
 	}
-	press(a, "n", "/")
-	if a.pages[pageDestinations].capturing() {
-		t.Fatal("keys should be inert without a group")
+	press(a, "n")
+	if !a.pages[pageDestinations].capturing() {
+		t.Fatal("the scope-group editor should open without any group")
 	}
 }
