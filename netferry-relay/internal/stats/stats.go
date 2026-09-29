@@ -205,6 +205,7 @@ type Counters struct {
 	priorities map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
 	routes     *compiledRoutes       // compiled route table (overrides > rule groups > final)
 	connLog    connLogRing           // recently closed / failed connections, served by /connections
+	connFile   *connLogFile          // on-disk history (PersistConnLog); nil = memory only. Set before serving.
 
 	tunnelsMu sync.RWMutex
 	tunnels   []tunnelEntry // per-pool-member counters, ordered by registration
@@ -415,6 +416,7 @@ func (c *Counters) ConnClose(id uint64, srcAddr, dstAddr string) {
 // (empty for a clean close) in the /connections history.
 func (c *Counters) ConnCloseErr(id uint64, srcAddr, dstAddr, errMsg string) {
 	now := time.Now()
+	var closedRec *ConnRecord
 	c.mu.Lock()
 	if cs, ok := c.conns[id]; ok {
 		if ds, ok2 := c.dests[cs.destKey]; ok2 {
@@ -425,9 +427,13 @@ func (c *Counters) ConnCloseErr(id uint64, srcAddr, dstAddr, errMsg string) {
 		rec.ClosedMs = now.UnixMilli()
 		rec.Error = errMsg
 		c.connLog.add(rec)
+		closedRec = &rec
 	}
 	delete(c.conns, id)
 	c.mu.Unlock()
+	if closedRec != nil {
+		c.persistConn(closedRec)
+	}
 	select {
 	case c.connEventCh <- ConnEvent{
 		ID:          id,

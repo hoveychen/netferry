@@ -2,6 +2,7 @@ package stats
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -118,8 +119,7 @@ func (cs *connStats) record(id uint64, now time.Time) ConnRecord {
 func (c *Counters) ConnFailed(srcAddr, dstAddr, host string, route RouteKind, startedAt time.Time, errMsg string) {
 	now := time.Now()
 	id := c.nextConnID.Add(1)
-	c.mu.Lock()
-	c.connLog.add(ConnRecord{
+	rec := ConnRecord{
 		ID:         id,
 		Route:      string(route),
 		SrcAddr:    srcAddr,
@@ -129,8 +129,11 @@ func (c *Counters) ConnFailed(srcAddr, dstAddr, host string, route RouteKind, st
 		ClosedMs:   now.UnixMilli(),
 		DurationMs: now.Sub(startedAt).Milliseconds(),
 		Error:      errMsg,
-	})
+	}
+	c.mu.Lock()
+	c.connLog.add(rec)
 	c.mu.Unlock()
+	c.persistConn(&rec)
 }
 
 // connFilter selects records for /connections.
@@ -171,25 +174,68 @@ func (f connFilter) match(r *ConnRecord) bool {
 	return true
 }
 
-// matching returns the active and closed connections matching f. Active
-// records are snapshotted with DurationMs measured up to now.
-func (c *Counters) matching(f connFilter, now time.Time) (active, closed []ConnRecord, historyFromMs int64) {
-	active, closed = []ConnRecord{}, []ConnRecord{}
+// eachMatching calls fn for every active (open) and closed connection
+// matching f and returns the open time of the oldest remembered closed
+// connection. Closed connections come from the on-disk history when
+// PersistConnLog is set, else from the in-memory ring. Active records are
+// snapshotted with DurationMs measured up to now.
+func (c *Counters) eachMatching(f connFilter, now time.Time, fn func(r *ConnRecord, open bool)) (historyFromMs int64) {
+	var active, ring []ConnRecord
 	c.mu.Lock()
-	historyFromMs = c.connLog.oldestOpenMs()
 	for id, cs := range c.conns {
 		rec := cs.record(id, now)
 		if f.match(&rec) {
 			active = append(active, rec)
 		}
 	}
-	c.connLog.each(func(r *ConnRecord) {
-		if f.match(r) {
-			closed = append(closed, *r)
-		}
-	})
+	if c.connFile == nil {
+		historyFromMs = c.connLog.oldestOpenMs()
+		c.connLog.each(func(r *ConnRecord) {
+			if f.match(r) {
+				ring = append(ring, *r)
+			}
+		})
+	}
 	c.mu.Unlock()
-	return active, closed, historyFromMs
+
+	for i := range active {
+		fn(&active[i], true)
+	}
+	if c.connFile != nil {
+		from, err := c.connFile.each(f, func(r *ConnRecord) { fn(r, false) })
+		if err != nil {
+			log.Printf("stats: read connection history: %v", err)
+		}
+		return from
+	}
+	for i := range ring {
+		fn(&ring[i], false)
+	}
+	return historyFromMs
+}
+
+// connList collects the connections for one /connections list, trimming to
+// the top limit as it goes so a long on-disk history is never all in memory.
+type connList struct {
+	order   string
+	limit   int
+	recs    []ConnRecord
+	matched int
+}
+
+func (l *connList) add(r *ConnRecord) {
+	l.matched++
+	l.recs = append(l.recs, *r)
+	if l.limit > 0 && len(l.recs) >= 4*l.limit+64 {
+		l.recs = sortConns(l.recs, l.order, l.limit)
+	}
+}
+
+func (l *connList) result() []ConnRecord {
+	if l.recs == nil {
+		return []ConnRecord{}
+	}
+	return sortConns(l.recs, l.order, l.limit)
 }
 
 // connections returns active and recently closed connections matching f.
@@ -198,14 +244,22 @@ func (c *Counters) matching(f connFilter, now time.Time) (active, closed []ConnR
 // largest first.
 func (c *Counters) connections(f connFilter, order string, limit int) ConnectionsResponse {
 	now := time.Now()
-	active, closed, from := c.matching(f, now)
+	active := connList{order: order, limit: limit}
+	closed := connList{order: order, limit: limit}
+	from := c.eachMatching(f, now, func(r *ConnRecord, open bool) {
+		if open {
+			active.add(r)
+		} else {
+			closed.add(r)
+		}
+	})
 	return ConnectionsResponse{
 		NowMs:         now.UnixMilli(),
 		HistoryFromMs: from,
-		ActiveMatched: len(active),
-		ClosedMatched: len(closed),
-		Active:        sortConns(active, order, limit),
-		Closed:        sortConns(closed, order, limit),
+		ActiveMatched: active.matched,
+		ClosedMatched: closed.matched,
+		Active:        active.result(),
+		Closed:        closed.result(),
 	}
 }
 
@@ -281,7 +335,6 @@ var connGroupKeys = map[string]func(*ConnRecord) string{
 // "error") and keeps the limit groups with the most connections.
 func (c *Counters) groups(f connFilter, by string, limit int) ConnGroupsResponse {
 	now := time.Now()
-	active, closed, from := c.matching(f, now)
 	keyOf := connGroupKeys[by]
 
 	type acc struct {
@@ -317,14 +370,13 @@ func (c *Counters) groups(f connFilter, by string, limit int) ConnGroupsResponse
 		g.FirstSeenMs = min(g.FirstSeenMs, r.OpenedMs)
 		g.LastSeenMs = max(g.LastSeenMs, r.OpenedMs)
 	}
-	for i := range active {
-		add(&active[i], true)
-	}
-	for i := range closed {
-		add(&closed[i], false)
-	}
+	total := 0
+	from := c.eachMatching(f, now, func(r *ConnRecord, open bool) {
+		total++
+		add(r, open)
+	})
 
-	resp := ConnGroupsResponse{NowMs: now.UnixMilli(), HistoryFromMs: from, GroupBy: by, Total: len(active) + len(closed), Groups: []ConnGroup{}}
+	resp := ConnGroupsResponse{NowMs: now.UnixMilli(), HistoryFromMs: from, GroupBy: by, Total: total, Groups: []ConnGroup{}}
 	for _, a := range byKey {
 		if n := len(a.firstBytes); n > 0 {
 			sort.Slice(a.firstBytes, func(i, j int) bool { return a.firstBytes[i] < a.firstBytes[j] })

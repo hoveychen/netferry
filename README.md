@@ -103,7 +103,7 @@ Root/sudo is required for all methods except `socks5`, which sets up a local SOC
 
 ### Inspecting connections
 
-While a tunnel (CLI or desktop) is running, `netferry-tunnel conns` lists its active and recently closed connections — open time, duration, bytes, time to first byte, and the error a connection ended with:
+While a tunnel (CLI or desktop) is running, `netferry-tunnel conns` lists its active and recently closed connections — open time, duration, bytes, time to first byte, and the error a connection ended with. Closed connections are kept in `conns.jsonl` (rotated, ~64 MB) next to the tunnel's other logs under the user cache dir, so the history survives restarts:
 
 ```bash
 netferry-tunnel conns --by host --since 30m                 # one aggregate line per host
