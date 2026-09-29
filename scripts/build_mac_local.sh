@@ -224,3 +224,7 @@ rm -f "$COMPONENT_PKG"
 echo ""
 echo "==> Done!"
 echo "    PKG: $PKG_PATH"
+
+# Launch the macOS Installer UI for the freshly built package
+echo "==> Opening installer"
+open "$PKG_PATH"
