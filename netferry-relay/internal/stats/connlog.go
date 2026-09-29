@@ -36,9 +36,12 @@ type ConnRecord struct {
 
 // ConnectionsResponse is the JSON body of GET /connections.
 type ConnectionsResponse struct {
-	NowMs  int64        `json:"nowMs"`
-	Active []ConnRecord `json:"active"`
-	Closed []ConnRecord `json:"closed"`
+	NowMs         int64        `json:"nowMs"`
+	HistoryFromMs int64        `json:"historyFromMs,omitempty"` // open time of the oldest remembered closed connection
+	ActiveMatched int          `json:"activeMatched"`           // matches before limit
+	ClosedMatched int          `json:"closedMatched"`
+	Active        []ConnRecord `json:"active"`
+	Closed        []ConnRecord `json:"closed"`
 }
 
 // connLogRing is a fixed-size ring of closed connection records. Guarded by
@@ -55,6 +58,17 @@ func (r *connLogRing) add(rec ConnRecord) {
 	}
 	r.buf[r.next] = rec
 	r.next = (r.next + 1) % maxConnLog
+}
+
+// oldestOpenMs is the smallest OpenedMs in the ring, 0 when empty.
+func (r *connLogRing) oldestOpenMs() int64 {
+	var oldest int64
+	for i := range r.buf {
+		if ms := r.buf[i].OpenedMs; oldest == 0 || ms < oldest {
+			oldest = ms
+		}
+	}
+	return oldest
 }
 
 // each calls fn for every record, oldest first.
@@ -121,13 +135,29 @@ func (c *Counters) ConnFailed(srcAddr, dstAddr, host string, route RouteKind, st
 
 // connFilter selects records for /connections.
 type connFilter struct {
-	host    string // case-insensitive substring of host or dstAddr
-	sinceMs int64  // keep records still open at or after this time
-	errOnly bool
+	host     string // case-insensitive substring of host or dstAddr
+	sinceMs  int64  // keep records still open at or after this time
+	untilMs  int64  // keep records opened at or before this time
+	route    string // "tunnel" | "direct" | "blocked"; empty = any
+	minDurMs int64  // keep records that lasted at least this long
+	minBytes int64  // keep records that moved at least this many bytes (up + down)
+	errOnly  bool
 }
 
 func (f connFilter) match(r *ConnRecord) bool {
 	if f.sinceMs > 0 && r.ClosedMs != 0 && r.ClosedMs < f.sinceMs {
+		return false
+	}
+	if f.untilMs > 0 && r.OpenedMs > f.untilMs {
+		return false
+	}
+	if f.route != "" && r.Route != f.route {
+		return false
+	}
+	if f.minDurMs > 0 && r.DurationMs < f.minDurMs {
+		return false
+	}
+	if f.minBytes > 0 && r.TxBytes+r.RxBytes < f.minBytes {
 		return false
 	}
 	if f.errOnly && r.Error == "" {
@@ -141,35 +171,186 @@ func (f connFilter) match(r *ConnRecord) bool {
 	return true
 }
 
-// connections returns active and recently closed connections matching f,
-// each sorted by open time and trimmed to the newest limit entries.
-func (c *Counters) connections(f connFilter, limit int) ConnectionsResponse {
-	now := time.Now()
-	resp := ConnectionsResponse{NowMs: now.UnixMilli(), Active: []ConnRecord{}, Closed: []ConnRecord{}}
+// matching returns the active and closed connections matching f. Active
+// records are snapshotted with DurationMs measured up to now.
+func (c *Counters) matching(f connFilter, now time.Time) (active, closed []ConnRecord, historyFromMs int64) {
+	active, closed = []ConnRecord{}, []ConnRecord{}
 	c.mu.Lock()
+	historyFromMs = c.connLog.oldestOpenMs()
 	for id, cs := range c.conns {
 		rec := cs.record(id, now)
 		if f.match(&rec) {
-			resp.Active = append(resp.Active, rec)
+			active = append(active, rec)
 		}
 	}
 	c.connLog.each(func(r *ConnRecord) {
 		if f.match(r) {
-			resp.Closed = append(resp.Closed, *r)
+			closed = append(closed, *r)
 		}
 	})
 	c.mu.Unlock()
-	resp.Active = newestByOpen(resp.Active, limit)
-	resp.Closed = newestByOpen(resp.Closed, limit)
-	return resp
+	return active, closed, historyFromMs
 }
 
-func newestByOpen(recs []ConnRecord, limit int) []ConnRecord {
-	sort.SliceStable(recs, func(i, j int) bool { return recs[i].OpenedMs < recs[j].OpenedMs })
+// connections returns active and recently closed connections matching f.
+// With order "" / "open" each list is the newest limit entries, oldest first;
+// with "dur", "bytes" or "first-byte" it is the top limit entries by that key,
+// largest first.
+func (c *Counters) connections(f connFilter, order string, limit int) ConnectionsResponse {
+	now := time.Now()
+	active, closed, from := c.matching(f, now)
+	return ConnectionsResponse{
+		NowMs:         now.UnixMilli(),
+		HistoryFromMs: from,
+		ActiveMatched: len(active),
+		ClosedMatched: len(closed),
+		Active:        sortConns(active, order, limit),
+		Closed:        sortConns(closed, order, limit),
+	}
+}
+
+// connSortKeys maps a /connections sort= value to its descending key.
+var connSortKeys = map[string]func(*ConnRecord) int64{
+	"dur":        func(r *ConnRecord) int64 { return r.DurationMs },
+	"bytes":      func(r *ConnRecord) int64 { return r.TxBytes + r.RxBytes },
+	"first-byte": func(r *ConnRecord) int64 { return r.FirstRxMs },
+}
+
+func sortConns(recs []ConnRecord, order string, limit int) []ConnRecord {
+	key, ok := connSortKeys[order]
+	if !ok {
+		sort.SliceStable(recs, func(i, j int) bool { return recs[i].OpenedMs < recs[j].OpenedMs })
+		if limit > 0 && len(recs) > limit {
+			recs = recs[len(recs)-limit:]
+		}
+		return recs
+	}
+	sort.SliceStable(recs, func(i, j int) bool { return key(&recs[i]) > key(&recs[j]) })
 	if limit > 0 && len(recs) > limit {
-		recs = recs[len(recs)-limit:]
+		recs = recs[:limit]
 	}
 	return recs
+}
+
+// ConnGroup aggregates the connections sharing one host / route / error in
+// the /connections?group= response.
+type ConnGroup struct {
+	Key          string `json:"key"`
+	Conns        int    `json:"conns"`  // active + closed
+	Active       int    `json:"active"` // still open
+	Errors       int    `json:"errors"` // closed with an error
+	TxBytes      int64  `json:"txBytes"`
+	RxBytes      int64  `json:"rxBytes"`
+	NoReply      int    `json:"noReply"`                  // sent bytes, got none back
+	FirstByteP50 int64  `json:"firstByteP50Ms,omitempty"` // over connections that got a first byte
+	FirstByteP95 int64  `json:"firstByteP95Ms,omitempty"`
+	MaxDurMs     int64  `json:"maxDurMs"`
+	FirstSeenMs  int64  `json:"firstSeenMs"`        // earliest open
+	LastSeenMs   int64  `json:"lastSeenMs"`         // latest open
+	TopError     string `json:"topError,omitempty"` // most frequent error, when Errors > 0
+}
+
+// ConnGroupsResponse is the JSON body of GET /connections?group=...
+type ConnGroupsResponse struct {
+	NowMs         int64       `json:"nowMs"`
+	HistoryFromMs int64       `json:"historyFromMs,omitempty"`
+	GroupBy       string      `json:"groupBy"`
+	Total         int         `json:"total"`             // connections matched before grouping
+	Groups        []ConnGroup `json:"groups"`            // most connections first
+	Omitted       int         `json:"omitted,omitempty"` // groups dropped by limit
+}
+
+// connGroupKeys maps a /connections group= value to the grouping key.
+var connGroupKeys = map[string]func(*ConnRecord) string{
+	"host": func(r *ConnRecord) string {
+		if r.Host != "" {
+			return r.Host
+		}
+		return r.DstAddr
+	},
+	"route": func(r *ConnRecord) string { return r.Route },
+	"error": func(r *ConnRecord) string {
+		if r.Error == "" {
+			return "(clean)"
+		}
+		return r.Error
+	},
+}
+
+// groups aggregates the connections matching f by by ("host", "route" or
+// "error") and keeps the limit groups with the most connections.
+func (c *Counters) groups(f connFilter, by string, limit int) ConnGroupsResponse {
+	now := time.Now()
+	active, closed, from := c.matching(f, now)
+	keyOf := connGroupKeys[by]
+
+	type acc struct {
+		g          ConnGroup
+		firstBytes []int64
+		errs       map[string]int
+	}
+	byKey := map[string]*acc{}
+	add := func(r *ConnRecord, open bool) {
+		k := keyOf(r)
+		a := byKey[k]
+		if a == nil {
+			a = &acc{g: ConnGroup{Key: k, FirstSeenMs: r.OpenedMs}, errs: map[string]int{}}
+			byKey[k] = a
+		}
+		g := &a.g
+		g.Conns++
+		if open {
+			g.Active++
+		} else if r.Error != "" {
+			g.Errors++
+			a.errs[r.Error]++
+		}
+		g.TxBytes += r.TxBytes
+		g.RxBytes += r.RxBytes
+		if !open && r.TxBytes > 0 && r.RxBytes == 0 {
+			g.NoReply++
+		}
+		if r.FirstRxMs > 0 {
+			a.firstBytes = append(a.firstBytes, r.FirstRxMs)
+		}
+		g.MaxDurMs = max(g.MaxDurMs, r.DurationMs)
+		g.FirstSeenMs = min(g.FirstSeenMs, r.OpenedMs)
+		g.LastSeenMs = max(g.LastSeenMs, r.OpenedMs)
+	}
+	for i := range active {
+		add(&active[i], true)
+	}
+	for i := range closed {
+		add(&closed[i], false)
+	}
+
+	resp := ConnGroupsResponse{NowMs: now.UnixMilli(), HistoryFromMs: from, GroupBy: by, Total: len(active) + len(closed), Groups: []ConnGroup{}}
+	for _, a := range byKey {
+		if n := len(a.firstBytes); n > 0 {
+			sort.Slice(a.firstBytes, func(i, j int) bool { return a.firstBytes[i] < a.firstBytes[j] })
+			a.g.FirstByteP50 = a.firstBytes[(n-1)*50/100]
+			a.g.FirstByteP95 = a.firstBytes[(n-1)*95/100]
+		}
+		best := 0
+		for e, n := range a.errs {
+			if n > best || (n == best && e < a.g.TopError) {
+				a.g.TopError, best = e, n
+			}
+		}
+		resp.Groups = append(resp.Groups, a.g)
+	}
+	sort.Slice(resp.Groups, func(i, j int) bool {
+		gi, gj := &resp.Groups[i], &resp.Groups[j]
+		if gi.Conns != gj.Conns {
+			return gi.Conns > gj.Conns
+		}
+		return gi.Key < gj.Key
+	})
+	if limit > 0 && len(resp.Groups) > limit {
+		resp.Omitted = len(resp.Groups) - limit
+		resp.Groups = resp.Groups[:limit]
+	}
+	return resp
 }
 
 // parseSince accepts a Go duration ("10m", "90s" — meaning that long ago) or
@@ -191,10 +372,16 @@ func parseSince(s string, now time.Time) (int64, bool) {
 //
 // Query parameters (all optional):
 //
-//	host=<substr>   case-insensitive match on host or dstAddr
-//	since=<10m|ms>  drop connections that closed before this point
-//	errors=1        only connections that ended with an error
-//	limit=<n>       newest n per list (default 500, 0 = all)
+//	host=<substr>     case-insensitive match on host or dstAddr
+//	since=<10m|ms>    drop connections that closed before this point
+//	until=<10m|ms>    drop connections opened after this point
+//	route=<r>         tunnel | direct | blocked
+//	min_dur=<5s>      drop connections shorter than this
+//	min_bytes=<n>     drop connections that moved fewer bytes (up + down)
+//	errors=1          only connections that ended with an error
+//	sort=<k>          open (default, newest last) | dur | bytes | first-byte (largest first)
+//	group=<k>         host | route | error: return per-group aggregates instead of connections
+//	limit=<n>         n per list, or n groups (default 500, 0 = all)
 func (c *Counters) handleConnections(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method != http.MethodGet {
@@ -202,9 +389,15 @@ func (c *Counters) handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	sinceMs, ok := parseSince(q.Get("since"), time.Now())
+	now := time.Now()
+	sinceMs, ok := parseSince(q.Get("since"), now)
 	if !ok {
 		http.Error(w, "since: want a duration like 10m or unix milliseconds", http.StatusBadRequest)
+		return
+	}
+	untilMs, ok := parseSince(q.Get("until"), now)
+	if !ok {
+		http.Error(w, "until: want a duration like 10m or unix milliseconds", http.StatusBadRequest)
 		return
 	}
 	limit := 500
@@ -219,8 +412,46 @@ func (c *Counters) handleConnections(w http.ResponseWriter, r *http.Request) {
 	f := connFilter{
 		host:    strings.ToLower(q.Get("host")),
 		sinceMs: sinceMs,
+		untilMs: untilMs,
+		route:   q.Get("route"),
 		errOnly: q.Get("errors") == "1" || q.Get("errors") == "true",
 	}
+	switch f.route {
+	case "", string(RouteTunnel), string(RouteDirect), string(RouteBlocked):
+	default:
+		http.Error(w, "route: want tunnel, direct or blocked", http.StatusBadRequest)
+		return
+	}
+	if s := q.Get("min_dur"); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			http.Error(w, "min_dur: want a duration like 5s", http.StatusBadRequest)
+			return
+		}
+		f.minDurMs = d.Milliseconds()
+	}
+	if s := q.Get("min_bytes"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "min_bytes: want a non-negative integer", http.StatusBadRequest)
+			return
+		}
+		f.minBytes = n
+	}
+	order := q.Get("sort")
+	if _, ok := connSortKeys[order]; !ok && order != "" && order != "open" {
+		http.Error(w, "sort: want open, dur, bytes or first-byte", http.StatusBadRequest)
+		return
+	}
+	by := q.Get("group")
+	if _, ok := connGroupKeys[by]; !ok && by != "" {
+		http.Error(w, "group: want host, route or error", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(c.connections(f, limit))
+	if by != "" {
+		json.NewEncoder(w).Encode(c.groups(f, by, limit))
+		return
+	}
+	json.NewEncoder(w).Encode(c.connections(f, order, limit))
 }
