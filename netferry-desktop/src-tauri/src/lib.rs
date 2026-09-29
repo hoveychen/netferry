@@ -202,6 +202,8 @@ pub fn run() {
             commands::set_window_theme,
             commands::get_app_version,
             commands::get_tunnel_version,
+            commands::claude_skill_installed,
+            commands::install_claude_skill,
             commands::check_for_update,
             traceroute::start_traceroute,
             traceroute::cancel_traceroute,

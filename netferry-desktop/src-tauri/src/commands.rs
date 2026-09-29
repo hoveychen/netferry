@@ -385,6 +385,27 @@ pub fn get_tunnel_version(state: State<'_, sidecar::AppState>) -> String {
     state.tunnel_version().to_string()
 }
 
+#[tauri::command]
+pub fn claude_skill_installed(app: AppHandle) -> bool {
+    app.path()
+        .home_dir()
+        .map(|home| {
+            home.join(".claude")
+                .join("skills")
+                .join("netferry-tunnel")
+                .join("SKILL.md")
+                .exists()
+        })
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub async fn install_claude_skill() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(sidecar::install_claude_skill)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[derive(serde::Serialize)]
 pub struct UpdateInfo {
     pub has_update: bool,
