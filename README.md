@@ -101,6 +101,17 @@ netferry-tunnel --remote user@host --method socks5 0.0.0.0/0
 
 Root/sudo is required for all methods except `socks5`, which sets up a local SOCKS5 proxy instead of transparent interception.
 
+### Inspecting connections
+
+While a tunnel (CLI or desktop) is running, `netferry-tunnel conns` lists its active and recently closed connections — open time, duration, bytes, time to first byte, and the error a connection ended with:
+
+```bash
+netferry-tunnel conns --host anthropic --since 10m   # one line per connection
+netferry-tunnel conns --errors --json                # raw JSON
+```
+
+The same data is served at `GET http://127.0.0.1:<stats-port>/connections?host=&since=&errors=&limit=`; the port is found in the port cache (`ports.json` under the user cache dir) or given with `--port`. Timing is per TCP connection — requests sharing one keep-alive / HTTP/2 connection are not split apart.
+
 ## Repository Layout
 
 ```

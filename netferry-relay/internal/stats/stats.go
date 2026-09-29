@@ -204,6 +204,7 @@ type Counters struct {
 	dests      map[string]*destStats // per-destination aggregates keyed by normalised host/IP
 	priorities map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
 	routes     *compiledRoutes       // compiled route table (overrides > rule groups > final)
+	connLog    connLogRing           // recently closed / failed connections, served by /connections
 
 	tunnelsMu sync.RWMutex
 	tunnels   []tunnelEntry // per-pool-member counters, ordered by registration
@@ -241,7 +242,11 @@ type connStats struct {
 	dstAddr     string
 	host        string
 	tunnelIndex int
+	route       RouteKind
 	openedAt    time.Time
+	firstRxAt   time.Time // first downloaded byte (zero = none yet)
+	lastRxAt    time.Time
+	lastTxAt    time.Time
 	rxBytes     int64
 	txBytes     int64
 	destKey     string // normalized destination key used for destStats lookup
@@ -353,6 +358,12 @@ func wildcardCandidates(host string) []string {
 // SOCKS5 domain); pass "" if unknown.
 // tunnelIndex is the 1-based pool member index; pass 0 for single-tunnel mode.
 func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint64 {
+	return c.ConnOpenRoute(srcAddr, dstAddr, host, tunnelIndex, RouteTunnel)
+}
+
+// ConnOpenRoute is ConnOpen for a connection whose route is not the tunnel
+// (e.g. RouteDirect); the route is reported by /connections.
+func (c *Counters) ConnOpenRoute(srcAddr, dstAddr, host string, tunnelIndex int, route RouteKind) uint64 {
 	id := c.nextConnID.Add(1)
 	now := time.Now()
 	dk := destKey(dstAddr, host)
@@ -366,6 +377,7 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint
 		dstAddr:     dstAddr,
 		host:        host,
 		tunnelIndex: tunnelIndex,
+		route:       route,
 		openedAt:    now,
 		destKey:     dk,
 	}
@@ -396,12 +408,23 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint
 
 // ConnClose queues an SSE "close" notification for a previously opened connection.
 func (c *Counters) ConnClose(id uint64, srcAddr, dstAddr string) {
+	c.ConnCloseErr(id, srcAddr, dstAddr, "")
+}
+
+// ConnCloseErr is ConnClose that also records why the connection ended
+// (empty for a clean close) in the /connections history.
+func (c *Counters) ConnCloseErr(id uint64, srcAddr, dstAddr, errMsg string) {
+	now := time.Now()
 	c.mu.Lock()
 	if cs, ok := c.conns[id]; ok {
 		if ds, ok2 := c.dests[cs.destKey]; ok2 {
 			ds.activeConns--
-			ds.lastSeenAt = time.Now()
+			ds.lastSeenAt = now
 		}
+		rec := cs.record(id, now)
+		rec.ClosedMs = now.UnixMilli()
+		rec.Error = errMsg
+		c.connLog.add(rec)
 	}
 	delete(c.conns, id)
 	c.mu.Unlock()
@@ -448,9 +471,14 @@ func (c *Counters) ConnAddRx(id uint64, n int64) {
 	if n <= 0 || id == 0 {
 		return
 	}
+	now := time.Now()
 	c.mu.Lock()
 	if cs, ok := c.conns[id]; ok {
 		cs.rxBytes += n
+		if cs.firstRxAt.IsZero() {
+			cs.firstRxAt = now
+		}
+		cs.lastRxAt = now
 		if ds, ok2 := c.dests[cs.destKey]; ok2 {
 			ds.rxBytes += n
 		}
@@ -462,9 +490,11 @@ func (c *Counters) ConnAddTx(id uint64, n int64) {
 	if n <= 0 || id == 0 {
 		return
 	}
+	now := time.Now()
 	c.mu.Lock()
 	if cs, ok := c.conns[id]; ok {
 		cs.txBytes += n
+		cs.lastTxAt = now
 		if ds, ok2 := c.dests[cs.destKey]; ok2 {
 			ds.txBytes += n
 		}
@@ -658,6 +688,7 @@ func (c *Counters) ListenAndServe(preferredPort int) (int, error) {
 	mux.HandleFunc("/snapshot", c.handleSnapshot)
 	mux.HandleFunc("/priorities", c.handlePriorities)
 	mux.HandleFunc("/routes", c.handleRoutes)
+	mux.HandleFunc("/connections", c.handleConnections)
 
 	c.mu.Lock()
 	c.ln = ln

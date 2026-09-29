@@ -104,6 +104,9 @@ func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort i
 	switch routeKind {
 	case stats.RouteBlocked:
 		log.Printf("%s: blocked %s -> %s", tag, srcAddr, dstAddr)
+		if counters != nil {
+			counters.ConnFailed(srcAddr, dstAddr, host, stats.RouteBlocked, startedAt, "blocked by route rule")
+		}
 		return
 	case stats.RouteDirect:
 		handleDirect(conn, br, dstAddr, srcAddr, host, counters, startedAt)
@@ -113,6 +116,9 @@ func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort i
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("%s: open channel to %s:%d: %v", tag, dstIP, dstPort, err)
+		if counters != nil {
+			counters.ConnFailed(srcAddr, dstAddr, host, stats.RouteTunnel, startedAt, "open channel: "+err.Error())
+		}
 		return
 	}
 	defer muxConn.Close()
@@ -153,7 +159,7 @@ func forwardTCP(tag string, conn net.Conn, br io.Reader, dstIP string, dstPort i
 	first := <-done
 	second := <-done
 	if counters != nil {
-		counters.ConnClose(connID, srcAddr, dstAddr)
+		counters.ConnCloseErr(connID, srcAddr, dstAddr, copyErrMsg(first, second))
 	}
 	logConnSummary(tag, connID, srcAddr, dstAddr, host, startedAt, first, second)
 }

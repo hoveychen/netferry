@@ -145,6 +145,9 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 	switch routeKind {
 	case stats.RouteBlocked:
 		log.Printf("proxy: blocked %s -> %s (%s)", srcAddr, dstAddr, host)
+		if counters != nil {
+			counters.ConnFailed(srcAddr, dstAddr, host, stats.RouteBlocked, startedAt, "blocked by route rule")
+		}
 		return
 	case stats.RouteDirect:
 		handleDirect(conn, br, dstAddr, srcAddr, host, counters, startedAt)
@@ -155,6 +158,9 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 	muxConn, err := client.OpenTCP(family, dstIP, dstPort, priority)
 	if err != nil {
 		log.Printf("proxy: open channel to %s:%d: %v", dstIP, dstPort, err)
+		if counters != nil {
+			counters.ConnFailed(srcAddr, dstAddr, host, stats.RouteTunnel, startedAt, "open channel: "+err.Error())
+		}
 		return
 	}
 	defer muxConn.Close()
@@ -199,7 +205,7 @@ func handleConn(conn net.Conn, client mux.TunnelClient, counters *stats.Counters
 	first := <-done
 	second := <-done
 	if counters != nil {
-		counters.ConnClose(connID, srcAddr, dstAddr)
+		counters.ConnCloseErr(connID, srcAddr, dstAddr, copyErrMsg(first, second))
 	}
 	logConnSummary("tcp", connID, srcAddr, dstAddr, host, startedAt, first, second)
 }
@@ -224,13 +230,16 @@ func handleDirect(clientConn net.Conn, br io.Reader, dstAddr, srcAddr, host stri
 	remote, err := sockmark.DialTimeout("tcp", dstAddr, 10*time.Second)
 	if err != nil {
 		log.Printf("proxy: direct dial %s: %v", dstAddr, err)
+		if counters != nil {
+			counters.ConnFailed(srcAddr, dstAddr, host, stats.RouteDirect, startedAt, "direct dial: "+err.Error())
+		}
 		return
 	}
 	defer remote.Close()
 
 	var connID uint64
 	if counters != nil {
-		connID = counters.ConnOpen(srcAddr, dstAddr, host, 0)
+		connID = counters.ConnOpenRoute(srcAddr, dstAddr, host, 0, stats.RouteDirect)
 	}
 
 	touch := func() {
@@ -266,7 +275,7 @@ func handleDirect(clientConn net.Conn, br io.Reader, dstAddr, srcAddr, host stri
 	first := <-done
 	second := <-done
 	if counters != nil {
-		counters.ConnClose(connID, srcAddr, dstAddr)
+		counters.ConnCloseErr(connID, srcAddr, dstAddr, copyErrMsg(first, second))
 	}
 	logConnSummary("tcp-direct", connID, srcAddr, dstAddr, host, startedAt, first, second)
 }
@@ -313,6 +322,18 @@ func normalizeCopyErr(err error) error {
 	default:
 		return err
 	}
+}
+
+// copyErrMsg summarises the copy errors of both directions for the stats
+// connection history; empty when the connection closed cleanly.
+func copyErrMsg(first, second copyResult) string {
+	var parts []string
+	for _, r := range []copyResult{first, second} {
+		if r.err != nil {
+			parts = append(parts, r.direction+": "+r.err.Error())
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func logConnSummary(kind string, connID uint64, srcAddr, dstAddr, host string, startedAt time.Time, first, second copyResult) {
