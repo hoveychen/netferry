@@ -60,37 +60,36 @@ export interface GlobalSettings {
   lanHttpPort?: number | null;
 }
 
-// ── ProfileGroup (P1 data layer only; UI continues to use flat Profile list) ──
+// ── ProfileGroup: a folder of profiles plus the routing rules they share ──
 
-/**
- * Tagged-union route decision persisted inside a ProfileGroup's `rules` map.
- * Distinct from the legacy `RouteMode = "tunnel" | "direct" | "blocked"`
- * string used by the current DestinationsPage — that legacy shape stays
- * authoritative until P2/P3 switches over.
- */
-export type RouteModeV2 =
-  | { kind: "tunnel"; profileId: string }
-  | { kind: "default" }
-  | { kind: "direct" }
-  | { kind: "blocked" };
+/** Route decision persisted in a ProfileGroup. The backend normalizes legacy
+ *  `default` / `tunnel:<profileId>` values to `tunnel` on read. */
+export interface RouteRule {
+  kind: RouteMode;
+}
+
+/** The catch-all route (Clash's MATCH) is limited to tunnel or direct. */
+export type FinalRoute = { kind: "tunnel" | "direct" };
 
 export interface RuleGroup {
   id: string;
   name: string;
   /** A domain includes its apex and subdomains; =host matches exactly. */
   domains: string[];
-  route: RouteModeV2;
+  route: RouteRule;
 }
 
 export interface ProfileGroup {
   id: string;
   name: string;
-  /** Ordered profile-id references; childrenIds[0] is the group's default profile.
-   *  Profile objects themselves live in `profiles.json`. */
+  /** Ordered profile-id references. Profile objects live in `profiles.json`. */
   childrenIds: string[];
-  /** Destination host → route decision. */
-  rules: Record<string, RouteModeV2>;
+  /** Per-host overrides (host, IP or `*.suffix`); evaluated before rule groups. */
+  rules: Record<string, RouteRule>;
+  /** Ordered; the first group with a matching domain wins. */
   ruleGroups: RuleGroup[];
+  /** Route for traffic no override or rule group matches. */
+  finalRoute: FinalRoute;
   /** Destination host → priority (1–5). */
   priorities: Record<string, number>;
   /** Every host/IP the relay has ever observed for this group (dedup, unordered).
@@ -127,10 +126,6 @@ export interface TunnelSnapshot {
   maxRttUs: number;        // max RTT in µs
   jitterUs: number;        // |last - prev| in µs
   congestionScore: number; // streams × (1 + rtt_ms/50); lower = less loaded
-  // Profile id this tunnel belongs to in multi-profile mode. Empty in legacy
-  // single-profile mode. In multi-profile mode, `index` is only unique within
-  // a profile — group tunnels by `profileId` first, then order by `index`.
-  profileId?: string;
 }
 
 export interface TunnelStats {
@@ -151,9 +146,6 @@ export interface ConnectionEvent {
   dstAddr: string;
   host?: string;
   tunnelIndex?: number; // 1-based pool member; 0 or absent = single tunnel
-  // Profile the connection was dispatched through in multi-profile mode.
-  // Empty/undefined in legacy single-profile mode.
-  activeProfileId?: string;
   timestampMs: number;
 }
 
@@ -170,12 +162,6 @@ export interface DestinationSnapshot {
   priority: number;      // 1=low, 3=normal, 5=high
   route: RouteMode;      // tunnel, direct, or blocked
   processNames?: string[]; // local processes that connected to this destination
-  // Profile id this host's traffic is currently being dispatched through.
-  // Empty/undefined in single-profile mode.
-  activeProfileId?: string;
-  // Profile id this host is pinned to via a `tunnel:profileId` route rule.
-  // Empty/undefined when the host follows the group's default routing.
-  assignedProfileId?: string;
 }
 
 export type RouteMode = "tunnel" | "direct" | "blocked";

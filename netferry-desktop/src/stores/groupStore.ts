@@ -9,6 +9,7 @@ export function newGroup(): ProfileGroup {
     childrenIds: [],
     rules: {},
     ruleGroups: [],
+    finalRoute: { kind: "tunnel" },
     priorities: {},
     knownHosts: [],
   };

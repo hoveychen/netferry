@@ -21,22 +21,8 @@ export function getDefaultIdentityFile() {
   return invoke<string | null>("get_default_identity_file");
 }
 
-/**
- * `group` + `children` are passed together for multi-tunnel (group) mode.
- * Backend writes the children to a temp group.json and spawns the Go tunnel
- * with `--group <path>`, which brings up one SSH connection per child.
- * Solo mode (single tunnel) leaves both undefined.
- */
-export function connectProfile(
-  profile: Profile,
-  group?: ProfileGroup,
-  children?: Profile[],
-) {
-  return invoke<ConnectionStatus>("connect_profile", {
-    profile,
-    group: group ?? null,
-    children: children ?? null,
-  });
+export function connectProfile(profile: Profile) {
+  return invoke<ConnectionStatus>("connect_profile", { profile });
 }
 
 export function disconnectProfile() {
