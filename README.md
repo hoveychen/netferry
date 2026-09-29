@@ -112,6 +112,12 @@ netferry-tunnel conns --errors --json                # raw JSON
 
 The same data is served at `GET http://127.0.0.1:<stats-port>/connections?host=&since=&errors=&limit=`; the port is found in the port cache (`ports.json` under the user cache dir) or given with `--port`. Timing is per TCP connection — requests sharing one keep-alive / HTTP/2 connection are not split apart.
 
+To let Claude Code use this when diagnosing network problems, install its skill (it records the binary's path, since the desktop app does not put `netferry-tunnel` on PATH):
+
+```bash
+netferry-tunnel install-claude-skill   # writes ~/.claude/skills/netferry-tunnel/SKILL.md
+```
+
 ## Repository Layout
 
 ```

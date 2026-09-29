@@ -30,9 +30,16 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("c : ")
 
-	if len(os.Args) > 1 && os.Args[1] == "conns" {
-		runConns(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "conns":
+			checkSkillNotice()
+			runConns(os.Args[2:])
+			return
+		case "install-claude-skill":
+			runInstallClaudeSkill(os.Args[2:])
+			return
+		}
 	}
 
 	cfg, earlyExit := parseAndBuildConfig(os.Args[1:])
