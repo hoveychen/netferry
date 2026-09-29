@@ -24,13 +24,10 @@ type Engine interface {
 	ReleaseFirewall()
 }
 
-// ConnectSpec is what the user asked to connect: one profile (solo) or the
-// active group, whose seed is its first child — the same seed the desktop
-// passes to the tunnel.
+// ConnectSpec is what the user asked to connect: one profile. Routing rules
+// come from the active profile group (see Data.Rules).
 type ConnectSpec struct {
 	Profile  profile.Profile
-	Group    *store.Group
-	Children []profile.Profile
 	Settings store.GlobalSettings
 }
 
@@ -54,12 +51,11 @@ var ReconnectInterval = 5 * time.Second
 // countdownStep is how often the reconnect countdown message updates.
 var countdownStep = time.Second
 
-// Rules is what the desktop pushes to /priorities, /routes and /group. The
-// session hands it to every engine it creates, before Run, and live.
+// Rules is what the desktop pushes to /priorities and /routes. The session
+// hands it to every engine it creates, before Run, and live.
 type Rules struct {
 	Priorities map[string]int
-	Routes     map[string]store.RouteMode // already compiled (rule groups + overrides)
-	Group      *stats.ActiveGroup         // nil in solo mode
+	Routes     stats.RouteTable // overrides > ordered rule groups > final
 }
 
 // TunnelError is one error-looking log line, shown on the Errors tab and in
@@ -226,12 +222,7 @@ func applyRules(c *stats.Counters, r Rules) {
 		prios[k] = v
 	}
 	c.SetPriorities(prios)
-	routes := make(map[string]stats.RouteMode, len(r.Routes))
-	for k, v := range r.Routes {
-		routes[k] = stats.RouteMode{Kind: stats.RouteKind(v.Kind), ProfileID: v.ProfileID}
-	}
-	c.SetRouteModes(routes)
-	c.SetActiveGroup(r.Group)
+	c.SetRouteTable(r.Routes)
 }
 
 // Connect starts a new session. It fails if one is already running.

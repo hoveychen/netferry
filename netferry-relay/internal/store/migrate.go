@@ -35,23 +35,9 @@ func MigrateV2() error {
 		settings = DefaultGlobalSettings()
 	}
 
-	defaultPID := ""
-	if id := settings.AutoConnectProfileID; id != "" && FindProfile(profiles, id) != nil {
-		defaultPID = id
-	} else if len(profiles) > 0 {
-		defaultPID = profiles[0].ID
-	}
-
 	rules := make(map[string]RouteMode, len(legacyRoutes))
 	for host, mode := range legacyRoutes {
-		switch {
-		case mode == "direct" || mode == "blocked":
-			rules[host] = RouteMode{Kind: mode}
-		case defaultPID != "":
-			rules[host] = RouteMode{Kind: "tunnel", ProfileID: defaultPID}
-		default:
-			rules[host] = RouteMode{Kind: "default"}
-		}
+		rules[host] = RouteMode{Kind: NormalizeRouteKind(mode)}
 	}
 	children := make([]string, 0, len(profiles))
 	for _, p := range profiles {
@@ -63,6 +49,7 @@ func MigrateV2() error {
 		ChildrenIDs: children,
 		Rules:       rules,
 		Priorities:  legacyPrios,
+		FinalRoute:  RouteMode{Kind: RouteTunnel},
 	}
 	if err := SaveGroup(g); err != nil {
 		return err

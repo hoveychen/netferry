@@ -46,12 +46,12 @@ func TestDestMapEvictionBounded(t *testing.T) {
 
 	// A long-lived active connection whose destination must survive eviction.
 	keepHost := "keep.example.com"
-	keepID := c.ConnOpen("10.0.0.1:5555", "1.1.1.1:443", keepHost, 0, "")
+	keepID := c.ConnOpen("10.0.0.1:5555", "1.1.1.1:443", keepHost, 0)
 
 	// Churn many ephemeral destinations (open then immediately close).
 	for i := 0; i < 3000; i++ {
 		host := fmt.Sprintf("eph-%04d.example.com", i)
-		id := c.ConnOpen("10.0.0.1:6000", "2.2.2.2:443", host, 0, "")
+		id := c.ConnOpen("10.0.0.1:6000", "2.2.2.2:443", host, 0)
 		c.ConnClose(id, "10.0.0.1:6000", "2.2.2.2:443")
 	}
 

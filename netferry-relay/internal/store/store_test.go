@@ -211,7 +211,7 @@ func TestGroupsCRUD(t *testing.T) {
 		Name:        "main",
 		ChildrenIDs: []string{"p1", "p2"},
 		Rules: map[string]store.RouteMode{
-			"example.com": {Kind: "tunnel", ProfileID: "p2"},
+			"example.com": {Kind: "tunnel"},
 			"badhost":     {Kind: "blocked"},
 		},
 		Priorities: map[string]int{"example.com": 5},
@@ -220,6 +220,7 @@ func TestGroupsCRUD(t *testing.T) {
 			Route: store.RouteMode{Kind: "direct"},
 		}},
 		KnownHosts: []string{"example.com", "badhost", "other"},
+		FinalRoute: store.RouteMode{Kind: "direct"},
 	}
 	if err := store.SaveGroup(g); err != nil {
 		t.Fatalf("save: %v", err)
@@ -232,8 +233,8 @@ func TestGroupsCRUD(t *testing.T) {
 	if got == nil || got.Name != "main" {
 		t.Fatalf("load mismatch: %+v", got)
 	}
-	if got.Rules["example.com"].Kind != "tunnel" || got.Rules["example.com"].ProfileID != "p2" {
-		t.Fatalf("rules round-trip: %+v", got.Rules)
+	if got.Rules["example.com"].Kind != "tunnel" || got.FinalRoute.Kind != "direct" {
+		t.Fatalf("rules round-trip: %+v final=%+v", got.Rules, got.FinalRoute)
 	}
 	if got.Priorities["example.com"] != 5 {
 		t.Fatalf("priorities: %+v", got.Priorities)
@@ -255,6 +256,58 @@ func TestGroupsCRUD(t *testing.T) {
 	}
 	if got, _ := store.LoadGroup("g1"); got != nil {
 		t.Fatalf("deleted group still loadable: %+v", got)
+	}
+}
+
+func TestGroupLegacyRouteKindsNormalizeOnRead(t *testing.T) {
+	dir := withTempDataDir(t)
+	raw := `{
+  "id": "g1", "name": "Old", "childrenIds": ["p1"],
+  "rules": {
+    "a.com": {"kind": "default"},
+    "b.com": {"kind": "tunnel", "profileId": "p1"},
+    "c.com": "direct",
+    "d.com": {"kind": "weird"}
+  },
+  "ruleGroups": [{"id": "r", "name": "R", "domains": ["x.com"], "route": {"kind": "default"}}]
+}`
+	groupsDir := filepath.Join(dir, "groups")
+	if err := os.MkdirAll(groupsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(groupsDir, "g1.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := store.LoadGroup("g1")
+	if err != nil || g == nil {
+		t.Fatalf("load: %v %+v", err, g)
+	}
+	want := map[string]store.RouteMode{
+		"a.com": {Kind: "tunnel"}, "b.com": {Kind: "tunnel"}, "c.com": {Kind: "direct"}, "d.com": {Kind: "tunnel"},
+	}
+	if !reflect.DeepEqual(g.Rules, want) {
+		t.Fatalf("rules = %+v", g.Rules)
+	}
+	if g.RuleGroups[0].Route.Kind != "tunnel" || g.FinalRoute.Kind != "tunnel" {
+		t.Fatalf("group route=%+v final=%+v", g.RuleGroups[0].Route, g.FinalRoute)
+	}
+
+	// Writes never carry profileId and always carry finalRoute; blocked is
+	// not a valid fallback and is written as tunnel.
+	g.FinalRoute = store.RouteMode{Kind: "blocked"}
+	if err := store.SaveGroup(g); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(filepath.Join(groupsDir, "g1.json"))
+	var generic map[string]any
+	if err := json.Unmarshal(out, &generic); err != nil {
+		t.Fatal(err)
+	}
+	if fr, _ := generic["finalRoute"].(map[string]any); fr["kind"] != "tunnel" {
+		t.Fatalf("finalRoute on disk: %s", out)
+	}
+	if b, _ := generic["rules"].(map[string]any)["b.com"].(map[string]any); len(b) != 1 {
+		t.Fatalf("profileId leaked to disk: %s", out)
 	}
 }
 

@@ -49,6 +49,16 @@ func (d *Data) PutRuleGroup(rg store.RuleGroup) error {
 	return d.editActiveGroup(func(g *store.Group) { SaveRuleGroup(g, rg) })
 }
 
+// MoveRuleGroup reorders a rule group on the active group by delta.
+func (d *Data) MoveRuleGroup(id string, delta int) error {
+	return d.editActiveGroup(func(g *store.Group) { MoveRuleGroup(g, id, delta) })
+}
+
+// SetFinalRoute sets the active group's fallback route (tunnel/direct).
+func (d *Data) SetFinalRoute(mode store.RouteMode) error {
+	return d.editActiveGroup(func(g *store.Group) { g.FinalRoute = store.NormalizeFinalRoute(mode) })
+}
+
 // RemoveRuleGroup deletes a rule group from the active group.
 func (d *Data) RemoveRuleGroup(id string) error {
 	return d.editActiveGroup(func(g *store.Group) { DeleteRuleGroup(g, id) })

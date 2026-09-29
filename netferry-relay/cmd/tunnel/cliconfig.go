@@ -45,7 +45,6 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		showVersion    = fs.Bool("version", false, "print version and exit")
 		listFeatures   = fs.Bool("list-features", false, "print method features as JSON and exit")
 		profilePath    = fs.String("profile", "", "path to encrypted .nfprofile file (all values are used unless overridden by explicit flags)")
-		groupPath      = fs.String("group", "", "path to plaintext JSON profile-group file (supersedes --profile; engages multi-backend SessionManager)")
 		tuiMode        = fs.Bool("tui", false, "launch the interactive TUI (reads desktop profiles/groups from app data dir)")
 	)
 	fs.Parse(args)
@@ -161,155 +160,64 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 		fatalf("profile %q did not supply a remote", *profilePath)
 	}
 
-	// ── Group mode (optional) ────────────────────────────────────────────────
-	// When --group is given, children drive SSH bring-up; --profile and CLI
-	// SSH-level flags become inapplicable. Global-scope flags (firewall method,
-	// DNS, UDP, IPv6 lockdown, --auto-nets, --to-ns, --verbose) still apply
-	// because they configure the single shared firewall / proxy / stats layer.
-	var groupFile *GroupFile
-	if *groupPath != "" {
-		if *profilePath != "" {
-			fatalf("--group and --profile are mutually exclusive")
-		}
-		gf, err := loadGroupFile(*groupPath)
-		if err != nil {
-			fatalf("group: %v", err)
-		}
-		groupFile = gf
-		// Global settings come from the group's default child when not
-		// explicitly overridden on the CLI. This mirrors the single-profile
-		// behaviour: children[0] (or explicit defaultProfileId) supplies the
-		// process-level firewall/DNS/UDP/IPv6 knobs.
-		var defaultChild *profile.Profile
-		for i := range gf.Children {
-			if gf.Children[i].ID == gf.DefaultProfileID {
-				defaultChild = &gf.Children[i]
-				break
-			}
-		}
-		if defaultChild == nil {
-			defaultChild = &gf.Children[0]
-		}
-		if !setFlags["method"] && defaultChild.Method != "" {
-			*method = defaultChild.Method
-		}
-		if !setFlags["dns-target"] && defaultChild.DnsTarget != "" {
-			*dnsTarget = defaultChild.DnsTarget
-		}
-		if !setFlags["auto-nets"] {
-			*autoNets = defaultChild.AutoNets
-		}
-		if !setFlags["no-ipv6"] {
-			*noIPv6 = defaultChild.DisableIPv6
-		}
-		if !setFlags["udp"] {
-			*udpProxy = defaultChild.EnableUDP
-		}
-		if !setFlags["no-block-udp"] {
-			*noBlockUDP = !defaultChild.BlockUDPOrDefault()
-		}
-		if !setFlags["dns"] && defaultChild.Dns != "" {
-			*dns = defaultChild.Dns != profile.DnsOff
-		}
-		if len(subnets) == 0 {
-			// Union children subnets for the proxy scope.
-			seen := map[string]bool{}
-			for i := range gf.Children {
-				for _, s := range gf.Children[i].Subnets {
-					s = strings.TrimSpace(s)
-					if s != "" && !seen[s] {
-						subnets = append(subnets, s)
-						seen[s] = true
-					}
-				}
-			}
-		}
-		// Sanity: --remote is meaningless in group mode; suppress the later
-		// "required" check by picking any non-empty sentinel. We don't dial it.
-		if *remote == "" {
-			*remote = defaultChild.Remote
-		}
-	}
-
 	if *remote == "" {
 		fmt.Fprintln(os.Stderr, "fatal: --remote is required")
 		fs.Usage()
 		os.Exit(1)
 	}
 
-	// ── Build backend configs ────────────────────────────────────────────────
-	// Group mode: one backend per child, each with its own SSH + mux pool.
-	// Legacy mode: one backend synthesised from CLI flags + optional --profile.
-	var backendCfgs []*backendConfig
-	if groupFile != nil {
-		for i := range groupFile.Children {
-			child := &groupFile.Children[i]
-			if child.Remote == "" {
-				fatalf("group %q child %q missing remote", groupFile.ID, child.ID)
-			}
-			bc := backendCfgFromProfile(child)
-			// Inline PEM for each child's jump hosts is pushed in via
-			// NETFERRY_JUMP_KEY_<profileID>_<i> so secrets never hit disk.
-			for j := range bc.jumpHosts {
-				if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%s_%d", child.ID, j)); pem != "" {
-					bc.jumpHosts[j].IdentityPEM = pem
-				}
-			}
-			backendCfgs = append(backendCfgs, bc)
+	// ── Build backend config ─────────────────────────────────────────────────
+	// One backend synthesised from CLI flags + optional --profile.
+	ac := sshconn.AuthConfig{
+		IdentityFile: *identity,
+		IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
+		ExtraOptions: *extraSSHOpts,
+	}
+	if ac.IdentityPEM == "" && loadedProfile != nil && loadedProfile.IdentityKey != "" {
+		ac.IdentityPEM = loadedProfile.IdentityKey
+	}
+	var jumpHosts []sshconn.JumpHostSpec
+	if *jumpHostsJSON != "" {
+		if err := json.Unmarshal([]byte(*jumpHostsJSON), &jumpHosts); err != nil {
+			fatalf("--jump JSON: %v", err)
 		}
-	} else {
-		ac := sshconn.AuthConfig{
-			IdentityFile: *identity,
-			IdentityPEM:  os.Getenv("NETFERRY_IDENTITY_PEM"),
-			ExtraOptions: *extraSSHOpts,
+	}
+	for i := range jumpHosts {
+		if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
+			jumpHosts[i].IdentityPEM = pem
 		}
-		if ac.IdentityPEM == "" && loadedProfile != nil && loadedProfile.IdentityKey != "" {
-			ac.IdentityPEM = loadedProfile.IdentityKey
-		}
-		var jumpHosts []sshconn.JumpHostSpec
-		if *jumpHostsJSON != "" {
-			if err := json.Unmarshal([]byte(*jumpHostsJSON), &jumpHosts); err != nil {
-				fatalf("--jump JSON: %v", err)
+	}
+	if loadedProfile != nil && len(jumpHosts) == len(loadedProfile.JumpHosts) {
+		for i, jh := range loadedProfile.JumpHosts {
+			if jumpHosts[i].IdentityPEM == "" && jh.IdentityKey != "" {
+				jumpHosts[i].IdentityPEM = jh.IdentityKey
 			}
 		}
-		for i := range jumpHosts {
-			if pem := os.Getenv(fmt.Sprintf("NETFERRY_JUMP_KEY_%d", i)); pem != "" {
-				jumpHosts[i].IdentityPEM = pem
-			}
+	}
+	var fectunCfg *sshconn.FectunConfig
+	if *fectunJSON != "" {
+		fectunCfg = &sshconn.FectunConfig{}
+		if err := json.Unmarshal([]byte(*fectunJSON), fectunCfg); err != nil {
+			fatalf("--fectun JSON: %v", err)
 		}
-		if loadedProfile != nil && len(jumpHosts) == len(loadedProfile.JumpHosts) {
-			for i, jh := range loadedProfile.JumpHosts {
-				if jumpHosts[i].IdentityPEM == "" && jh.IdentityKey != "" {
-					jumpHosts[i].IdentityPEM = jh.IdentityKey
-				}
-			}
+	}
+	bc := &backendConfig{
+		remote:       *remote,
+		identityFile: ac.IdentityFile,
+		identityPEM:  ac.IdentityPEM,
+		extraSSHOpts: ac.ExtraOptions,
+		jumpHosts:    jumpHosts,
+		poolSize:     *poolSize,
+		splitConn:    *splitConn,
+		tcpBalance:   *tcpBalance,
+		fectun:       fectunCfg,
+	}
+	if loadedProfile != nil {
+		bc.profileID = loadedProfile.ID
+		if loadedProfile.AutoExcludeLANOrDefault() {
+			bc.extraExcludes = append(bc.extraExcludes, profile.AutoExcludeLANCIDRs()...)
 		}
-		var fectunCfg *sshconn.FectunConfig
-		if *fectunJSON != "" {
-			fectunCfg = &sshconn.FectunConfig{}
-			if err := json.Unmarshal([]byte(*fectunJSON), fectunCfg); err != nil {
-				fatalf("--fectun JSON: %v", err)
-			}
-		}
-		bc := &backendConfig{
-			remote:       *remote,
-			identityFile: ac.IdentityFile,
-			identityPEM:  ac.IdentityPEM,
-			extraSSHOpts: ac.ExtraOptions,
-			jumpHosts:    jumpHosts,
-			poolSize:     *poolSize,
-			splitConn:    *splitConn,
-			tcpBalance:   *tcpBalance,
-			fectun:       fectunCfg,
-		}
-		if loadedProfile != nil {
-			bc.profileID = loadedProfile.ID
-			if loadedProfile.AutoExcludeLANOrDefault() {
-				bc.extraExcludes = append(bc.extraExcludes, profile.AutoExcludeLANCIDRs()...)
-			}
-			bc.extraExcludes = append(bc.extraExcludes, loadedProfile.ExcludeSubnets...)
-		}
-		backendCfgs = []*backendConfig{bc}
+		bc.extraExcludes = append(bc.extraExcludes, loadedProfile.ExcludeSubnets...)
 	}
 
 	var excludeList []string
@@ -330,8 +238,7 @@ func parseAndBuildConfig(args []string) (*EngineConfig, bool) {
 	}
 
 	cfg := &EngineConfig{
-		Backends:       backendCfgs,
-		GroupFile:      groupFile,
+		Backend:        bc,
 		SubnetStrings:  subnets,
 		FirewallMethod: *method,
 		AutoNets:       *autoNets,

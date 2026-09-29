@@ -191,29 +191,15 @@ func (a *App) reload() {
 	a.pushRules()
 }
 
-// groupMode reports whether the running (or last) session is a group session.
-func (a *App) groupMode() bool { return a.sess.Spec != nil && a.sess.Spec.Group != nil }
-
 // pushRules hands the current rules to the session (and a running engine).
-func (a *App) pushRules() { a.session.SetRules(a.data.Rules(a.groupMode())) }
+func (a *App) pushRules() { a.session.SetRules(a.data.Rules()) }
 
 func (a *App) connectProfile(p profile.Profile) tea.Cmd {
 	return a.connect(ConnectSpec{Profile: p, Settings: a.data.Settings})
 }
 
-// connectGroup connects the active group, seeded by its first child.
-func (a *App) connectGroup() tea.Cmd {
-	g := a.data.ActiveGroup()
-	children := a.data.Children(g)
-	if g == nil || len(children) == 0 {
-		return a.setFlash(false, "the active group has no profiles")
-	}
-	gc := *g
-	return a.connect(ConnectSpec{Profile: children[0], Group: &gc, Children: children, Settings: a.data.Settings})
-}
-
 func (a *App) connect(spec ConnectSpec) tea.Cmd {
-	a.session.SetRules(a.data.Rules(spec.Group != nil))
+	a.session.SetRules(a.data.Rules())
 	a.live = newLive()
 	a.opts.Log.Clear()
 	if err := a.session.Connect(spec); err != nil {
@@ -230,31 +216,10 @@ func (a *App) profileName(id string) string {
 	if p := a.data.Profile(id); p != nil {
 		return p.Name
 	}
-	if a.sess.Spec != nil {
-		for _, c := range a.sess.Spec.Children {
-			if c.ID == id {
-				return c.Name
-			}
-		}
-		if a.sess.Spec.Profile.ID == id {
-			return a.sess.Spec.Profile.Name
-		}
+	if a.sess.Spec != nil && a.sess.Spec.Profile.ID == id {
+		return a.sess.Spec.Profile.Name
 	}
 	return id
-}
-
-// childIndex returns the index of profile id among the running group's
-// children (0 = default), or -1.
-func (a *App) childIndex(id string) int {
-	if a.sess.Spec == nil {
-		return -1
-	}
-	for i, c := range a.sess.Spec.Children {
-		if c.ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 // ── update ───────────────────────────────────────────────────────────────────
@@ -375,7 +340,7 @@ func (a *App) onSession(ev Event) tea.Cmd {
 			a.live.active[c.ID] = c
 		} else {
 			if open, ok := a.live.active[c.ID]; ok {
-				c.Host, c.TunnelIndex, c.ActiveProfileID = open.Host, open.TunnelIndex, open.ActiveProfileID
+				c.Host, c.TunnelIndex = open.Host, open.TunnelIndex
 			}
 			delete(a.live.active, c.ID)
 			a.live.closed = append([]stats.ConnEvent{c}, a.live.closed...)

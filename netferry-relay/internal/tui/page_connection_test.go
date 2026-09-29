@@ -11,7 +11,6 @@ import (
 
 	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/stats"
-	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
 // newTestApp builds an App without a tea.Program; session events are dropped.
@@ -62,17 +61,15 @@ func assertFits(t *testing.T, screen string, w, h int) {
 	}
 }
 
-func groupSession(a *App) {
+func liveSession(a *App) {
 	p1 := profile.Profile{ID: "p1", Name: "tokyo", Remote: "me@tokyo.example.com"}
-	p2 := profile.Profile{ID: "p2", Name: "frankfurt", Remote: "me@fra.example.com"}
-	g := store.Group{ID: "g", Name: "Work", ChildrenIDs: []string{"p1", "p2"}}
 	a.sess = SessionState{Status: StatusConnected, Message: "Tunnel established",
-		Spec:   &ConnectSpec{Profile: p1, Group: &g, Children: []profile.Profile{p1, p2}},
+		Spec:   &ConnectSpec{Profile: p1},
 		Errors: []TunnelError{{Message: "c : warning: something odd happened on the link and this line is long enough to wrap around", At: time.Now()}}}
 	snap := stats.Snapshot{RxBytesPerSec: 3 << 20, TxBytesPerSec: 200 << 10, TotalRxBytes: 5 << 30, ActiveConns: 2, TotalConns: 9, DNSQueries: 12,
 		Tunnels: []stats.TunnelSnapshot{
-			{Index: 1, ProfileID: "p1", State: "alive", RxBytesPerSec: 2 << 20, LastRttUs: 40_000, MinRttUs: 38_000, JitterUs: 2_000, CongestionScore: 3},
-			{Index: 2, ProfileID: "p2", State: "reconnecting", LastRttUs: 300_000, MinRttUs: 80_000, JitterUs: 5_000, CongestionScore: 9},
+			{Index: 1, State: "alive", RxBytesPerSec: 2 << 20, LastRttUs: 40_000, MinRttUs: 38_000, JitterUs: 2_000, CongestionScore: 3},
+			{Index: 2, State: "reconnecting", LastRttUs: 300_000, MinRttUs: 80_000, JitterUs: 5_000, CongestionScore: 9},
 			{Index: 3, State: "dead"},
 		}}
 	for i := 0; i < 70; i++ {
@@ -81,12 +78,12 @@ func groupSession(a *App) {
 		a.onSession(Event{Stats: &s})
 	}
 	a.onSession(Event{Stats: &snap})
-	a.onSession(Event{Conn: &stats.ConnEvent{ID: 1, Action: "open", DstAddr: "1.2.3.4:443", Host: "github.com", TunnelIndex: 1, ActiveProfileID: "p1", TimestampMs: 1000}})
+	a.onSession(Event{Conn: &stats.ConnEvent{ID: 1, Action: "open", DstAddr: "1.2.3.4:443", Host: "github.com", TunnelIndex: 1, TimestampMs: 1000}})
 	a.onSession(Event{Conn: &stats.ConnEvent{ID: 2, Action: "open", DstAddr: "[2001:db8::1]:80", TunnelIndex: 2, TimestampMs: 2000}})
 	a.onSession(Event{Conn: &stats.ConnEvent{ID: 3, Action: "open", DstAddr: "5.6.7.8:22", TimestampMs: 500}})
 	a.onSession(Event{Conn: &stats.ConnEvent{ID: 3, Action: "close", DstAddr: "5.6.7.8:22", TimestampMs: 3000}})
 	a.live.dests = []stats.DestinationSnapshot{
-		{Host: "github.com", ActiveConns: 1, TotalConns: 4, RxBytes: 900, RxBytesPerSec: 100, Route: "tunnel", AssignedProfileID: "p2", ProcessNames: []string{"git", "curl"}, LastSeenMs: 5000},
+		{Host: "github.com", ActiveConns: 1, TotalConns: 4, RxBytes: 900, RxBytesPerSec: 100, Route: "tunnel", ProcessNames: []string{"git", "curl"}, LastSeenMs: 5000},
 		{Host: "ads.example", TotalConns: 2, RxBytes: 5000, Route: "blocked", LastSeenMs: 100},
 		{Host: "intranet.local", TotalConns: 1, RxBytes: 10, Route: "direct", LastSeenMs: 9000},
 	}
@@ -95,7 +92,7 @@ func groupSession(a *App) {
 
 func TestConnectionPageRendersEveryTab(t *testing.T) {
 	a := newTestApp(nil)
-	groupSession(a)
+	liveSession(a)
 	a.cur = pageConnection
 	cp := a.pages[pageConnection].(*connectionPage)
 	for _, size := range [][2]int{{140, 50}, {80, 24}, {50, 16}} {
@@ -110,14 +107,17 @@ func TestConnectionPageRendersEveryTab(t *testing.T) {
 	a.width, a.height = 140, 50
 	cp.tab = tabSpeed
 	plain := ansi.Strip(a.View())
-	for _, want := range []string{"PER PROFILE", "PER TUNNEL", "tokyo", "frankfurt", "default", "Healthy", "reconnecting", "Reconnection failed", "3.0 MB/s"} {
+	for _, want := range []string{"PER TUNNEL", "tokyo", "Healthy", "reconnecting", "Reconnection failed", "3.0 MB/s"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("speed view missing %q", want)
 		}
 	}
+	if strings.Contains(plain, "PER PROFILE") {
+		t.Error("per-profile breakdown should be gone")
+	}
 	cp.tab = tabConns
 	plain = ansi.Strip(a.View())
-	for _, want := range []string{"ACTIVE (2)", "[tokyo]", "https github.com:443", "2001:db8::1:80", "RECENTLY CLOSED", "5.6.7.8:22"} {
+	for _, want := range []string{"ACTIVE (2)", "T1", "https github.com:443", "2001:db8::1:80", "RECENTLY CLOSED", "5.6.7.8:22"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("connections view missing %q", want)
 		}
@@ -128,7 +128,7 @@ func TestConnectionPageRendersEveryTab(t *testing.T) {
 	}
 	cp.tab = tabDests
 	plain = ansi.Strip(a.View())
-	for _, want := range []string{"pinned → frankfurt", "git, curl", "blocked", "direct"} {
+	for _, want := range []string{"git, curl", "blocked", "direct"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("destinations view missing %q", want)
 		}
@@ -154,7 +154,7 @@ func TestConnectionPageRendersEveryTab(t *testing.T) {
 
 func TestConnectionPageTabKeysAndScroll(t *testing.T) {
 	a := newTestApp(nil)
-	groupSession(a)
+	liveSession(a)
 	cp := a.pages[pageConnection].(*connectionPage)
 	cp.update(key("right"))
 	if cp.tab != tabConns {

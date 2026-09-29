@@ -78,27 +78,38 @@ func (d *Data) Children(g *store.Group) []profile.Profile {
 	return out
 }
 
-// Rules builds what the desktop pushes to the tunnel: global priorities, the
-// active group's rule groups compiled under its per-host rules, and — only in
-// group mode — the group snapshot.
-func (d *Data) Rules(groupMode bool) Rules {
+// Rules builds what the desktop pushes to the tunnel: global priorities and
+// the active group's route table (per-host overrides, ordered rule groups,
+// fallback). Matching itself happens in stats.
+func (d *Data) Rules() Rules {
 	r := Rules{Priorities: d.Priorities}
-	g := d.ActiveGroup()
-	if g == nil {
-		return r
-	}
-	r.Routes = store.CompileRoutes(g.RuleGroups, g.Rules)
-	if groupMode {
-		def := ""
-		if len(g.ChildrenIDs) > 0 {
-			def = g.ChildrenIDs[0]
-		}
-		r.Group = &stats.ActiveGroup{
-			ID: g.ID, Name: g.Name, DefaultProfileID: def,
-			ProfileIDs: append([]string(nil), g.ChildrenIDs...),
-		}
+	if g := d.ActiveGroup(); g != nil {
+		r.Routes = RouteTableFor(g)
 	}
 	return r
+}
+
+// RouteTableFor converts a group's raw rules into the tunnel's route table.
+func RouteTableFor(g *store.Group) stats.RouteTable {
+	t := stats.RouteTable{
+		Overrides: make(map[string]stats.RouteMode, len(g.Rules)),
+		Groups:    make([]stats.RouteGroup, 0, len(g.RuleGroups)),
+		Final:     toStatsRoute(store.NormalizeFinalRoute(g.FinalRoute)),
+	}
+	for k, v := range g.Rules {
+		t.Overrides[k] = toStatsRoute(v)
+	}
+	for _, rg := range g.RuleGroups {
+		t.Groups = append(t.Groups, stats.RouteGroup{
+			Domains: append([]string(nil), rg.Domains...),
+			Route:   toStatsRoute(rg.Route),
+		})
+	}
+	return t
+}
+
+func toStatsRoute(m store.RouteMode) stats.RouteMode {
+	return stats.RouteMode{Kind: stats.NormalizeRouteKind(m.Kind)}
 }
 
 // RecordKnownHosts appends newly observed hosts to g.KnownHosts (deduped,
@@ -124,8 +135,8 @@ func RecordKnownHosts(g *store.Group, hosts []string) bool {
 	return changed
 }
 
-// SetRule stores a per-host route override on g (an explicit "default" is
-// kept, as the desktop does; only DeleteRule removes an override).
+// SetRule stores a per-host route override on g (only DeleteRule removes an
+// override).
 func SetRule(g *store.Group, host string, mode store.RouteMode) {
 	if g.Rules == nil {
 		g.Rules = map[string]store.RouteMode{}
@@ -154,6 +165,35 @@ func SaveRuleGroup(g *store.Group, rg store.RuleGroup) {
 		}
 	}
 	g.RuleGroups = append(g.RuleGroups, rg)
+}
+
+// MoveRuleGroup shifts the rule group with id by delta positions (clamped).
+// Order matters: the first matching rule group wins. Reports whether it moved.
+func MoveRuleGroup(g *store.Group, id string, delta int) bool {
+	from := -1
+	for i := range g.RuleGroups {
+		if g.RuleGroups[i].ID == id {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return false
+	}
+	to := from + delta
+	if to < 0 {
+		to = 0
+	}
+	if to >= len(g.RuleGroups) {
+		to = len(g.RuleGroups) - 1
+	}
+	if to == from {
+		return false
+	}
+	rg := g.RuleGroups[from]
+	g.RuleGroups = append(g.RuleGroups[:from], g.RuleGroups[from+1:]...)
+	g.RuleGroups = append(g.RuleGroups[:to], append([]store.RuleGroup{rg}, g.RuleGroups[to:]...)...)
+	return true
 }
 
 // DeleteRuleGroup removes the rule group with id from g.

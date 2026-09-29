@@ -5,7 +5,6 @@ package stats
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"net"
@@ -55,14 +54,14 @@ type TunnelCounters struct {
 	rttRing    [rttWindowSize]int64 // circular buffer of recent RTT values (ns)
 	rttRingPos int                  // next write position
 	rttCount   int                  // total samples written (min(count, windowSize) are valid)
-	prevRTTNs  int64               // previous RTT for jitter computation
-	jitterNs   atomic.Int64        // |last - prev| in nanoseconds
+	prevRTTNs  int64                // previous RTT for jitter computation
+	jitterNs   atomic.Int64         // |last - prev| in nanoseconds
 }
 
-func (tc *TunnelCounters) AddRx(n int64)            { tc.RxTotal.Add(n) }
-func (tc *TunnelCounters) AddTx(n int64)            { tc.TxTotal.Add(n) }
-func (tc *TunnelCounters) SetState(s TunnelState)   { tc.state.Store(int32(s)) }
-func (tc *TunnelCounters) State() TunnelState        { return TunnelState(tc.state.Load()) }
+func (tc *TunnelCounters) AddRx(n int64)          { tc.RxTotal.Add(n) }
+func (tc *TunnelCounters) AddTx(n int64)          { tc.TxTotal.Add(n) }
+func (tc *TunnelCounters) SetState(s TunnelState) { tc.state.Store(int32(s)) }
+func (tc *TunnelCounters) State() TunnelState     { return TunnelState(tc.state.Load()) }
 
 // ObserveRTT records a keepalive round-trip measurement for this tunnel.
 func (tc *TunnelCounters) ObserveRTT(rtt time.Duration) {
@@ -130,30 +129,26 @@ func (tc *TunnelCounters) Jitter() time.Duration {
 	return time.Duration(tc.jitterNs.Load())
 }
 
-// TunnelSnapshot is the per-tunnel data embedded in Snapshot. In multi-profile
-// mode, Index is only unique within a profile — consumers should group by
-// ProfileID first. ProfileID is empty in legacy single-profile mode.
+// TunnelSnapshot is the per-tunnel data embedded in Snapshot.
 type TunnelSnapshot struct {
-	Index           int     `json:"index"`                 // 1-based pool member index within its profile
-	ProfileID       string  `json:"profileId,omitempty"`   // owning profile; empty in single-profile mode
-	State           string  `json:"state"`                 // "alive", "reconnecting", or "dead"
-	RxBytesPerSec   int64   `json:"rxBytesPerSec"`         // download speed on this tunnel
-	TxBytesPerSec   int64   `json:"txBytesPerSec"`         // upload speed on this tunnel
-	ActiveConns     int32   `json:"activeConns"`           // currently open connections
-	TotalConns      int64   `json:"totalConns"`            // all-time connections
-	LastRttUs       int64   `json:"lastRttUs"`             // last SSH keepalive RTT in µs (0 = not yet measured)
-	MinRttUs        int64   `json:"minRttUs"`              // min RTT over recent window in µs (network floor)
-	MaxRttUs        int64   `json:"maxRttUs"`              // max RTT in µs
-	JitterUs        int64   `json:"jitterUs"`              // |last - prev| in µs
-	CongestionScore float64 `json:"congestionScore"`       // streams × (1 + rtt_ms/50); lower = less loaded
+	Index           int     `json:"index"`           // 1-based pool member index
+	State           string  `json:"state"`           // "alive", "reconnecting", or "dead"
+	RxBytesPerSec   int64   `json:"rxBytesPerSec"`   // download speed on this tunnel
+	TxBytesPerSec   int64   `json:"txBytesPerSec"`   // upload speed on this tunnel
+	ActiveConns     int32   `json:"activeConns"`     // currently open connections
+	TotalConns      int64   `json:"totalConns"`      // all-time connections
+	LastRttUs       int64   `json:"lastRttUs"`       // last SSH keepalive RTT in µs (0 = not yet measured)
+	MinRttUs        int64   `json:"minRttUs"`        // min RTT over recent window in µs (network floor)
+	MaxRttUs        int64   `json:"maxRttUs"`        // max RTT in µs
+	JitterUs        int64   `json:"jitterUs"`        // |last - prev| in µs
+	CongestionScore float64 `json:"congestionScore"` // streams × (1 + rtt_ms/50); lower = less loaded
 }
 
-// tunnelEntry is one registered tunnel: its owning profile, its 1-based index
-// within that profile's pool, and the counters. Stored ordered by registration.
+// tunnelEntry is one registered tunnel: its 1-based pool index and the
+// counters. Stored ordered by registration.
 type tunnelEntry struct {
-	profileID string
-	idx       int
-	counters  *TunnelCounters
+	idx      int
+	counters *TunnelCounters
 }
 
 func tunnelStateString(s TunnelState) string {
@@ -203,27 +198,15 @@ type Counters struct {
 	closeCh   chan struct{}
 	ln        net.Listener
 
-	mu          sync.Mutex
-	sseClients  map[chan string]struct{}
-	conns       map[uint64]*connStats
-	dests       map[string]*destStats // per-destination aggregates keyed by normalised host/IP
-	priorities  map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
-	routeModes  map[string]RouteMode  // per-destination route mode (tunnel/direct/blocked/default)
-	activeGroup *ActiveGroup          // currently-active profile group; nil = legacy single-profile mode
+	mu         sync.Mutex
+	sseClients map[chan string]struct{}
+	conns      map[uint64]*connStats
+	dests      map[string]*destStats // per-destination aggregates keyed by normalised host/IP
+	priorities map[string]int        // per-destination priority (1=low, 3=normal, 5=high)
+	routes     *compiledRoutes       // compiled route table (overrides > rule groups > final)
 
 	tunnelsMu sync.RWMutex
-	tunnels   []tunnelEntry // per-(profile, pool-member) counters, ordered by registration
-}
-
-// ActiveGroup describes the profile group currently being served by the relay.
-// The sidecar pushes this via POST /group on startup and whenever the group
-// membership or default changes. Consumed in P2b by the listener to dispatch
-// connections across multiple SSH backends; P2a only stores it.
-type ActiveGroup struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name,omitempty"`
-	DefaultProfileID string   `json:"defaultProfileId"`
-	ProfileIDs       []string `json:"profileIds"` // ordered; [0] is the group's default
+	tunnels   []tunnelEntry // per-pool-member counters, ordered by registration
 }
 
 // Snapshot is the JSON payload sent in each "stats" SSE event.
@@ -244,14 +227,13 @@ type Snapshot struct {
 
 // ConnEvent is the JSON payload sent in each "connection" SSE event.
 type ConnEvent struct {
-	ID              uint64 `json:"id"`
-	Action          string `json:"action"` // "open" or "close"
-	SrcAddr         string `json:"srcAddr"`
-	DstAddr         string `json:"dstAddr"`
-	Host            string `json:"host,omitempty"`            // resolved hostname (from SNI / HTTP Host / SOCKS5 domain)
-	TunnelIndex     int    `json:"tunnelIndex,omitempty"`     // 1-based pool member; 0 = single tunnel or unknown
-	ActiveProfileID string `json:"activeProfileId,omitempty"` // profile this connection was dispatched through; empty in single-profile mode
-	TimestampMs     int64  `json:"timestampMs"`
+	ID          uint64 `json:"id"`
+	Action      string `json:"action"` // "open" or "close"
+	SrcAddr     string `json:"srcAddr"`
+	DstAddr     string `json:"dstAddr"`
+	Host        string `json:"host,omitempty"`        // resolved hostname (from SNI / HTTP Host / SOCKS5 domain)
+	TunnelIndex int    `json:"tunnelIndex,omitempty"` // 1-based pool member; 0 = single tunnel or unknown
+	TimestampMs int64  `json:"timestampMs"`
 }
 
 type connStats struct {
@@ -259,7 +241,6 @@ type connStats struct {
 	dstAddr     string
 	host        string
 	tunnelIndex int
-	profileID   string // profile through which this connection is dispatched (empty = single-profile mode)
 	openedAt    time.Time
 	rxBytes     int64
 	txBytes     int64
@@ -268,33 +249,30 @@ type connStats struct {
 
 // destStats tracks per-destination aggregate metrics.
 type destStats struct {
-	host          string // display name: SNI hostname or fallback IP
-	activeConns   int32
-	totalConns    int64
-	rxBytes       int64
-	txBytes       int64
-	firstSeenAt   time.Time
-	lastSeenAt    time.Time
-	lastProfileID string              // most recent profile id this destination was dispatched through
-	processNames  map[string]struct{} // unique process names that accessed this destination
+	host         string // display name: SNI hostname or fallback IP
+	activeConns  int32
+	totalConns   int64
+	rxBytes      int64
+	txBytes      int64
+	firstSeenAt  time.Time
+	lastSeenAt   time.Time
+	processNames map[string]struct{} // unique process names that accessed this destination
 }
 
 // DestinationSnapshot is the per-destination data sent in the "destinations_snapshot" SSE event.
 type DestinationSnapshot struct {
-	Host          string `json:"host"`          // hostname or IP
-	ActiveConns   int32  `json:"activeConns"`   // currently open connections
-	TotalConns    int64  `json:"totalConns"`    // all-time connections opened
-	RxBytes       int64  `json:"rxBytes"`       // cumulative bytes downloaded
-	TxBytes       int64  `json:"txBytes"`       // cumulative bytes uploaded
-	RxBytesPerSec int64  `json:"rxBytesPerSec"` // download speed (calculated by broadcaster)
-	TxBytesPerSec int64  `json:"txBytesPerSec"` // upload speed (calculated by broadcaster)
-	FirstSeenMs   int64  `json:"firstSeenMs"`   // timestamp of first connection
-	LastSeenMs    int64  `json:"lastSeenMs"`    // timestamp of last activity
-	Priority          int      `json:"priority"`                    // 1=low, 3=normal (default), 5=high
-	Route             string   `json:"route"`                       // "tunnel" | "direct" | "blocked" | "default"
-	AssignedProfileID string   `json:"assignedProfileId,omitempty"` // profile pinned via rule; empty = no pin / use group default
-	ActiveProfileID   string   `json:"activeProfileId,omitempty"`   // profile actually dispatched through (populated in P2b)
-	ProcessNames      []string `json:"processNames,omitempty"`      // local processes that connected to this destination
+	Host          string   `json:"host"`                   // hostname or IP
+	ActiveConns   int32    `json:"activeConns"`            // currently open connections
+	TotalConns    int64    `json:"totalConns"`             // all-time connections opened
+	RxBytes       int64    `json:"rxBytes"`                // cumulative bytes downloaded
+	TxBytes       int64    `json:"txBytes"`                // cumulative bytes uploaded
+	RxBytesPerSec int64    `json:"rxBytesPerSec"`          // download speed (calculated by broadcaster)
+	TxBytesPerSec int64    `json:"txBytesPerSec"`          // upload speed (calculated by broadcaster)
+	FirstSeenMs   int64    `json:"firstSeenMs"`            // timestamp of first connection
+	LastSeenMs    int64    `json:"lastSeenMs"`             // timestamp of last activity
+	Priority      int      `json:"priority"`               // 1=low, 3=normal (default), 5=high
+	Route         string   `json:"route"`                  // "tunnel" | "direct" | "blocked"
+	ProcessNames  []string `json:"processNames,omitempty"` // local processes that connected to this destination
 }
 
 // NewCounters allocates a ready-to-use Counters instance.
@@ -307,7 +285,7 @@ func NewCounters() *Counters {
 		conns:       make(map[uint64]*connStats),
 		dests:       make(map[string]*destStats),
 		priorities:  make(map[string]int),
-		routeModes:  make(map[string]RouteMode),
+		routes:      compileRouteTable(RouteTable{}),
 	}
 	c.lastRxAt.Store(now)
 	c.lastTxAt.Store(now)
@@ -315,21 +293,20 @@ func NewCounters() *Counters {
 	return c
 }
 
-// RegisterTunnel registers per-tunnel counters for the given profile + 1-based
-// pool member index. Must be called before the tunnel starts accepting
-// connections. Re-registering the same (profileID, idx) pair is idempotent:
-// the existing TunnelCounters pointer is returned so cumulative counts survive
-// reconnects. Pass "" for profileID in legacy single-profile mode.
-func (c *Counters) RegisterTunnel(profileID string, idx int) *TunnelCounters {
+// RegisterTunnel registers per-tunnel counters for the given 1-based pool
+// member index. Must be called before the tunnel starts accepting
+// connections. Re-registering the same idx is idempotent: the existing
+// TunnelCounters pointer is returned so cumulative counts survive reconnects.
+func (c *Counters) RegisterTunnel(idx int) *TunnelCounters {
 	c.tunnelsMu.Lock()
 	defer c.tunnelsMu.Unlock()
 	for i := range c.tunnels {
-		if c.tunnels[i].profileID == profileID && c.tunnels[i].idx == idx {
+		if c.tunnels[i].idx == idx {
 			return c.tunnels[i].counters
 		}
 	}
 	tc := &TunnelCounters{}
-	c.tunnels = append(c.tunnels, tunnelEntry{profileID: profileID, idx: idx, counters: tc})
+	c.tunnels = append(c.tunnels, tunnelEntry{idx: idx, counters: tc})
 	return tc
 }
 
@@ -375,9 +352,7 @@ func wildcardCandidates(host string) []string {
 // The host parameter is the resolved hostname (from SNI, HTTP Host header, or
 // SOCKS5 domain); pass "" if unknown.
 // tunnelIndex is the 1-based pool member index; pass 0 for single-tunnel mode.
-// profileID is the profile the connection was dispatched through in multi-
-// profile mode; pass "" in single-profile mode.
-func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, profileID string) uint64 {
+func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int) uint64 {
 	id := c.nextConnID.Add(1)
 	now := time.Now()
 	dk := destKey(dstAddr, host)
@@ -391,7 +366,6 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, prof
 		dstAddr:     dstAddr,
 		host:        host,
 		tunnelIndex: tunnelIndex,
-		profileID:   profileID,
 		openedAt:    now,
 		destKey:     dk,
 	}
@@ -404,20 +378,16 @@ func (c *Counters) ConnOpen(srcAddr, dstAddr, host string, tunnelIndex int, prof
 	ds.activeConns++
 	ds.totalConns++
 	ds.lastSeenAt = now
-	if profileID != "" {
-		ds.lastProfileID = profileID
-	}
 	c.mu.Unlock()
 	select {
 	case c.connEventCh <- ConnEvent{
-		ID:              id,
-		Action:          "open",
-		SrcAddr:         srcAddr,
-		DstAddr:         dstAddr,
-		Host:            host,
-		TunnelIndex:     tunnelIndex,
-		ActiveProfileID: profileID,
-		TimestampMs:     now.UnixMilli(),
+		ID:          id,
+		Action:      "open",
+		SrcAddr:     srcAddr,
+		DstAddr:     dstAddr,
+		Host:        host,
+		TunnelIndex: tunnelIndex,
+		TimestampMs: now.UnixMilli(),
 	}:
 	default:
 	}
@@ -450,7 +420,7 @@ func (c *Counters) ConnClose(id uint64, srcAddr, dstAddr string) {
 // PushConnEvent is a backwards-compatible helper that fires an "open" event.
 // Deprecated: prefer ConnOpen + ConnClose for full lifecycle tracking.
 func (c *Counters) PushConnEvent(srcAddr, dstAddr string) {
-	c.ConnOpen(srcAddr, dstAddr, "", 0, "")
+	c.ConnOpen(srcAddr, dstAddr, "", 0)
 }
 
 func (c *Counters) AddRx(n int64) {
@@ -500,49 +470,6 @@ func (c *Counters) ConnAddTx(id uint64, n int64) {
 		}
 	}
 	c.mu.Unlock()
-}
-
-// RouteKind is the coarse category of a per-destination route decision.
-type RouteKind string
-
-const (
-	RouteTunnel  RouteKind = "tunnel"  // proxy through tunnel (legacy single-pool or explicitly pinned profile)
-	RouteDirect  RouteKind = "direct"  // bypass tunnel, connect directly
-	RouteBlocked RouteKind = "blocked" // reject connection
-	RouteDefault RouteKind = "default" // route through the active group's default profile (children[0])
-)
-
-// RouteMode is the full route decision for a destination: category plus, for
-// `tunnel` kind, the profile id the destination is pinned to.
-//
-// JSON: a legacy string (e.g. `"tunnel"`) is accepted on the wire for
-// backward compatibility; new writers should emit the object form
-// `{"kind":"tunnel","profileId":"..."}`.
-type RouteMode struct {
-	Kind      RouteKind `json:"kind"`
-	ProfileID string    `json:"profileId,omitempty"`
-}
-
-// UnmarshalJSON accepts either the legacy string form (`"tunnel"`) or the
-// new object form (`{"kind":"tunnel","profileId":"..."}`).
-func (r *RouteMode) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		r.Kind = RouteKind(s)
-		r.ProfileID = ""
-		return nil
-	}
-	type raw struct {
-		Kind      RouteKind `json:"kind"`
-		ProfileID string    `json:"profileId"`
-	}
-	var x raw
-	if err := json.Unmarshal(b, &x); err != nil {
-		return err
-	}
-	r.Kind = x.Kind
-	r.ProfileID = x.ProfileID
-	return nil
 }
 
 // DefaultPriority is used when no explicit priority has been set for a destination.
@@ -602,68 +529,6 @@ func (c *Counters) Priorities() map[string]int {
 	defer c.mu.Unlock()
 	m := make(map[string]int, len(c.priorities))
 	for k, v := range c.priorities {
-		m[k] = v
-	}
-	return m
-}
-
-// LookupRouteMode returns the route mode for a destination key.
-// Returns {Kind: RouteTunnel} if not explicitly set.
-func (c *Counters) LookupRouteMode(dstAddr, host string) RouteMode {
-	dk := destKey(dstAddr, host)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lookupRouteModeLocked(dk)
-}
-
-// lookupRouteModeLocked resolves the route mode for key: exact match first,
-// then the most specific matching wildcard rule, then {Kind: RouteTunnel}.
-// Caller must hold c.mu.
-func (c *Counters) lookupRouteModeLocked(key string) RouteMode {
-	if m, ok := c.routeModes[key]; ok && m.Kind != "" {
-		return m
-	}
-	for _, cand := range wildcardCandidates(key) {
-		if m, ok := c.routeModes[cand]; ok && m.Kind != "" {
-			return m
-		}
-	}
-	return RouteMode{Kind: RouteTunnel}
-}
-
-// SetRouteModes replaces all route modes at once.
-func (c *Counters) SetRouteModes(m map[string]RouteMode) {
-	c.mu.Lock()
-	c.routeModes = m
-	c.mu.Unlock()
-}
-
-// SetActiveGroup stores the currently-active profile group. Pass nil to
-// clear (legacy single-profile mode).
-func (c *Counters) SetActiveGroup(g *ActiveGroup) {
-	c.mu.Lock()
-	c.activeGroup = g
-	c.mu.Unlock()
-}
-
-// ActiveGroup returns a copy of the currently-active group, or nil if none.
-func (c *Counters) ActiveGroup() *ActiveGroup {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.activeGroup == nil {
-		return nil
-	}
-	cp := *c.activeGroup
-	cp.ProfileIDs = append([]string(nil), c.activeGroup.ProfileIDs...)
-	return &cp
-}
-
-// RouteModes returns a copy of the current route mode map.
-func (c *Counters) RouteModes() map[string]RouteMode {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	m := make(map[string]RouteMode, len(c.routeModes))
-	for k, v := range c.routeModes {
 		m[k] = v
 	}
 	return m
@@ -793,7 +658,6 @@ func (c *Counters) ListenAndServe(preferredPort int) (int, error) {
 	mux.HandleFunc("/snapshot", c.handleSnapshot)
 	mux.HandleFunc("/priorities", c.handlePriorities)
 	mux.HandleFunc("/routes", c.handleRoutes)
-	mux.HandleFunc("/group", c.handleGroup)
 
 	c.mu.Lock()
 	c.ln = ln
@@ -918,7 +782,6 @@ func (c *Counters) broadcaster() {
 				congestion := float64(activeConns) * (1.0 + rttMs/50.0)
 				tunnelSnaps = append(tunnelSnaps, TunnelSnapshot{
 					Index:           entry.idx,
-					ProfileID:       entry.profileID,
 					State:           tunnelStateString(tc.State()),
 					RxBytesPerSec:   curTRx - tunnelPrevRx[i],
 					TxBytesPerSec:   curTTx - tunnelPrevTx[i],
@@ -1099,20 +962,18 @@ func (c *Counters) buildDestSnapshotLocked(prevRx, prevTx map[string]int64, elap
 		prio := c.lookupPriorityLocked(key)
 		rm := c.lookupRouteModeLocked(key)
 		snaps = append(snaps, DestinationSnapshot{
-			Host:              ds.host,
-			ActiveConns:       ds.activeConns,
-			TotalConns:        ds.totalConns,
-			RxBytes:           ds.rxBytes,
-			TxBytes:           ds.txBytes,
-			RxBytesPerSec:     rxPerSec,
-			TxBytesPerSec:     txPerSec,
-			FirstSeenMs:       ds.firstSeenAt.UnixMilli(),
-			LastSeenMs:        ds.lastSeenAt.UnixMilli(),
-			Priority:          prio,
-			Route:             string(rm.Kind),
-			AssignedProfileID: rm.ProfileID,
-			ActiveProfileID:   ds.lastProfileID,
-			ProcessNames:      sortedProcessNames(ds.processNames),
+			Host:          ds.host,
+			ActiveConns:   ds.activeConns,
+			TotalConns:    ds.totalConns,
+			RxBytes:       ds.rxBytes,
+			TxBytes:       ds.txBytes,
+			RxBytesPerSec: rxPerSec,
+			TxBytesPerSec: txPerSec,
+			FirstSeenMs:   ds.firstSeenAt.UnixMilli(),
+			LastSeenMs:    ds.lastSeenAt.UnixMilli(),
+			Priority:      prio,
+			Route:         string(rm.Kind),
+			ProcessNames:  sortedProcessNames(ds.processNames),
 		})
 	}
 	sort.Slice(snaps, func(i, j int) bool {
@@ -1249,87 +1110,6 @@ func (c *Counters) handlePriorities(w http.ResponseWriter, r *http.Request) {
 		c.SetPriorities(m)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(c.Priorities())
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleRoutes serves GET (read all) and POST (update) for destination route modes.
-// POST body: {"host": "tunnel"|"direct"|"blocked", ...}
-func (c *Counters) handleRoutes(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(c.RouteModes())
-	case http.MethodPost:
-		var m map[string]RouteMode
-		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		c.SetRouteModes(m)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(c.RouteModes())
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleGroup serves GET (read current active group) and POST (update) for
-// the relay's active profile group. POST body is an ActiveGroup JSON object;
-// POST with an empty body (or `null`) clears it (legacy mode).
-func (c *Counters) handleGroup(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		g := c.ActiveGroup()
-		if g == nil {
-			w.Write([]byte("null"))
-			return
-		}
-		json.NewEncoder(w).Encode(g)
-	case http.MethodPost:
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		trimmed := strings.TrimSpace(string(body))
-		if trimmed == "" || trimmed == "null" {
-			c.SetActiveGroup(nil)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var g ActiveGroup
-		if err := json.Unmarshal(body, &g); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if g.ID == "" {
-			http.Error(w, "missing group id", http.StatusBadRequest)
-			return
-		}
-		c.SetActiveGroup(&g)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(c.ActiveGroup())
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

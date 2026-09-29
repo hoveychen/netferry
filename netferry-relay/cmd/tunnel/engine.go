@@ -29,17 +29,11 @@ var ErrExitForReconnect = errors.New("exit for reconnect")
 // by cliconfig.go (from CLI flags + .nfprofile / group file) or programmatically
 // by the TUI (from a stored profile).
 type EngineConfig struct {
-	// Backends holds one config per profile to bring up. Length 1 in solo
-	// mode, length N in group mode.
-	Backends []*backendConfig
+	// Backend is the SSH + mux pool config of the (single) profile to bring up.
+	Backend *backendConfig
 
-	// GroupFile is non-nil in group mode and carries the rules map that
-	// drives the SessionManager's per-destination routing.
-	GroupFile *GroupFile
-
-	// SubnetStrings is the union of CIDRs (and CIDR:port-range) the proxy
-	// should capture. In group mode this is typically the union of children's
-	// subnets; in solo mode it's the CLI positional args (or profile.Subnets).
+	// SubnetStrings is the CIDRs (and CIDR:port-range) the proxy should
+	// capture: the CLI positional args (or profile.Subnets).
 	SubnetStrings []string
 
 	// Process-wide knobs.
@@ -173,7 +167,7 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	cfg := e.cfg
 	cachedPorts := loadPortCache()
 
-	// ── Build remote server command (shared across all backends) ────────────
+	// ── Build remote server command ─────────────────────────────────────────
 	var serverArgs []string
 	if cfg.AutoNets {
 		serverArgs = append(serverArgs, "--auto-nets")
@@ -185,19 +179,11 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 		serverArgs = append(serverArgs, "--verbose")
 	}
 
-	if cfg.GroupFile != nil {
-		e.counters.SetActiveGroup(buildActiveGroupFromFile(cfg.GroupFile))
-	}
-
-	// ── Connect backends ────────────────────────────────────────────────────
+	// ── Connect backend ─────────────────────────────────────────────────────
 	muxErrCh := make(chan error, 1)
-	backends := make([]*backend, 0, len(cfg.Backends))
-	for i, bc := range cfg.Backends {
-		b, err := connectBackend(bc, serverArgs, e.counters, muxErrCh, i == 0)
-		if err != nil {
-			return fmt.Errorf("backend %q: %w", bc.profileID, err)
-		}
-		backends = append(backends, b)
+	b, err := connectBackend(cfg.Backend, serverArgs, e.counters, muxErrCh)
+	if err != nil {
+		return fmt.Errorf("backend %q: %w", cfg.Backend.profileID, err)
 	}
 
 	// ── Build excludes union ─────────────────────────────────────────────────
@@ -225,38 +211,20 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 			seenEx[c] = true
 		}
 	}
-	for _, b := range backends {
-		addEx(b.sshServerIP + "/32")
-		// firstHopIP is the IP we actually opened raw TCP to (== sshServerIP
-		// for direct dials; the first jumphost for ProxyJump). Excluding it
-		// is what keeps WinDivert from DNATing the SSH carrier traffic into
-		// the local proxy and killing the mux session moments after setup.
-		if b.firstHopIP != nil {
-			addEx(b.firstHopIP.String() + "/32")
-		}
-		for _, x := range b.cfg.extraExcludes {
-			addEx(x)
-		}
+	addEx(b.sshServerIP + "/32")
+	// firstHopIP is the IP we actually opened raw TCP to (== sshServerIP for
+	// direct dials; the first jumphost for ProxyJump). Excluding it is what
+	// keeps WinDivert from DNATing the SSH carrier traffic into the local
+	// proxy and killing the mux session moments after setup.
+	if b.firstHopIP != nil {
+		addEx(b.firstHopIP.String() + "/32")
+	}
+	for _, x := range b.cfg.extraExcludes {
+		addEx(x)
 	}
 
-	// ── Build tunnel client ──────────────────────────────────────────────────
-	// Single backend → use the mux client directly (legacy path, cheap).
-	// Multiple backends → SessionManager routes each destination to the
-	// right profile's pool based on stats.routeModes; DNS/UDP go to default.
-	var tunnelClient mux.TunnelClient
-	if len(backends) == 1 {
-		tunnelClient = backends[0].client
-	} else {
-		sm := mux.NewSessionManager(e.counters)
-		for _, b := range backends {
-			sm.Register(b.cfg.profileID, b.client.(*mux.MuxPool))
-		}
-		if cfg.GroupFile != nil {
-			sm.SetDefault(cfg.GroupFile.DefaultProfileID)
-		}
-		tunnelClient = sm
-	}
-	firstClient := backends[0].firstClient
+	var tunnelClient mux.TunnelClient = b.client
+	firstClient := b.firstClient
 
 	// Collect CMD_ROUTES if --auto-nets (arrives within ~200ms of connect).
 	var autoNetRoutes []string
@@ -323,16 +291,10 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	}
 	// Apply UDP blocking (default on; prevents QUIC leaks on pf).
 	firewall.SetUDPBlock(fw, !cfg.NoBlockUDP)
-	// Root UDP must also pass when any backend rides fectun: its carrier is
+	// Root UDP must also pass when the backend rides fectun: its carrier is
 	// UDP from this (root) process, and the block-all rule would otherwise
 	// drop it — killing the very SSH link the firewall is being set up for.
-	usesFectun := false
-	for _, bc := range cfg.Backends {
-		if bc.fectun.Enabled() {
-			usesFectun = true
-		}
-	}
-	firewall.SetRootUDPAllow(fw, cfg.LANSocks5 != "" || usesFectun)
+	firewall.SetRootUDPAllow(fw, cfg.LANSocks5 != "" || cfg.Backend.fectun.Enabled())
 	// Apply IPv6 blocking. Without this the firewall only stops *redirecting*
 	// IPv6 — apps still reach AAAA destinations directly and bypass the tunnel.
 	firewall.SetIPv6Block(fw, cfg.NoIPv6)
@@ -544,14 +506,7 @@ func (e *Engine) Run(stopCh <-chan struct{}) error {
 	// the local resolver mid-reconnect and cache region-local geo-DNS answers
 	// that then 403 behind the tunnel exit IP.
 	prepareReconnectExit := func() {
-		needDNS := false
-		for _, b := range backends {
-			if b.redialNeedsDNS {
-				needDNS = true
-				break
-			}
-		}
-		if needDNS {
+		if b.redialNeedsDNS {
 			firewall.DisableDNSRedirect(fw)
 		} else {
 			log.Printf("keeping DNS redirect during reconnect (all SSH endpoints are IP literals)")

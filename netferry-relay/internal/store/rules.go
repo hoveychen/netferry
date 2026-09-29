@@ -63,32 +63,6 @@ func RuleGroupFor(groups []RuleGroup, host string) *RuleGroup {
 	return nil
 }
 
-// CompileRoutes expands rule groups into the flat host→route map the tunnel
-// understands, then lays the per-host overrides on top. Later groups win over
-// earlier ones; overrides win over every group. Mirrors compileRoutes in
-// netferry-desktop/src/lib/ruleGroups.ts.
-func CompileRoutes(groups []RuleGroup, overrides map[string]RouteMode) map[string]RouteMode {
-	compiled := map[string]RouteMode{}
-	for _, g := range groups {
-		for _, input := range g.Domains {
-			domain, ok := NormalizeDomain(input)
-			if !ok {
-				continue
-			}
-			if strings.HasPrefix(domain, "=") {
-				compiled[domain[1:]] = g.Route
-			} else {
-				compiled[domain] = g.Route
-				compiled["*."+domain] = g.Route
-			}
-		}
-	}
-	for k, v := range overrides {
-		compiled[k] = v
-	}
-	return compiled
-}
-
 // RegistrableDomain returns the eTLD+1 of host, or "" when it has none (IPs,
 // bare public suffixes).
 func RegistrableDomain(host string) string {

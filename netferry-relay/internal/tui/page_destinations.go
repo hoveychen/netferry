@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hoveychen/netferry/relay/internal/catalog"
-	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/stats"
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
@@ -70,10 +69,6 @@ func (p *destinationsPage) model() *destModel {
 	return p.cache
 }
 
-func (p *destinationsPage) children() []profile.Profile {
-	return p.app.data.Children(p.app.data.ActiveGroup())
-}
-
 func (p *destinationsPage) query() string { return strings.TrimSpace(p.filter.Value()) }
 
 // ── rows ─────────────────────────────────────────────────────────────────────
@@ -129,16 +124,13 @@ func anyContains(list []string, q string) bool {
 	return false
 }
 
-func (p *destinationsPage) routeLabel(m store.RouteMode) string {
-	for _, o := range routeOptions(p.children(), true) {
+func routeLabel(m store.RouteMode) string {
+	for _, o := range routeOptions() {
 		if o.Value == routeKey(m) {
 			return o.Label
 		}
 	}
-	if m.Kind == "tunnel" {
-		return "Tunnel"
-	}
-	return "Default"
+	return "Tunnel"
 }
 
 func routeStyle(m store.RouteMode) lipgloss.Style {
@@ -167,7 +159,7 @@ func (p *destinationsPage) overviewItems(m *destModel) []destItem {
 	q := strings.ToLower(p.query())
 	var items []destItem
 
-	items = append(items, header(fmt.Sprintf("NAMED SCOPE GROUPS · %d", len(m.ruleGroups))))
+	items = append(items, header(fmt.Sprintf("NAMED SCOPE GROUPS · %d", len(m.ruleGroups))+sDim.Render("   top to bottom · first match wins")))
 	if len(m.ruleGroups) == 0 {
 		items = append(items, note(sMuted, "No scope groups yet. Review a routing suggestion below to create one."))
 	}
@@ -180,14 +172,37 @@ func (p *destinationsPage) overviewItems(m *destModel) []destItem {
 		items = append(items, destItem{
 			key: "g:" + g.ID,
 			lines: func(sel bool, w int) []string {
-				right := routeStyle(g.Route).Render(p.routeLabel(g.Route)) + sMuted.Render(fmt.Sprintf("%6d", n))
+				right := routeStyle(g.Route).Render(routeLabel(g.Route)) + sMuted.Render(fmt.Sprintf("%6d", n))
 				return []string{
-					rightAlign(marker(sel)+sBold.Render(g.Name), right, w),
+					rightAlign(marker(sel)+sDim.Render(fmt.Sprintf("%d. ", i+1))+sBold.Render(g.Name), right, w),
 					"    " + sMuted.Render(truncate(strings.Join(g.Domains, " · "), w-4)),
 				}
 			},
 			enter: func() tea.Cmd { p.drill("group:" + g.ID); return nil },
 			edit:  func() tea.Cmd { p.openEditor(&g, ""); return nil },
+		})
+	}
+	if q == "" {
+		// The fixed fallback row (Clash MATCH): traffic no override or scope
+		// group matched. Only tunnel/direct.
+		final := m.final
+		toggle := func() tea.Cmd {
+			next := store.RouteMode{Kind: store.RouteDirect}
+			if final.Kind == store.RouteDirect {
+				next = store.RouteMode{Kind: store.RouteTunnel}
+			}
+			return p.do(p.app.data.SetFinalRoute(next), "Everything else → "+routeLabel(next))
+		}
+		items = append(items, destItem{
+			key: "final",
+			lines: func(sel bool, w int) []string {
+				return []string{
+					rightAlign(marker(sel)+sDim.Render("*  ")+sBold.Render("Everything else"), sMuted.Render("→ ")+routeStyle(final).Render(routeLabel(final))+"      ", w),
+					"    " + sMuted.Render(truncate("Traffic no individual rule or scope group matched · enter toggles Tunnel / Direct", w-4)),
+				}
+			},
+			enter: toggle,
+			edit:  toggle,
 		})
 	}
 
@@ -199,7 +214,7 @@ func (p *destinationsPage) overviewItems(m *destModel) []destItem {
 				continue
 			}
 			s := s
-			detail := s.Source + " · " + map[bool]string{true: "Direct", false: "Default tunnel"}[s.SuggestedRoute == "direct"]
+			detail := s.Source + " · " + routeLabel(parseRouteKey(s.SuggestedRoute))
 			if s.CoveredHosts > 0 {
 				detail += fmt.Sprintf(" · %d already grouped", s.CoveredHosts)
 			}
@@ -288,7 +303,7 @@ func (p *destinationsPage) overviewItems(m *destModel) []destItem {
 		})
 	}
 	if len(m.sites) == 0 && len(m.hosts) == 0 {
-		items = append(items, note(sMuted, "No destinations observed yet. Connect the group and traffic will populate this list."))
+		items = append(items, note(sMuted, "No destinations observed yet. Connect a profile of this group and traffic will populate this list."))
 	}
 	return items
 }
@@ -361,7 +376,7 @@ func (p *destinationsPage) hostItem(m *destModel, host string, draft bool) destI
 }
 
 func (p *destinationsPage) renderHost(m *destModel, host string, draft, sel bool, w int) string {
-	route, via := resolveRoute(host, m.effective)
+	route, via := m.route(host)
 	prio := resolvePriority(host, m.priorities)
 	blocked, direct := route.Kind == "blocked", route.Kind == "direct"
 
@@ -395,20 +410,11 @@ func (p *destinationsPage) renderHost(m *destModel, host string, draft, sel bool
 			badges = append(badges, sDim.Render(m.ruleGroups[gi].Name))
 		}
 	}
-	if children := p.children(); !draft && len(children) > 1 && !blocked && !direct {
-		if live, ok := m.live[host]; ok && live.ActiveProfileID != "" {
-			for i, c := range children {
-				if c.ID == live.ActiveProfileID {
-					badges = append(badges, tunnelStyle(i).Render("live: "+c.Name))
-				}
-			}
-		}
-	}
 	if len(badges) > 0 {
 		left += "  " + strings.Join(badges, " ")
 	}
 
-	right := routeStyle(route).Render(p.routeLabel(route)) + "  " + priorityStyle(prio).Render(padRight(priorityLabels[prio], 4))
+	right := routeStyle(route).Render(routeLabel(route)) + "  " + priorityStyle(prio).Render(padRight(priorityLabels[prio], 4))
 	if override {
 		right += sMuted.Render(" ✎")
 	} else {
@@ -509,9 +515,9 @@ func (p *destinationsPage) do(err error, ok string) tea.Cmd {
 
 func (p *destinationsPage) openRouteMenu(host string) {
 	m := p.model()
-	cur, _ := resolveRoute(host, m.effective)
+	cur, _ := m.route(host)
 	mn := &menu{title: "Route for " + host}
-	for i, o := range routeOptions(p.children(), true) {
+	for i, o := range routeOptions() {
 		o := o
 		detail := ""
 		if o.Value == routeKey(cur) {
@@ -557,7 +563,7 @@ func (p *destinationsPage) findGroupByName(names ...string) *store.RuleGroup {
 // openEditor edits group, or starts a new one (optionally from a site, which
 // becomes an exact scope when it is not a valid domain scope).
 func (p *destinationsPage) openEditor(group *store.RuleGroup, site string) {
-	rg := store.RuleGroup{ID: store.NewID(), Route: store.RouteMode{Kind: "default"}}
+	rg := store.RuleGroup{ID: store.NewID(), Route: store.RouteMode{Kind: store.RouteTunnel}}
 	if group != nil {
 		rg = *group
 		rg.Domains = append([]string(nil), group.Domains...)
@@ -574,7 +580,7 @@ func (p *destinationsPage) openEditor(group *store.RuleGroup, site string) {
 
 func (p *destinationsPage) openService(s catalog.ServiceSuggestion) {
 	g := p.findGroupByName(s.Name, s.NameZh)
-	rg := store.RuleGroup{ID: store.NewID(), Name: s.Name, Route: store.RouteMode{Kind: "default"}}
+	rg := store.RuleGroup{ID: store.NewID(), Name: s.Name, Route: store.RouteMode{Kind: store.RouteTunnel}}
 	if g != nil {
 		rg = *g
 	}
@@ -594,7 +600,7 @@ func (p *destinationsPage) openRouting(s catalog.RoutingSuggestion) {
 
 func (p *destinationsPage) startEditor(rg store.RuleGroup, exists bool, evidence []catalog.Evidence) {
 	a := p.app
-	e := newRuleGroupEditor(rg, exists, p.model(), p.children())
+	e := newRuleGroupEditor(rg, exists, p.model())
 	e.evidence = evidence
 	e.onCancel = p.closeSub
 	e.onSave = func(saved store.RuleGroup) tea.Cmd {
@@ -602,7 +608,7 @@ func (p *destinationsPage) startEditor(rg store.RuleGroup, exists bool, evidence
 		return p.do(a.data.PutRuleGroup(saved), "Scope group saved")
 	}
 	e.onDelete = func() tea.Cmd {
-		a.confirm("Delete scope group?", "Delete this scope group? Its destinations will use their individual rules or the default route.", func() tea.Cmd {
+		a.confirm("Delete scope group?", "Delete this scope group? Its destinations will use their individual rules, a later scope group, or the \"Everything else\" route.", func() tea.Cmd {
 			p.closeSub()
 			if p.scope == "group:"+rg.ID {
 				p.back()
@@ -696,6 +702,15 @@ func (p *destinationsPage) update(msg tea.Msg) tea.Cmd {
 			if it != nil && it.create != nil {
 				return it.create()
 			}
+		case "K", "shift+up", "J", "shift+down":
+			// Reorder scope groups: order decides which group wins.
+			if it != nil && strings.HasPrefix(it.key, "g:") {
+				delta := 1
+				if s := km.String(); s == "K" || s == "shift+up" {
+					delta = -1
+				}
+				return p.do(p.app.data.MoveRuleGroup(strings.TrimPrefix(it.key, "g:"), delta), "Scope group moved")
+			}
 		}
 		return nil
 	}
@@ -738,7 +753,7 @@ func (p *destinationsPage) hints() string {
 		return hints("enter/esc", "done")
 	}
 	if p.scope == "" {
-		return hints("enter", "open", "e", "edit group", "+", "group from site", "n", "new scope group", "/", "search")
+		return hints("enter", "open", "e", "edit group", "K/J", "move group", "+", "group from site", "n", "new scope group", "/", "search")
 	}
 	return hints("enter/r", "route", "p", "priority", "x", "reset override", "w", "wildcard", "/", "search", "esc", "back")
 }
@@ -788,7 +803,7 @@ func (p *destinationsPage) view(width, height int) string {
 	}
 	if p.scope != "" && len(items) == 0 {
 		if len(m.hosts) == 0 {
-			lines = append(lines, sMuted.Render("No destinations observed yet. Connect the group and traffic will populate this list."))
+			lines = append(lines, sMuted.Render("No destinations observed yet. Connect a profile of this group and traffic will populate this list."))
 		} else {
 			lines = append(lines, sMuted.Render("No hosts match the filter."))
 		}

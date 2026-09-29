@@ -21,10 +21,10 @@ import (
 // without a mux.
 func directCounters() *stats.Counters {
 	c := stats.NewCounters()
-	c.SetRouteModes(map[string]stats.RouteMode{
+	c.SetRouteTable(stats.RouteTable{Overrides: map[string]stats.RouteMode{
 		"127.0.0.1": {Kind: stats.RouteDirect},
 		"localhost": {Kind: stats.RouteDirect},
-	})
+	}})
 	return c
 }
 

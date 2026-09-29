@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/hoveychen/netferry/relay/internal/profile"
 	"github.com/hoveychen/netferry/relay/internal/stats"
 )
 
@@ -205,15 +204,7 @@ func (p *connectionPage) window(lines []string, h int) string {
 func (p *connectionPage) headerLine(width int) string {
 	a := p.app
 	spec := a.sess.Spec
-	var name, sub string
-	if spec.Group != nil && len(spec.Children) > 1 {
-		name = spec.Group.Name
-		sub = fmt.Sprintf("group · %d profiles · default %s", len(spec.Children), spec.Children[0].Name)
-	} else {
-		name = spec.Profile.Name
-		sub = spec.Profile.Remote
-	}
-	return truncate(sBold.Render(name)+"  "+sMuted.Render(sub), width)
+	return truncate(sBold.Render(spec.Profile.Name)+"  "+sMuted.Render(spec.Profile.Remote), width)
 }
 
 // banner is the status message strip, or the deploy progress bar while the
@@ -333,7 +324,6 @@ func (p *connectionPage) speedView(width, height int) []string {
 	if len(hist) == 0 {
 		return []string{sMuted.Render("Waiting for speed data…")}
 	}
-	children := p.groupChildren()
 	var tunnels []stats.TunnelSnapshot
 	if a.live.stats != nil {
 		tunnels = a.live.stats.Tunnels
@@ -342,7 +332,7 @@ func (p *connectionPage) speedView(width, height int) []string {
 	// Leave room below the chart for the legend and breakdowns, but keep the
 	// chart readable.
 	chartH := height - 3
-	if len(children) > 1 || len(tunnels) > 1 {
+	if len(tunnels) > 1 {
 		chartH = height / 2
 	}
 	if chartH > 12 {
@@ -358,41 +348,11 @@ func (p *connectionPage) speedView(width, height int) []string {
 			sAccent.Render("•")+" "+sMuted.Render("Upload ")+sAccent.Bold(true).Render(fmtRate(last.TxBytesPerSec))+"   "+
 			sDim.Render(fmt.Sprintf("last %ds", len(hist))))
 
-	if len(children) > 1 {
-		lines = append(lines, "", sSection.Render("PER PROFILE"))
-		lines = append(lines, strings.Split(perProfileCards(children, tunnels, p.perProfileActive(children), width), "\n")...)
-	}
 	if len(tunnels) > 1 {
 		lines = append(lines, "", sSection.Render("PER TUNNEL"))
 		lines = append(lines, strings.Split(tunnelCards(tunnels, width), "\n")...)
 	}
 	return lines
-}
-
-// groupChildren returns the running group's profiles, or nil in solo mode.
-func (p *connectionPage) groupChildren() []profile.Profile {
-	s := p.app.sess.Spec
-	if s == nil || s.Group == nil {
-		return nil
-	}
-	return s.Children
-}
-
-// perProfileActive counts active connections per profile; unstamped ones are
-// attributed to the default (first) child.
-func (p *connectionPage) perProfileActive(children []profile.Profile) map[string]int {
-	out := map[string]int{}
-	if len(children) == 0 {
-		return out
-	}
-	for _, c := range p.app.live.active {
-		id := c.ActiveProfileID
-		if id == "" {
-			id = children[0].ID
-		}
-		out[id]++
-	}
-	return out
 }
 
 var blockRunes = []rune(" ▁▂▃▄▅▆▇█")
@@ -509,46 +469,6 @@ func kv(k, v string, w int) string {
 		gap = 1
 	}
 	return k + strings.Repeat(" ", gap) + v
-}
-
-func perProfileCards(children []profile.Profile, tunnels []stats.TunnelSnapshot, active map[string]int, width int) string {
-	byID := map[string]stats.TunnelSnapshot{}
-	for _, t := range tunnels {
-		if t.ProfileID != "" {
-			byID[t.ProfileID] = t
-		}
-	}
-	positional := len(tunnels) == len(children)
-	inner := breakdownCardW - 4
-	boxes := make([]string, len(children))
-	for i, ch := range children {
-		st := tunnelStyle(i)
-		t, ok := byID[ch.ID]
-		if !ok && positional {
-			t, ok = tunnels[i], true
-		}
-		title := st.Bold(true).Render("● " + truncate(ch.Name, inner-10))
-		if i == 0 {
-			title = kv(title, sDim.Render("default"), inner)
-		}
-		rx, tx, rtt := "—", "—", sDim.Render("—")
-		if ok {
-			rx, tx = fmtRate(t.RxBytesPerSec), fmtRate(t.TxBytesPerSec)
-			rtt = rttStyle(t.LastRttUs).Render(fmtRtt(t.LastRttUs))
-		}
-		body := []string{
-			title,
-			kv(sMuted.Render("↓"), st.Render(rx), inner),
-			kv(sMuted.Render("↑"), tx, inner),
-			kv(sMuted.Render("conns"), strconv.Itoa(active[ch.ID]), inner),
-			kv(sMuted.Render("rtt"), rtt, inner),
-		}
-		if !ok {
-			body = append(body, sDim.Render("(pending per-profile stats)"))
-		}
-		boxes[i] = sBox.Width(breakdownCardW - 2).Render(strings.Join(body, "\n"))
-	}
-	return cardGrid(boxes, breakdownCardW, width)
 }
 
 func tunnelCards(tunnels []stats.TunnelSnapshot, width int) string {
@@ -691,23 +611,12 @@ func (p *connectionPage) connsView(width int) []string {
 	if len(active) == 0 && len(closed) == 0 {
 		return []string{sMuted.Render("No connections yet.")}
 	}
-	children := p.groupChildren()
-	multi := len(children) > 1
 	var lines []string
 	if len(active) > 0 {
 		lines = append(lines, sSection.Render(fmt.Sprintf("ACTIVE (%d)", len(active))))
 		for _, c := range active {
 			host, port, scheme := splitHostPort(c.DstAddr, c.Host)
 			parts := []string{sOK.Render("●"), sDim.Render(fmtClock(c.TimestampMs))}
-			if multi {
-				id := c.ActiveProfileID
-				if id == "" {
-					id = children[0].ID
-				}
-				if i := a.childIndex(id); i >= 0 {
-					parts = append(parts, tunnelStyle(i).Bold(true).Render("["+truncate(children[i].Name, 16)+"]"))
-				}
-			}
 			if c.TunnelIndex > 0 {
 				parts = append(parts, tunnelStyle(c.TunnelIndex-1).Render(fmt.Sprintf("T%d", c.TunnelIndex)))
 			}
@@ -766,8 +675,6 @@ func (p *connectionPage) destsView(width int) []string {
 	if len(a.live.dests) == 0 {
 		return []string{sMuted.Render("No destinations yet.")}
 	}
-	children := p.groupChildren()
-	multi := len(children) > 1
 	var lines []string
 	var sorts []string
 	for i, l := range destSortLabels {
@@ -790,15 +697,6 @@ func (p *connectionPage) destsView(width int) []string {
 			dot, hostS = sAccent.Render("●"), sBold
 		}
 		var right []string
-		if multi && !blocked && !direct {
-			pid, label := d.AssignedProfileID, "pinned → "
-			if pid == "" {
-				pid, label = d.ActiveProfileID, "via "
-			}
-			if i := a.childIndex(pid); pid != "" && i >= 0 {
-				right = append(right, tunnelStyle(i).Bold(true).Render(label+truncate(children[i].Name, 16)))
-			}
-		}
 		switch d.Route {
 		case "direct":
 			right = append(right, sOK.Render("direct"))

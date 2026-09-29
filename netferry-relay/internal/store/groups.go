@@ -11,12 +11,55 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/profile"
 )
 
-// RouteMode mirrors the desktop RouteMode enum-as-tagged-struct. Kind is one
-// of "tunnel" | "default" | "direct" | "blocked"; ProfileID is required when
-// Kind == "tunnel".
+// Route kinds. Only these three exist; anything else read from disk is
+// normalized (see NormalizeRouteKind).
+const (
+	RouteTunnel  = "tunnel"
+	RouteDirect  = "direct"
+	RouteBlocked = "blocked"
+)
+
+// NormalizeRouteKind maps a stored kind to tunnel/direct/blocked. The legacy
+// "default" kind and unknown/empty values become tunnel.
+func NormalizeRouteKind(kind string) string {
+	switch k := strings.ToLower(strings.TrimSpace(kind)); k {
+	case RouteDirect, RouteBlocked:
+		return k
+	default:
+		return RouteTunnel
+	}
+}
+
+// RouteMode mirrors the desktop RouteMode tagged struct: {"kind":"tunnel"}.
+// On read it also accepts a bare string and the legacy
+// {"kind":"tunnel","profileId":"..."} form (profileId is dropped).
 type RouteMode struct {
-	Kind      string `json:"kind"`
-	ProfileID string `json:"profileId,omitempty"`
+	Kind string `json:"kind"`
+}
+
+// UnmarshalJSON accepts a bare string or a {kind} object and normalizes kind.
+func (r *RouteMode) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		r.Kind = NormalizeRouteKind(s)
+		return nil
+	}
+	var x struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(b, &x); err != nil {
+		return err
+	}
+	r.Kind = NormalizeRouteKind(x.Kind)
+	return nil
+}
+
+// NormalizeFinalRoute restricts a fallback route to tunnel/direct.
+func NormalizeFinalRoute(m RouteMode) RouteMode {
+	if NormalizeRouteKind(m.Kind) == RouteDirect {
+		return RouteMode{Kind: RouteDirect}
+	}
+	return RouteMode{Kind: RouteTunnel}
 }
 
 type RuleGroup struct {
@@ -26,8 +69,8 @@ type RuleGroup struct {
 	Route   RouteMode `json:"route"`
 }
 
-// Group mirrors models.rs::ProfileGroup. ChildrenIDs[0] is the default
-// profile when Rules contain a "default" entry without an explicit ProfileID.
+// Group mirrors models.rs::ProfileGroup. Routing precedence: Rules (per-host
+// overrides) > RuleGroups (ordered, first match wins) > FinalRoute.
 //
 // LegacyChildren is the pre-children-ids form: full Profile objects embedded
 // in the group. We accept it on read but never write it back; NormalizeLegacy
@@ -41,6 +84,14 @@ type Group struct {
 	RuleGroups     []RuleGroup          `json:"ruleGroups,omitempty"`
 	Priorities     map[string]int       `json:"priorities,omitempty"`
 	KnownHosts     []string             `json:"knownHosts,omitempty"`
+	// FinalRoute is the fallback for traffic no rule matches (Clash MATCH).
+	// Only tunnel/direct; missing reads as tunnel (see normalizeOnRead).
+	FinalRoute RouteMode `json:"finalRoute"`
+}
+
+// normalizeOnRead applies read-time defaults after unmarshalling.
+func (g *Group) normalizeOnRead() {
+	g.FinalRoute = NormalizeFinalRoute(g.FinalRoute)
 }
 
 // NormalizeLegacy fills ChildrenIDs from LegacyChildren if the group is in
@@ -70,6 +121,7 @@ type groupOnDisk struct {
 	RuleGroups  []RuleGroup          `json:"ruleGroups"`
 	Priorities  map[string]int       `json:"priorities"`
 	KnownHosts  []string             `json:"knownHosts"`
+	FinalRoute  RouteMode            `json:"finalRoute"`
 }
 
 func (g *Group) marshalForDisk() any {
@@ -81,6 +133,7 @@ func (g *Group) marshalForDisk() any {
 		RuleGroups:  nilToEmpty(g.RuleGroups),
 		Priorities:  g.Priorities,
 		KnownHosts:  nilToEmpty(g.KnownHosts),
+		FinalRoute:  NormalizeFinalRoute(g.FinalRoute),
 	}
 }
 
@@ -137,6 +190,7 @@ func ListGroups() ([]Group, error) {
 		if err := json.Unmarshal(raw, &g); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
+		g.normalizeOnRead()
 		if g.NormalizeLegacy() {
 			_ = SaveGroup(&g)
 		}
@@ -166,6 +220,7 @@ func LoadGroup(id string) (*Group, error) {
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	g.normalizeOnRead()
 	if g.NormalizeLegacy() {
 		_ = SaveGroup(&g)
 	}

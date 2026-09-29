@@ -93,7 +93,7 @@ func TestMigrateV2BootstrapsDefaultGroup(t *testing.T) {
 	if strings.Join(g.ChildrenIDs, ",") != "a,b" || g.Name != "Default" {
 		t.Fatalf("group = %+v", g)
 	}
-	if g.Rules["x.com"] != (store.RouteMode{Kind: "tunnel", ProfileID: "b"}) || g.Rules["y.com"].Kind != "direct" {
+	if g.Rules["x.com"] != (store.RouteMode{Kind: "tunnel"}) || g.Rules["y.com"].Kind != "direct" {
 		t.Fatalf("rules = %+v", g.Rules)
 	}
 	s, _ := store.LoadSettings()
@@ -289,16 +289,16 @@ func TestProfilesPageFlows(t *testing.T) {
 	if len(children) != 2 {
 		t.Fatalf("children = %d", len(children))
 	}
-	// With 2 profiles the list starts with "Connect all".
-	if rows := pp.rows(); rows[0].profile != nil {
-		t.Fatal("first row should be Connect all")
+	// Multi-profile "Connect all" is gone: every row is a profile.
+	if rows := pp.rows(); len(rows) != 2 || rows[0].profile == nil {
+		t.Fatalf("rows = %+v", rows)
 	}
-	if !strings.Contains(ansi.Strip(a.View()), "Connect all") {
-		t.Fatal("Connect all card not rendered")
+	if strings.Contains(ansi.Strip(a.View()), "Connect all") {
+		t.Fatal("Connect all card should not be rendered")
 	}
 
 	// Export tokyo to a file and import it back (PEM text identity).
-	pp.sel = 1
+	pp.sel = 0
 	tokyo := *pp.selected().profile
 	tokyo.IdentityKey = "PEM"
 	_ = a.data.UpdateProfile(tokyo)
@@ -340,7 +340,7 @@ func TestProfilesPageFlows(t *testing.T) {
 	press(a, "esc")
 
 	// Remove from group keeps the profile.
-	pp.sel = 1
+	pp.sel = 0
 	id := pp.selected().profile.ID
 	press(a, "R", "y")
 	if a.data.Profile(id) == nil || len(a.data.Children(a.data.ActiveGroup())) != 2 {
