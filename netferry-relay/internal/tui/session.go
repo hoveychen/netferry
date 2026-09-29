@@ -25,7 +25,7 @@ type Engine interface {
 }
 
 // ConnectSpec is what the user asked to connect: one profile. Routing rules
-// come from the active profile group (see Data.Rules).
+// are global, whichever profile connects (see Data.Rules).
 type ConnectSpec struct {
 	Profile  profile.Profile
 	Settings store.GlobalSettings

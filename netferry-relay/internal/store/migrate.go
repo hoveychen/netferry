@@ -16,7 +16,8 @@ const (
 // launch: when groups/default.json does not exist it is created from the
 // legacy flat files (all profiles as children, routes.json translated, global
 // priorities copied), and settings.activeGroupId is pointed at it if unset.
-// Idempotent. On a machine that never ran the desktop app this is what gives
+// Idempotent. Routing rules end up in rules.json via LoadRules, which must
+// run after this. On a machine that never ran the desktop app this is what gives
 // the TUI its first group.
 func MigrateV2() error {
 	path, err := groupPath(DefaultGroupID)
@@ -43,15 +44,24 @@ func MigrateV2() error {
 	for _, p := range profiles {
 		children = append(children, p.ID)
 	}
-	g := &Group{
+	// Written directly (not via SaveGroup, which would first run the
+	// rules.json migration and strip the rules). When rules.json does not
+	// exist yet the legacy routes ride on the group file in the pre-rules.json
+	// shape, so the rules.json migration (LoadRules) picks them up together
+	// with any other group's rules.
+	g := legacyDefaultGroup{
 		ID:          DefaultGroupID,
 		Name:        DefaultGroupName,
 		ChildrenIDs: children,
-		Rules:       rules,
 		Priorities:  legacyPrios,
-		FinalRoute:  RouteMode{Kind: RouteTunnel},
 	}
-	if err := SaveGroup(g); err != nil {
+	if rp, err := RulesPath(); err != nil {
+		return err
+	} else if _, err := os.Stat(rp); os.IsNotExist(err) {
+		g.Rules = rules
+		g.FinalRoute = &RouteMode{Kind: RouteTunnel}
+	}
+	if err := writeJSONAtomic(path, g); err != nil {
 		return err
 	}
 	if settings.ActiveGroupID == "" {
@@ -59,6 +69,17 @@ func MigrateV2() error {
 		return SaveSettings(settings)
 	}
 	return nil
+}
+
+// legacyDefaultGroup is the group file MigrateV2 writes: the slim group plus,
+// when rules.json has not been created yet, the pre-rules.json rule fields.
+type legacyDefaultGroup struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	ChildrenIDs []string             `json:"childrenIds"`
+	Priorities  map[string]int       `json:"priorities"`
+	Rules       map[string]RouteMode `json:"rules,omitempty"`
+	FinalRoute  *RouteMode           `json:"finalRoute,omitempty"`
 }
 
 // NewID returns a random RFC 4122 v4 UUID (crypto.randomUUID()).

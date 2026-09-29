@@ -62,6 +62,7 @@ func NormalizeFinalRoute(m RouteMode) RouteMode {
 	return RouteMode{Kind: RouteTunnel}
 }
 
+// RuleGroup is a named, ordered scope of domains sharing one route.
 type RuleGroup struct {
 	ID      string    `json:"id"`
 	Name    string    `json:"name"`
@@ -69,29 +70,19 @@ type RuleGroup struct {
 	Route   RouteMode `json:"route"`
 }
 
-// Group mirrors models.rs::ProfileGroup. Routing precedence: Rules (per-host
-// overrides) > RuleGroups (ordered, first match wins) > FinalRoute.
+// Group mirrors models.rs::ProfileGroup. A group is only a folder of
+// profiles; routing rules are global (see RuleSet / rules.json). Rule fields
+// left in older group files are ignored on read and dropped on the next save.
 //
 // LegacyChildren is the pre-children-ids form: full Profile objects embedded
 // in the group. We accept it on read but never write it back; NormalizeLegacy
 // fills ChildrenIDs from it on the first load.
 type Group struct {
-	ID             string               `json:"id"`
-	Name           string               `json:"name"`
-	ChildrenIDs    []string             `json:"childrenIds,omitempty"`
-	LegacyChildren []profile.Profile    `json:"children,omitempty"`
-	Rules          map[string]RouteMode `json:"rules,omitempty"`
-	RuleGroups     []RuleGroup          `json:"ruleGroups,omitempty"`
-	Priorities     map[string]int       `json:"priorities,omitempty"`
-	KnownHosts     []string             `json:"knownHosts,omitempty"`
-	// FinalRoute is the fallback for traffic no rule matches (Clash MATCH).
-	// Only tunnel/direct; missing reads as tunnel (see normalizeOnRead).
-	FinalRoute RouteMode `json:"finalRoute"`
-}
-
-// normalizeOnRead applies read-time defaults after unmarshalling.
-func (g *Group) normalizeOnRead() {
-	g.FinalRoute = NormalizeFinalRoute(g.FinalRoute)
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	ChildrenIDs    []string          `json:"childrenIds,omitempty"`
+	LegacyChildren []profile.Profile `json:"children,omitempty"`
+	Priorities     map[string]int    `json:"priorities,omitempty"`
 }
 
 // NormalizeLegacy fills ChildrenIDs from LegacyChildren if the group is in
@@ -114,14 +105,10 @@ func (g *Group) NormalizeLegacy() bool {
 // with LegacyChildren omitted unconditionally (mirrors serde's
 // skip_serializing on the `children` field).
 type groupOnDisk struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	ChildrenIDs []string             `json:"childrenIds"`
-	Rules       map[string]RouteMode `json:"rules"`
-	RuleGroups  []RuleGroup          `json:"ruleGroups"`
-	Priorities  map[string]int       `json:"priorities"`
-	KnownHosts  []string             `json:"knownHosts"`
-	FinalRoute  RouteMode            `json:"finalRoute"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	ChildrenIDs []string       `json:"childrenIds"`
+	Priorities  map[string]int `json:"priorities"`
 }
 
 func (g *Group) marshalForDisk() any {
@@ -129,11 +116,7 @@ func (g *Group) marshalForDisk() any {
 		ID:          g.ID,
 		Name:        g.Name,
 		ChildrenIDs: nilToEmpty(g.ChildrenIDs),
-		Rules:       g.Rules,
-		RuleGroups:  nilToEmpty(g.RuleGroups),
 		Priorities:  g.Priorities,
-		KnownHosts:  nilToEmpty(g.KnownHosts),
-		FinalRoute:  NormalizeFinalRoute(g.FinalRoute),
 	}
 }
 
@@ -190,7 +173,6 @@ func ListGroups() ([]Group, error) {
 		if err := json.Unmarshal(raw, &g); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-		g.normalizeOnRead()
 		if g.NormalizeLegacy() {
 			_ = SaveGroup(&g)
 		}
@@ -220,7 +202,6 @@ func LoadGroup(id string) (*Group, error) {
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	g.normalizeOnRead()
 	if g.NormalizeLegacy() {
 		_ = SaveGroup(&g)
 	}
@@ -234,6 +215,11 @@ func SaveGroup(g *Group) error {
 	if err != nil {
 		return err
 	}
+	// Rewriting a group drops any legacy rule fields, so make sure they have
+	// been migrated into rules.json first.
+	if err := ensureRulesMigrated(); err != nil {
+		return err
+	}
 	return writeJSONAtomic(path, g.marshalForDisk())
 }
 
@@ -241,6 +227,10 @@ func SaveGroup(g *Group) error {
 func DeleteGroup(id string) error {
 	path, err := groupPath(id)
 	if err != nil {
+		return err
+	}
+	// The group may still carry legacy rules that belong in rules.json.
+	if err := ensureRulesMigrated(); err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

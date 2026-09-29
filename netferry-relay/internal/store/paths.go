@@ -101,6 +101,16 @@ func PrioritiesPath() (string, error) {
 	return filepath.Join(d, "priorities.json"), nil
 }
 
+// RulesPath returns the path to rules.json, the single global routing rule
+// set (not to be confused with the legacy routes.json).
+func RulesPath() (string, error) {
+	d, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "rules.json"), nil
+}
+
 // RoutesPath returns the path to routes.json (global, non-group).
 func RoutesPath() (string, error) {
 	d, err := DataDir()

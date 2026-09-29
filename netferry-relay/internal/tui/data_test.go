@@ -10,9 +10,8 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
-func TestRulesBuildsRouteTableFromActiveGroup(t *testing.T) {
-	g := store.Group{
-		ID: "g", Name: "G", ChildrenIDs: []string{"a", "b"},
+func TestRulesBuildsRouteTableFromGlobalRules(t *testing.T) {
+	rs := store.RuleSet{
 		Rules: map[string]store.RouteMode{"x.example.com": {Kind: "blocked"}},
 		RuleGroups: []store.RuleGroup{
 			{ID: "r", Name: "R", Domains: []string{"example.com"}, Route: store.RouteMode{Kind: "direct"}},
@@ -20,7 +19,8 @@ func TestRulesBuildsRouteTableFromActiveGroup(t *testing.T) {
 		},
 		FinalRoute: store.RouteMode{Kind: "direct"},
 	}
-	d := &Data{Groups: []store.Group{g}, Settings: store.GlobalSettings{ActiveGroupID: "g"}, Priorities: map[string]int{"h": 5}}
+	// The route table does not depend on groups or which one is active.
+	d := &Data{RuleSet: rs, Priorities: map[string]int{"h": 5}}
 	r := d.Rules()
 	want := stats.RouteTable{
 		Overrides: map[string]stats.RouteMode{"x.example.com": {Kind: stats.RouteBlocked}},
@@ -32,6 +32,10 @@ func TestRulesBuildsRouteTableFromActiveGroup(t *testing.T) {
 	}
 	if !reflect.DeepEqual(r.Routes, want) || r.Priorities["h"] != 5 {
 		t.Fatalf("rules: %+v", r)
+	}
+	d2 := &Data{RuleSet: rs, Groups: []store.Group{{ID: "g", Name: "G"}}, Settings: store.GlobalSettings{ActiveGroupID: "g"}}
+	if !reflect.DeepEqual(d2.Rules().Routes, want) {
+		t.Fatalf("active group changed the route table: %+v", d2.Rules().Routes)
 	}
 	// Applied to a tunnel, the first matching group wins over the later exact one.
 	c := stats.NewCounters()
@@ -45,7 +49,7 @@ func TestRulesBuildsRouteTableFromActiveGroup(t *testing.T) {
 }
 
 func TestMoveRuleGroup(t *testing.T) {
-	g := &store.Group{RuleGroups: []store.RuleGroup{{ID: "a"}, {ID: "b"}, {ID: "c"}}}
+	g := &store.RuleSet{RuleGroups: []store.RuleGroup{{ID: "a"}, {ID: "b"}, {ID: "c"}}}
 	ids := func() string {
 		s := ""
 		for _, rg := range g.RuleGroups {
@@ -73,7 +77,7 @@ func TestChildrenSkipsMissingProfiles(t *testing.T) {
 }
 
 func TestRecordKnownHostsDedupsAndCaps(t *testing.T) {
-	g := &store.Group{KnownHosts: []string{"a"}}
+	g := &store.RuleSet{KnownHosts: []string{"a"}}
 	if RecordKnownHosts(g, []string{"a", ""}) {
 		t.Fatal("no new hosts should report unchanged")
 	}

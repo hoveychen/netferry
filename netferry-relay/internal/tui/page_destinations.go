@@ -303,7 +303,7 @@ func (p *destinationsPage) overviewItems(m *destModel) []destItem {
 		})
 	}
 	if len(m.sites) == 0 && len(m.hosts) == 0 {
-		items = append(items, note(sMuted, "No destinations observed yet. Connect a profile of this group and traffic will populate this list."))
+		items = append(items, note(sMuted, "No destinations observed yet. Connect a profile and traffic will populate this list."))
 	}
 	return items
 }
@@ -351,7 +351,7 @@ func (p *destinationsPage) filteredHosts(m *destModel) []string {
 // showDraft: the typed query looks like a rule target that is not known yet.
 func (p *destinationsPage) showDraft(m *destModel) bool {
 	q := p.query()
-	return m.group != nil && p.scope != "" && q != "" && (strings.HasPrefix(q, "*.") || strings.Contains(q, ".")) && !m.known[q]
+	return p.scope != "" && q != "" && (strings.HasPrefix(q, "*.") || strings.Contains(q, ".")) && !m.known[q]
 }
 
 func (p *destinationsPage) drillItems(m *destModel) []destItem {
@@ -425,9 +425,6 @@ func (p *destinationsPage) renderHost(m *destModel, host string, draft, sel bool
 
 func (p *destinationsPage) items() []destItem {
 	m := p.model()
-	if m.group == nil {
-		return nil
-	}
 	if p.scope == "" {
 		return p.overviewItems(m)
 	}
@@ -641,9 +638,6 @@ func (p *destinationsPage) update(msg tea.Msg) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if p.app.data.ActiveGroup() == nil {
-		return nil
-	}
 	if p.filterOn {
 		switch km.String() {
 		case "esc", "enter", "up", "down":
@@ -746,9 +740,6 @@ func (p *destinationsPage) hints() string {
 	case destMenu:
 		return ""
 	}
-	if p.app.data.ActiveGroup() == nil {
-		return ""
-	}
 	if p.filterOn {
 		return hints("enter/esc", "done")
 	}
@@ -766,10 +757,6 @@ func (p *destinationsPage) view(width, height int) string {
 		return p.menu.view(width, height)
 	}
 	m := p.model()
-	if m.group == nil {
-		return sSection.Render("DESTINATION RULES") + "\n\n" +
-			sMuted.Render("No active profile group. Rules cannot be edited until a group is selected (Profiles page, g).")
-	}
 
 	var head []string
 	if p.scope == "" {
@@ -803,7 +790,7 @@ func (p *destinationsPage) view(width, height int) string {
 	}
 	if p.scope != "" && len(items) == 0 {
 		if len(m.hosts) == 0 {
-			lines = append(lines, sMuted.Render("No destinations observed yet. Connect a profile of this group and traffic will populate this list."))
+			lines = append(lines, sMuted.Render("No destinations observed yet. Connect a profile and traffic will populate this list."))
 		} else {
 			lines = append(lines, sMuted.Render("No hosts match the filter."))
 		}

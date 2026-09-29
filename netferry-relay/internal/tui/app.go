@@ -360,31 +360,26 @@ func (a *App) onSession(ev Event) tea.Cmd {
 	return nil
 }
 
-// recordObservedHosts appends newly seen hosts to the active group's
-// knownHosts and persists the group only when something was added.
+// recordObservedHosts appends newly seen hosts to the global knownHosts and
+// persists rules.json only when something was added.
 func (a *App) recordObservedHosts(snap []stats.DestinationSnapshot) {
-	g := a.data.ActiveGroup()
-	if g == nil {
-		return
-	}
 	hosts := make([]string, 0, len(snap))
 	for _, d := range snap {
 		hosts = append(hosts, d.Host)
 	}
-	probe := *g
-	probe.KnownHosts = append([]string(nil), g.KnownHosts...)
+	probe := store.RuleSet{KnownHosts: append([]string(nil), a.data.RuleSet.KnownHosts...)}
 	if !RecordKnownHosts(&probe, hosts) {
 		return
 	}
-	// Something is new: merge into the on-disk group so rule edits made
-	// since the last reload (here or in the desktop app) are not overwritten.
-	fresh, err := store.LoadGroup(g.ID)
-	if err != nil || fresh == nil {
+	// Something is new: merge into the on-disk rules so edits made since the
+	// last reload (here or in the desktop app) are not overwritten.
+	fresh, err := store.LoadRules()
+	if err != nil {
 		return
 	}
-	RecordKnownHosts(fresh, hosts)
-	if store.SaveGroup(fresh) == nil {
-		*g = *fresh
+	RecordKnownHosts(&fresh, hosts)
+	if store.SaveRules(fresh) == nil {
+		a.data.RuleSet = fresh
 	}
 }
 

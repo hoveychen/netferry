@@ -128,11 +128,10 @@ type siteGroup struct {
 // destModel is everything the Destinations page derives from the store and
 // the live snapshot; rebuilt only when either changes.
 type destModel struct {
-	group      *store.Group
 	ruleGroups []store.RuleGroup
 	matcher    *groupMatcher
 	priorities map[string]int
-	rules      map[string]store.RouteMode // per-host overrides (group.rules)
+	rules      map[string]store.RouteMode // per-host overrides (rules.json rules)
 	final      store.RouteMode            // fallback when nothing matches
 	hosts      []string                   // sorted union
 	known      map[string]bool
@@ -145,14 +144,10 @@ type destModel struct {
 
 func buildDestModel(d *Data, live []stats.DestinationSnapshot) *destModel {
 	m := &destModel{priorities: d.Priorities, live: map[string]stats.DestinationSnapshot{}, known: map[string]bool{}}
-	g := d.ActiveGroup()
-	m.group = g
-	m.final = store.RouteMode{Kind: store.RouteTunnel}
-	if g != nil {
-		m.ruleGroups = g.RuleGroups
-		m.rules = g.Rules
-		m.final = store.NormalizeFinalRoute(g.FinalRoute)
-	}
+	rs := &d.RuleSet
+	m.ruleGroups = rs.RuleGroups
+	m.rules = rs.Rules
+	m.final = store.NormalizeFinalRoute(rs.FinalRoute)
 	if m.rules == nil {
 		m.rules = map[string]store.RouteMode{}
 	}
@@ -173,10 +168,8 @@ func buildDestModel(d *Data, live []stats.DestinationSnapshot) *destModel {
 		m.live[s.Host] = s
 		add(s.Host)
 	}
-	if g != nil {
-		for _, h := range g.KnownHosts {
-			add(h)
-		}
+	for _, h := range rs.KnownHosts {
+		add(h)
 	}
 	for h := range m.known {
 		m.hosts = append(m.hosts, h)

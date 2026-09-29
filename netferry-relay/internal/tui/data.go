@@ -6,20 +6,27 @@ import (
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
-// MaxKnownHosts caps a group's persisted knownHosts, keeping the newest
+// MaxKnownHosts caps the persisted knownHosts, keeping the newest
 // (ruleStore.ts MAX_KNOWN_HOSTS).
-const MaxKnownHosts = 1000
+const MaxKnownHosts = store.MaxKnownHosts
 
 // Data is everything the TUI reads from the desktop's app-data store.
 type Data struct {
 	Profiles   []profile.Profile
-	Groups     []store.Group
+	Groups     []store.Group // folders of profiles only; no rules
+	RuleSet    store.RuleSet // global routing rules (rules.json)
 	Settings   store.GlobalSettings
 	Priorities map[string]int // global priorities.json
 }
 
-// LoadData reads profiles, groups, settings and priorities from disk.
+// LoadData reads profiles, rules, groups, settings and priorities from disk.
+// Rules load first: when rules.json is missing it is migrated from the rule
+// fields on the group files, which must happen before anything rewrites them.
 func LoadData() (*Data, error) {
+	rs, err := store.LoadRules()
+	if err != nil {
+		return nil, err
+	}
 	ps, err := store.LoadProfiles()
 	if err != nil {
 		return nil, err
@@ -39,7 +46,7 @@ func LoadData() (*Data, error) {
 	if pr == nil {
 		pr = map[string]int{}
 	}
-	return &Data{Profiles: ps, Groups: gs, Settings: st, Priorities: pr}, nil
+	return &Data{Profiles: ps, Groups: gs, RuleSet: rs, Settings: st, Priorities: pr}, nil
 }
 
 // Profile returns the profile with id, or nil.
@@ -79,18 +86,15 @@ func (d *Data) Children(g *store.Group) []profile.Profile {
 }
 
 // Rules builds what the desktop pushes to the tunnel: global priorities and
-// the active group's route table (per-host overrides, ordered rule groups,
-// fallback). Matching itself happens in stats.
+// the global route table (per-host overrides, ordered rule groups, fallback).
+// It does not depend on the active profile group. Matching itself happens in
+// stats.
 func (d *Data) Rules() Rules {
-	r := Rules{Priorities: d.Priorities}
-	if g := d.ActiveGroup(); g != nil {
-		r.Routes = RouteTableFor(g)
-	}
-	return r
+	return Rules{Priorities: d.Priorities, Routes: RouteTableFor(&d.RuleSet)}
 }
 
-// RouteTableFor converts a group's raw rules into the tunnel's route table.
-func RouteTableFor(g *store.Group) stats.RouteTable {
+// RouteTableFor converts the raw rule set into the tunnel's route table.
+func RouteTableFor(g *store.RuleSet) stats.RouteTable {
 	t := stats.RouteTable{
 		Overrides: make(map[string]stats.RouteMode, len(g.Rules)),
 		Groups:    make([]stats.RouteGroup, 0, len(g.RuleGroups)),
@@ -115,7 +119,7 @@ func toStatsRoute(m store.RouteMode) stats.RouteMode {
 // RecordKnownHosts appends newly observed hosts to g.KnownHosts (deduped,
 // capped to the newest MaxKnownHosts). Reports whether anything changed, so
 // callers only save when needed.
-func RecordKnownHosts(g *store.Group, hosts []string) bool {
+func RecordKnownHosts(g *store.RuleSet, hosts []string) bool {
 	seen := make(map[string]bool, len(g.KnownHosts))
 	for _, h := range g.KnownHosts {
 		seen[h] = true
@@ -137,7 +141,7 @@ func RecordKnownHosts(g *store.Group, hosts []string) bool {
 
 // SetRule stores a per-host route override on g (only DeleteRule removes an
 // override).
-func SetRule(g *store.Group, host string, mode store.RouteMode) {
+func SetRule(g *store.RuleSet, host string, mode store.RouteMode) {
 	if g.Rules == nil {
 		g.Rules = map[string]store.RouteMode{}
 	}
@@ -145,7 +149,7 @@ func SetRule(g *store.Group, host string, mode store.RouteMode) {
 }
 
 // DeleteRule removes a per-host override.
-func DeleteRule(g *store.Group, host string) { delete(g.Rules, host) }
+func DeleteRule(g *store.RuleSet, host string) { delete(g.Rules, host) }
 
 // SetPriority updates the global priority map; 3 (normal) removes the entry.
 func SetPriority(prios map[string]int, host string, p int) {
@@ -156,8 +160,8 @@ func SetPriority(prios map[string]int, host string, p int) {
 	prios[host] = p
 }
 
-// SaveRuleGroup inserts or replaces rg (by id) on g.
-func SaveRuleGroup(g *store.Group, rg store.RuleGroup) {
+// SaveRuleGroup inserts or replaces rg (by id) in g.
+func SaveRuleGroup(g *store.RuleSet, rg store.RuleGroup) {
 	for i := range g.RuleGroups {
 		if g.RuleGroups[i].ID == rg.ID {
 			g.RuleGroups[i] = rg
@@ -169,7 +173,7 @@ func SaveRuleGroup(g *store.Group, rg store.RuleGroup) {
 
 // MoveRuleGroup shifts the rule group with id by delta positions (clamped).
 // Order matters: the first matching rule group wins. Reports whether it moved.
-func MoveRuleGroup(g *store.Group, id string, delta int) bool {
+func MoveRuleGroup(g *store.RuleSet, id string, delta int) bool {
 	from := -1
 	for i := range g.RuleGroups {
 		if g.RuleGroups[i].ID == id {
@@ -197,7 +201,7 @@ func MoveRuleGroup(g *store.Group, id string, delta int) bool {
 }
 
 // DeleteRuleGroup removes the rule group with id from g.
-func DeleteRuleGroup(g *store.Group, id string) {
+func DeleteRuleGroup(g *store.RuleSet, id string) {
 	out := g.RuleGroups[:0]
 	for _, rg := range g.RuleGroups {
 		if rg.ID != id {

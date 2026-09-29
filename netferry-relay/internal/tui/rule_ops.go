@@ -1,34 +1,29 @@
 package tui
 
 import (
-	"errors"
-
 	"github.com/hoveychen/netferry/relay/internal/store"
 )
 
-var errNoGroup = errors.New("no active profile group")
-
-// editActiveGroup re-reads the active group, applies fn and saves it.
-func (d *Data) editActiveGroup(fn func(g *store.Group)) error {
-	g, err := d.freshActiveGroup()
+// editRules re-reads rules.json, applies fn and saves it, so read-modify-write
+// edits never overwrite a change made since d was loaded (the desktop may be
+// editing the same store).
+func (d *Data) editRules(fn func(rs *store.RuleSet)) error {
+	rs, err := store.LoadRules()
 	if err != nil {
 		return err
 	}
-	if g == nil {
-		return errNoGroup
-	}
-	fn(g)
-	return store.SaveGroup(g)
+	fn(&rs)
+	return store.SaveRules(rs)
 }
 
 // SetHostRule stores a per-host route override (ruleStore.setRule).
 func (d *Data) SetHostRule(host string, mode store.RouteMode) error {
-	return d.editActiveGroup(func(g *store.Group) { SetRule(g, host, mode) })
+	return d.editRules(func(g *store.RuleSet) { SetRule(g, host, mode) })
 }
 
 // DeleteHostRule removes a per-host override (ruleStore.deleteRule).
 func (d *Data) DeleteHostRule(host string) error {
-	return d.editActiveGroup(func(g *store.Group) { DeleteRule(g, host) })
+	return d.editRules(func(g *store.RuleSet) { DeleteRule(g, host) })
 }
 
 // SetHostPriority updates priorities.json (ruleStore.setPriority).
@@ -44,22 +39,22 @@ func (d *Data) SetHostPriority(host string, p int) error {
 	return store.SavePriorities(prios)
 }
 
-// PutRuleGroup inserts or replaces a rule group on the active group.
+// PutRuleGroup inserts or replaces a rule group in the global rules.
 func (d *Data) PutRuleGroup(rg store.RuleGroup) error {
-	return d.editActiveGroup(func(g *store.Group) { SaveRuleGroup(g, rg) })
+	return d.editRules(func(g *store.RuleSet) { SaveRuleGroup(g, rg) })
 }
 
-// MoveRuleGroup reorders a rule group on the active group by delta.
+// MoveRuleGroup reorders a rule group in the global rules by delta.
 func (d *Data) MoveRuleGroup(id string, delta int) error {
-	return d.editActiveGroup(func(g *store.Group) { MoveRuleGroup(g, id, delta) })
+	return d.editRules(func(g *store.RuleSet) { MoveRuleGroup(g, id, delta) })
 }
 
-// SetFinalRoute sets the active group's fallback route (tunnel/direct).
+// SetFinalRoute sets the global fallback route (tunnel/direct).
 func (d *Data) SetFinalRoute(mode store.RouteMode) error {
-	return d.editActiveGroup(func(g *store.Group) { g.FinalRoute = store.NormalizeFinalRoute(mode) })
+	return d.editRules(func(g *store.RuleSet) { g.FinalRoute = store.NormalizeFinalRoute(mode) })
 }
 
-// RemoveRuleGroup deletes a rule group from the active group.
+// RemoveRuleGroup deletes a rule group from the global rules.
 func (d *Data) RemoveRuleGroup(id string) error {
-	return d.editActiveGroup(func(g *store.Group) { DeleteRuleGroup(g, id) })
+	return d.editRules(func(g *store.RuleSet) { DeleteRuleGroup(g, id) })
 }

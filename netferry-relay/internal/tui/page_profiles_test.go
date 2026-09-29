@@ -93,8 +93,12 @@ func TestMigrateV2BootstrapsDefaultGroup(t *testing.T) {
 	if strings.Join(g.ChildrenIDs, ",") != "a,b" || g.Name != "Default" {
 		t.Fatalf("group = %+v", g)
 	}
-	if g.Rules["x.com"] != (store.RouteMode{Kind: "tunnel"}) || g.Rules["y.com"].Kind != "direct" {
-		t.Fatalf("rules = %+v", g.Rules)
+	rs, err := store.LoadRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Rules["x.com"] != (store.RouteMode{Kind: "tunnel"}) || rs.Rules["y.com"].Kind != "direct" {
+		t.Fatalf("rules = %+v", rs.Rules)
 	}
 	s, _ := store.LoadSettings()
 	if s.ActiveGroupID != store.DefaultGroupID {

@@ -23,7 +23,7 @@ func SavePriorities(p map[string]int) error {
 }
 
 // LoadRoutes reads routes.json (host -> "tunnel"|"direct"|"blocked"). Used by
-// the desktop's pre-group flow; per-group routes live in Group.Rules.
+// the desktop's pre-group flow; MigrateV2 folds it into the rule set (rules.json).
 func LoadRoutes() (map[string]string, error) {
 	return loadStringMapStr("routes.json", RoutesPath)
 }
