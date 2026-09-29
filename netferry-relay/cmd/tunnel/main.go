@@ -30,6 +30,11 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("c : ")
 
+	if len(os.Args) > 1 && os.Args[1] == "conns" {
+		runConns(os.Args[2:])
+		return
+	}
+
 	cfg, earlyExit := parseAndBuildConfig(os.Args[1:])
 	if earlyExit {
 		return
