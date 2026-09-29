@@ -343,8 +343,8 @@ func handleTCP(stream *smux.Stream, br *bufio.Reader, family int, dstIP string, 
 	conn, err := net.DialTimeout(netFamily, addr, 10*time.Second)
 	if err != nil {
 		log.Printf("TCP dial %s: %v", addr, err)
-		// Signal EOF back to client.
-		writeMsg(stream, nil)
+		// Tell the client why; it surfaces this as a *mux.RemoteError.
+		mux.WriteErrorMsg(stream, err.Error())
 		return
 	}
 	defer conn.Close()
