@@ -15,7 +15,7 @@ data class FectunConfig(
     val port: Int = 55700,
     val k: Int = 20,
     val m: Int = 15,
-    val rateMbps: Double = 25.0
+    val rateMbps: Double = 100.0
 ) : Serializable
 
 data class Profile(

@@ -15,7 +15,7 @@ struct FectunConfig: Codable, Hashable {
     var port: Int = 55700
     var k: Int = 20
     var m: Int = 15
-    var rateMbps: Double = 25
+    var rateMbps: Double = 100
 
     init() {}
 
@@ -24,7 +24,7 @@ struct FectunConfig: Codable, Hashable {
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 55700
         k = try container.decodeIfPresent(Int.self, forKey: .k) ?? 20
         m = try container.decodeIfPresent(Int.self, forKey: .m) ?? 15
-        rateMbps = try container.decodeIfPresent(Double.self, forKey: .rateMbps) ?? 25
+        rateMbps = try container.decodeIfPresent(Double.self, forKey: .rateMbps) ?? 100
     }
 }
 

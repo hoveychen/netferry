@@ -15,7 +15,7 @@ import (
 )
 
 // defaultFectun matches ProfileDetailPage DEFAULT_FECTUN.
-var defaultFectun = sshconn.FectunConfig{Port: 55700, K: 20, M: 15, RateMbps: 25}
+var defaultFectun = sshconn.FectunConfig{Port: 55700, K: 20, M: 15, RateMbps: 100}
 
 var (
 	remoteRE = regexp.MustCompile(`^[^@\s]+@[^:\s]+(:\d{1,5})?$`)
@@ -178,7 +178,7 @@ func (e *profileEditor) build(focus string) {
 	f.Visible = fecOn
 	f = add(textField("fectunM", "  parity shards (m)", strconv.Itoa(fc.M), "15"))
 	f.Visible = fecOn
-	f = add(textField("fectunRate", "  rate (Mbps)", strconv.FormatFloat(fc.RateMbps, 'f', -1, 64), "25"))
+	f = add(textField("fectunRate", "  rate (Mbps)", strconv.FormatFloat(fc.RateMbps, 'f', -1, 64), "100"))
 	f.Visible = fecOn
 	f.Help = "Line rate including parity; never above the link's real capacity"
 
