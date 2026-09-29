@@ -151,10 +151,9 @@ func printConns(w io.Writer, resp stats.ConnectionsResponse) {
 	}
 }
 
-// printHistoryFrom tells the reader how far back the tunnel's memory goes:
-// history starts when the tunnel started and holds a bounded number of
-// connections, so an empty result for an older incident is not proof of
-// absence.
+// printHistoryFrom tells the reader how far back the tunnel's history goes:
+// it holds a bounded number of connections, so an empty result for an older
+// incident is not proof of absence.
 func printHistoryFrom(w io.Writer, fromMs int64) {
 	if fromMs > 0 {
 		fmt.Fprintf(w, "# history from %s\n", time.UnixMilli(fromMs).Format("2006-01-02 15:04:05"))

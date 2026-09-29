@@ -1,6 +1,6 @@
 ---
 name: netferry-tunnel
-version: 2
+version: 3
 description: Use when a website, API, git remote, package registry or other network request is slow, hanging, timing out, reset or failing on a machine running the NetFerry tunnel (desktop app or netferry-tunnel CLI), or when asked which connections went through the tunnel, whether a host was routed direct or via the tunnel, or why a connection closed.
 ---
 
@@ -33,11 +33,13 @@ nothing to query.
 
 ### `netferry-tunnel conns`
 
-Queries the running tunnel's connection history. Does not need root. The
-history is in memory only: it starts when the tunnel (re)started and keeps the
-last 4096 closed connections, including ones that were blocked or failed to
-open. Every output starts with `# history from <time>` — nothing older than
-that can be found, so a missing host before that time is not evidence.
+Queries the running tunnel's connection history, including connections that
+were blocked or failed to open. Does not need root, but the tunnel must be
+running. The history is kept on disk (`conns.jsonl*` in the tunnel's
+`netferry/logs` cache directory, ~64 MB, roughly a day or more) and survives
+reconnects and restarts. Every output starts with `# history from <time>` —
+nothing older than that can be found, so a missing host before that time is
+not evidence.
 
 **Keep the output small: aggregate first, then drill in.** A busy machine opens
 ~100 connections a minute, so listing raw connections over more than a few

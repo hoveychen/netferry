@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,13 @@ func NewEngine(cfg *EngineConfig) (*Engine, error) {
 	cachedPorts := loadPortCache()
 
 	counters := stats.NewCounters()
+	// Keep the /connections history on disk so it survives reconnects and
+	// restarts; the tunnel's other logs live in the same directory.
+	if dir, err := os.UserCacheDir(); err == nil {
+		if err := counters.PersistConnLog(filepath.Join(dir, "netferry", "logs", "conns.jsonl")); err != nil {
+			log.Printf("stats: connection history stays in memory: %v", err)
+		}
+	}
 	statsPort, err := counters.ListenAndServe(cachedPorts.StatsPort)
 	if err != nil {
 		return nil, fmt.Errorf("stats server: %w", err)
