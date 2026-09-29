@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, ProfileGroup, SshHostEntry, UpdateInfo } from "@/types";
+import type { ConnectionStatus, DestinationPriorities, DestinationRoutes, GlobalSettings, MethodFeatures, Profile, ProfileGroup, RuleSet, SshHostEntry, UpdateInfo } from "@/types";
 
 export function listProfiles() {
   return invoke<Profile[]>("list_profiles");
@@ -59,6 +59,16 @@ export function saveRoutes(routes: DestinationRoutes) {
 
 export function getStatsUrl() {
   return invoke<string | null>("get_stats_url");
+}
+
+// ── Routing rules (global) ──
+
+export function getRules() {
+  return invoke<RuleSet>("get_rules");
+}
+
+export function saveRules(rules: RuleSet) {
+  return invoke<void>("save_rules", { rules });
 }
 
 // ── Profile groups ──

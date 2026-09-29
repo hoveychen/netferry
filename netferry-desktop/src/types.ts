@@ -60,9 +60,9 @@ export interface GlobalSettings {
   lanHttpPort?: number | null;
 }
 
-// ── ProfileGroup: a folder of profiles plus the routing rules they share ──
+// ── Routing rules: one global RuleSet, independent of profile groups ──
 
-/** Route decision persisted in a ProfileGroup. The backend normalizes legacy
+/** Route decision persisted in the RuleSet. The backend normalizes legacy
  *  `default` / `tunnel:<profileId>` values to `tunnel` on read. */
 export interface RouteRule {
   kind: RouteMode;
@@ -79,23 +79,26 @@ export interface RuleGroup {
   route: RouteRule;
 }
 
-export interface ProfileGroup {
-  id: string;
-  name: string;
-  /** Ordered profile-id references. Profile objects live in `profiles.json`. */
-  childrenIds: string[];
+/** The single global rule set (`rules.json`), applied whichever profile is connected. */
+export interface RuleSet {
   /** Per-host overrides (host, IP or `*.suffix`); evaluated before rule groups. */
   rules: Record<string, RouteRule>;
   /** Ordered; the first group with a matching domain wins. */
   ruleGroups: RuleGroup[];
   /** Route for traffic no override or rule group matches. */
   finalRoute: FinalRoute;
-  /** Destination host → priority (1–5). */
-  priorities: Record<string, number>;
-  /** Every host/IP the relay has ever observed for this group (dedup, unordered).
-   *  Accumulated from SSE destination snapshots so DestinationsPage can surface
-   *  hosts across sessions. */
+  /** Most recently observed hosts/IPs (capped at 1000, newest last). Accumulated
+   *  from SSE destination snapshots so DestinationsPage can surface hosts
+   *  across sessions. */
   knownHosts: string[];
+}
+
+/** A folder of profiles. Has nothing to do with routing rules. */
+export interface ProfileGroup {
+  id: string;
+  name: string;
+  /** Ordered profile-id references. Profile objects live in `profiles.json`. */
+  childrenIds: string[];
 }
 
 export interface SshHostEntry {

@@ -25,9 +25,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { ImportProfileDialog } from "@/components/ImportProfileDialog";
 import { QrCodeExportDialog } from "@/components/QrCodeExportDialog";
-import { joinGroupProfiles, newGroup, useGroupStore } from "@/stores/groupStore";
+import { joinGroupProfiles, newGroup, useActiveGroup, useGroupStore } from "@/stores/groupStore";
 import { useProfileStore } from "@/stores/profileStore";
-import { useRuleStore } from "@/stores/ruleStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { countryCodeToFlag, getRegionInfo, type RegionInfo } from "@/lib/geoip";
 
@@ -395,7 +394,7 @@ export function ProfileList({
 
   const { groups, fetch: fetchGroups, save: saveGroup, remove: removeGroup } = useGroupStore();
   const { profiles, removeProfile } = useProfileStore();
-  const { activeGroup, loadRules } = useRuleStore();
+  const activeGroup = useActiveGroup();
   const { settings, updateSettings } = useSettingsStore();
 
   // Make sure the group list is populated (for the switcher) on mount.
@@ -464,7 +463,6 @@ export function ProfileList({
     setRemovingId(null);
     try {
       await apiRemoveProfileFromGroup(activeGroup.id, profile.id);
-      await loadRules();
       await fetchGroups();
     } catch (err) {
       alert(String(err));
@@ -479,14 +477,12 @@ export function ProfileList({
   const handleRenameGroup = async (nextName: string) => {
     if (!activeGroup) return;
     await saveGroup({ ...activeGroup, name: nextName });
-    await loadRules();
   };
 
   const handleCreateEmptyGroup = async () => {
     const g = newGroup();
     await saveGroup(g);
     await updateSettings({ ...settings, activeGroupId: g.id });
-    await loadRules();
     return g.id;
   };
 
@@ -507,7 +503,6 @@ export function ProfileList({
     const survivors = groups.filter((g) => g.id !== deletedId);
     const nextId = survivors[0]?.id ?? null;
     await updateSettings({ ...settings, activeGroupId: nextId });
-    await loadRules();
     await fetchGroups();
   };
 

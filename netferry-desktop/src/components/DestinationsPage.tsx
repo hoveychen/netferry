@@ -8,8 +8,6 @@ import { parse } from "tldts";
 import type { FinalRoute, RouteMode, RouteRule, RuleGroup } from "@/types";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useRuleStore } from "@/stores/ruleStore";
-import { useGroupStore } from "@/stores/groupStore";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { matchesDomain, normalizeDomain, overrideKeyFor, resolveRoute, ruleGroupFor, type RouteSource } from "@/lib/ruleGroups";
 import { catalogRevision, suggestServiceGroups, type ServiceSuggestion } from "@/lib/serviceCatalog";
 import { suggestRoutingScopes, type RoutingSuggestion } from "@/lib/routingCatalog";
@@ -23,7 +21,6 @@ const PRIORITY_META: Record<number, { label: string; color: string; ring: string
 };
 
 const ROUTE_KINDS: RouteMode[] = ["tunnel", "direct", "blocked"];
-const TUNNEL: FinalRoute = { kind: "tunnel" };
 
 const ROUTE_STYLE: Record<RouteMode, { color: string; ring: string; bg: string; Icon: typeof Shield }> = {
   tunnel:  { color: "text-accent",  ring: "ring-accent/30",  bg: "bg-accent/10",  Icon: Shield },
@@ -216,14 +213,13 @@ function PriorityBadge({ priority, onChange }: { priority: number; onChange: (p:
 /**
  * Standalone Destinations page accessible from the main nav bar.
  * Shows all destinations with non-default routes or priorities.
- * Rules are read from and written to the shared ruleStore, which mirrors
- * the active ProfileGroup's `rules` map.
+ * Rules are read from and written to the shared ruleStore, which holds the
+ * single global RuleSet (independent of profile groups).
  */
 export function DestinationsPage() {
   const { t, i18n } = useTranslation();
-  const { priorities, routes, setPriority, setRoute, deleteRule, activeGroup, saveRuleGroup, deleteRuleGroup, moveRuleGroup, setFinalRoute } = useRuleStore();
-  const { fetch: fetchGroups } = useGroupStore();
-  const { loadSettings } = useSettingsStore();
+  const { priorities, ruleSet, loaded, loadRules, setPriority, setRoute, deleteRule, saveRuleGroup, deleteRuleGroup, moveRuleGroup, setFinalRoute } = useRuleStore();
+  const routes = ruleSet.rules;
   // Live-session observed hosts; empty when disconnected.
   const liveDestinations = useConnectionStore((s) => s.destinations);
   const [filter, setFilter] = useState("");
@@ -235,8 +231,9 @@ export function DestinationsPage() {
   const [draftDomains, setDraftDomains] = useState("");
   const [draftRoute, setDraftRoute] = useState<RouteMode>("tunnel");
   const [draftEvidence, setDraftEvidence] = useState<RoutingSuggestion["evidence"]>([]);
-  const ruleGroups = useMemo(() => activeGroup?.ruleGroups ?? [], [activeGroup]);
-  const finalRoute = activeGroup?.finalRoute ?? TUNNEL;
+  const ruleGroups = ruleSet.ruleGroups;
+  const finalRoute = ruleSet.finalRoute;
+  const knownHosts = ruleSet.knownHosts;
   const overrideKeys = useMemo(() => Object.keys(routes).sort((a, b) => a.localeCompare(b)), [routes]);
   const suggestionName = (suggestion: ServiceSuggestion | RoutingSuggestion) => i18n.language.startsWith("zh") ? suggestion.nameZh ?? suggestion.name : suggestion.name;
 
@@ -263,23 +260,22 @@ export function DestinationsPage() {
     if (!group) setDraftRoute(suggestion.suggestedRoute);
   };
 
-  // Ensure groups + settings are loaded.
+  // App loads the rules at startup; retry here if that hasn't succeeded yet.
   useEffect(() => {
-    fetchGroups();
-    loadSettings();
-  }, [fetchGroups, loadSettings]);
+    if (!loaded) loadRules();
+  }, [loaded, loadRules]);
 
   // Union of hosts that have any configured rule, hosts observed in the live
-  // session, and hosts accumulated across sessions (`activeGroup.knownHosts`).
+  // session, and hosts accumulated across sessions (`ruleSet.knownHosts`).
   // `knownHosts` is what gives this list continuity after disconnect.
   const sorted = useMemo(() => {
     const all = new Set<string>();
     for (const h of Object.keys(priorities)) all.add(h);
     for (const h of Object.keys(routes)) all.add(h);
     for (const d of liveDestinations) if (d.host) all.add(d.host);
-    for (const h of activeGroup?.knownHosts ?? []) if (h) all.add(h);
+    for (const h of knownHosts) if (h) all.add(h);
     return [...all].sort((a, b) => a.localeCompare(b));
-  }, [priorities, routes, liveDestinations, activeGroup]);
+  }, [priorities, routes, liveDestinations, knownHosts]);
 
   const siteGroups = useMemo(() => {
     const groups = new Map<string, string[]>();
@@ -338,7 +334,7 @@ export function DestinationsPage() {
     setEditingGroup(null);
   };
 
-  const noGroup = !activeGroup;
+  const notLoaded = !loaded;
 
   // Draft-rule creation: when the user types something that looks like a rule
   // target (a hostname or a `*.x` wildcard) that isn't already in the list,
@@ -346,7 +342,7 @@ export function DestinationsPage() {
   const query = filter.trim();
   const knownSet = useMemo(() => new Set(sorted), [sorted]);
   const looksLikeTarget = query.startsWith("*.") || query.includes(".");
-  const showDraft = !noGroup && selectedScope !== null && query !== "" && looksLikeTarget && !knownSet.has(query);
+  const showDraft = !notLoaded && selectedScope !== null && query !== "" && looksLikeTarget && !knownSet.has(query);
   // Nudge a bare domain toward its wildcard form (wildcard the typed host's parent).
   const wildcardSuggestion = useMemo(() => {
     if (!query || query.startsWith("*.")) return null;
@@ -443,7 +439,7 @@ export function DestinationsPage() {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [noGroup]);
+  }, [notLoaded]);
 
   // Measure the real row height once rows are on screen (offsetHeight excludes
   // the mb-1.5 = 6px margin, so add it back). Self-corrects any estimate drift.
@@ -470,11 +466,11 @@ export function DestinationsPage() {
         {selectedScope && <button type="button" onClick={() => { setSelectedScope(null); setFilter(""); }} className="rounded p-1 text-t3 hover:bg-ov-6" aria-label={t("destinationsPage.back")}><ArrowLeft className="h-4 w-4" /></button>}
         <h1 className="text-[15px] font-semibold text-t1">{selectedScope?.startsWith("group:") ? ruleGroups.find((g) => g.id === selectedScope.slice(6))?.name : selectedScope?.startsWith("site:") ? selectedScope.slice(5) : selectedScope === "ip" ? t("destinationsPage.ipAddresses") : t("destinationsPage.title")}</h1>
         {!selectedScope && <span className="ml-2 text-xs text-t4">{t("destinationsPage.subtitle")}</span>}
-        {!noGroup && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
+        {!notLoaded && !selectedScope && <button type="button" onClick={() => openEditor()} className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90"><Plus className="h-3.5 w-3.5" />{t("destinationsPage.newGroup")}</button>}
       </div>
 
       {/* Filter bar */}
-      {!noGroup && (
+      {!notLoaded && (
         <div className="px-4 pt-2 pb-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t4" />
@@ -522,8 +518,8 @@ export function DestinationsPage() {
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
         className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 font-mono text-xs"
       >
-        {noGroup ? (
-          <p className="text-t4">{t("destinationsPage.noGroup")}</p>
+        {notLoaded ? (
+          <p className="text-t4">{t("destinationsPage.loadingRules")}</p>
         ) : !selectedScope ? (
           <div className="space-y-5 font-sans">
             <p className="rounded-lg bg-ov-2 px-3 py-2 text-xs text-t3">{t("destinationsPage.evalOrder")}</p>

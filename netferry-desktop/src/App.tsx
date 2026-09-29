@@ -102,7 +102,7 @@ function App() {
     prevIds: Set<string>,
     updated: Profile[],
   ) => {
-    const groupId = useRuleStore.getState().activeGroup?.id;
+    const groupId = useSettingsStore.getState().settings.activeGroupId;
     if (!groupId) return;
     const newlyImported = updated.filter((p) => !prevIds.has(p.id));
     if (newlyImported.length === 0) return;
@@ -114,7 +114,6 @@ function App() {
       }
     }
     await fetchGroups();
-    await loadRules();
   };
 
   // Initial load

@@ -216,7 +216,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
   handleDestinationsSnapshot: (dests: DestinationSnapshot[]) => {
     set({ destinations: dests });
-    // Accumulate observed hosts into the active group's knownHosts so
+    // Accumulate observed hosts into the global rule set's knownHosts so
     // DestinationsPage survives disconnects. Cheap no-op when all hosts
     // are already known.
     useRuleStore.getState().recordObservedHosts(dests.map((d) => d.host));
