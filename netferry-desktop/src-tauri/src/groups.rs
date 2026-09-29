@@ -68,6 +68,8 @@ pub fn load_group(app: &AppHandle, group_id: &str) -> Result<Option<ProfileGroup
 }
 
 pub fn save_group(app: &AppHandle, group: &ProfileGroup) -> Result<(), String> {
+    // Rewriting a legacy group file drops its rule fields; capture them first.
+    crate::rules::ensure_migrated(app)?;
     let path = group_path(app, &group.id)?;
     let json = serde_json::to_string_pretty(group)
         .map_err(|e| format!("Failed to serialize group: {e}"))?;
@@ -75,6 +77,7 @@ pub fn save_group(app: &AppHandle, group: &ProfileGroup) -> Result<(), String> {
 }
 
 pub fn delete_group(app: &AppHandle, group_id: &str) -> Result<(), String> {
+    crate::rules::ensure_migrated(app)?;
     let path = group_path(app, group_id)?;
     if path.exists() {
         fs::remove_file(&path)

@@ -1,4 +1,5 @@
-use crate::models::{ConnectionStatus, DnsMode, Profile, ProfileGroup, TunnelError, now_ms};
+use crate::models::{ConnectionStatus, DnsMode, Profile, TunnelError, now_ms};
+use crate::rules::RuleSet;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::net::ToSocketAddrs;
@@ -653,30 +654,29 @@ fn push_persisted_rules_to_sidecar(app: &AppHandle, port: u16) {
         }
     }
 
-    // Push the active group's routing table in the sidecar's `/routes` shape
-    // (per-host overrides, ordered rule groups, fallback). The sidecar does all
+    // Push the global rule set in the sidecar's `/routes` shape (per-host
+    // overrides, ordered rule groups, fallback). The sidecar does all
     // matching; nothing is compiled client-side.
-    if let Ok(settings) = crate::settings::load_settings(app) {
-        if let Some(group_id) = settings.active_group_id.as_deref() {
-            if let Ok(Some(group)) = crate::groups::load_group(app, group_id) {
-                if let Ok(body) = serde_json::to_string(&routes_body(&group)) {
-                    if let Err(e) = post("/routes", &body) {
-                        log::warn!("push routes to sidecar: {}", e);
-                    }
+    match crate::rules::load_rules(app) {
+        Ok(set) => {
+            if let Ok(body) = serde_json::to_string(&routes_body(&set)) {
+                if let Err(e) = post("/routes", &body) {
+                    log::warn!("push routes to sidecar: {}", e);
                 }
             }
         }
+        Err(e) => log::warn!("load rules for sidecar push: {}", e),
     }
 }
 
 /// Body for the sidecar's `POST /routes`:
 /// `{overrides: {host: route}, groups: [{domains, route, ..}], final: route}`.
 /// `ruleGroups` are sent as-is (the sidecar ignores `id`/`name`).
-fn routes_body(group: &ProfileGroup) -> serde_json::Value {
+fn routes_body(set: &RuleSet) -> serde_json::Value {
     serde_json::json!({
-        "overrides": group.rules,
-        "groups": group.rule_groups,
-        "final": group.final_route.as_final(),
+        "overrides": set.rules,
+        "groups": set.rule_groups,
+        "final": set.final_route.as_final(),
     })
 }
 
@@ -1511,9 +1511,7 @@ mod tests {
     #[test]
     fn routes_body_matches_sidecar_contract() {
         use crate::models::{RouteMode, RuleGroup};
-        let group: ProfileGroup = serde_json::from_value(serde_json::json!({
-            "id": "g",
-            "name": "G",
+        let group: RuleSet = serde_json::from_value(serde_json::json!({
             "rules": {
                 "api.example.com": "direct",
                 "*.foo.com": {"kind": "blocked"},
@@ -1544,7 +1542,7 @@ mod tests {
             })
         );
 
-        let direct = ProfileGroup {
+        let direct = RuleSet {
             final_route: RouteMode::from_kind("direct"),
             rule_groups: vec![RuleGroup {
                 id: "x".into(),

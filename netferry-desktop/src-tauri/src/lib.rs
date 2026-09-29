@@ -8,6 +8,7 @@ mod menu;
 mod migrate_v2;
 mod models;
 mod priorities;
+mod rules;
 mod profiles;
 mod settings;
 mod sidecar;
@@ -178,6 +179,8 @@ pub fn run() {
             commands::save_priorities,
             commands::get_routes,
             commands::save_routes,
+            commands::get_rules,
+            commands::save_rules,
             commands::list_groups,
             commands::get_group,
             commands::save_group,

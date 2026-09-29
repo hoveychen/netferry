@@ -1,5 +1,6 @@
 use crate::models::{ConnectionStatus, GlobalSettings, Profile, ProfileGroup, SshHostEntry};
-use crate::{crypto, groups, menu, priorities, profiles, settings, sidecar, ssh_config, tray};
+use crate::rules::RuleSet;
+use crate::{crypto, groups, menu, priorities, profiles, rules, settings, sidecar, ssh_config, tray};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -103,6 +104,18 @@ pub fn save_routes(
     routes: HashMap<String, String>,
 ) -> Result<(), String> {
     priorities::save_routes(&app, &routes)
+}
+
+// ── Global rules (rules.json) ──
+
+#[tauri::command]
+pub fn get_rules(app: AppHandle) -> Result<RuleSet, String> {
+    rules::load_rules(&app)
+}
+
+#[tauri::command]
+pub fn save_rules(app: AppHandle, rules: RuleSet) -> Result<(), String> {
+    rules::save_rules(&app, &rules)
 }
 
 // ── Profile groups (P1: data-layer only; runtime still uses flat profile list) ──

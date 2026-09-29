@@ -117,7 +117,7 @@ pub struct GlobalSettings {
     pub lan_http_port: Option<u16>,
 }
 
-/// RouteMode as persisted inside a ProfileGroup's `rules` map.
+/// RouteMode as persisted in the global rule set (`rules.json`).
 ///
 /// `kind` is always one of:
 ///   - "tunnel"  : route through the (single) connected tunnel
@@ -185,14 +185,7 @@ impl From<RawRouteMode> for RouteMode {
     }
 }
 
-fn deserialize_final_route<'de, D>(d: D) -> Result<RouteMode, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(RouteMode::deserialize(d)?.as_final())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleGroup {
     pub id: String,
@@ -202,12 +195,11 @@ pub struct RuleGroup {
     pub route: RouteMode,
 }
 
-/// A ProfileGroup bundles an ordered list of profile-id references with a set
-/// of destination rules. Connecting any one of its profiles applies the
-/// group's rules; groups are never connected as a whole.
-/// Profile objects themselves live in `profiles.json`; the group only holds
-/// references. One group is active at a time (see
-/// `GlobalSettings.active_group_id`).
+/// A ProfileGroup is a folder of profile-id references; it has nothing to do
+/// with routing (rules are global, see `rules.rs`). Profile objects live in
+/// `profiles.json`. Legacy group files may still carry `rules`, `ruleGroups`,
+/// `finalRoute` and `knownHosts`; those are ignored here (read once by the
+/// rules.json migration) and disappear on the next save.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileGroup {
@@ -221,22 +213,7 @@ pub struct ProfileGroup {
     #[serde(default, skip_serializing, rename = "children")]
     pub legacy_children: Vec<Profile>,
     #[serde(default)]
-    pub rules: std::collections::HashMap<String, RouteMode>,
-    /// Ordered: the first group with a matching domain wins (Clash semantics).
-    #[serde(default)]
-    pub rule_groups: Vec<RuleGroup>,
-    /// Fallback for traffic matched by neither `rules` nor `rule_groups`.
-    /// Only tunnel/direct; blocked is coerced to tunnel on read.
-    #[serde(default, rename = "finalRoute", deserialize_with = "deserialize_final_route")]
-    pub final_route: RouteMode,
-    #[serde(default)]
     pub priorities: std::collections::HashMap<String, i32>,
-    /// Accumulates every destination host/IP the relay has observed for this
-    /// group across sessions. DestinationsPage unions this with live traffic
-    /// so the user can set rules on hosts they've ever seen, not just ones
-    /// currently active. Append-only; dedup happens client-side.
-    #[serde(default)]
-    pub known_hosts: Vec<String>,
 }
 
 impl ProfileGroup {
