@@ -119,17 +119,77 @@ pub struct GlobalSettings {
 
 /// RouteMode as persisted inside a ProfileGroup's `rules` map.
 ///
-/// `kind`:
-///   - "tunnel"  : route through `profile_id`'s child tunnel
-///   - "default" : route through `children[0]` of the owning group
+/// `kind` is always one of:
+///   - "tunnel"  : route through the (single) connected tunnel
 ///   - "direct"  : bypass the tunnel, direct-dial
 ///   - "blocked" : reject the connection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// Serialized as `{"kind":"..."}`. Deserialization is lenient for legacy data:
+/// `"default"`, `{"kind":"tunnel","profileId":..}`, bare strings, and unknown or
+/// empty values all normalise (unknown → tunnel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RawRouteMode")]
 pub struct RouteMode {
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
+}
+
+impl RouteMode {
+    pub fn tunnel() -> Self {
+        Self::from_kind("tunnel")
+    }
+
+    /// Normalise any legacy/unknown kind string to tunnel/direct/blocked.
+    pub fn from_kind(kind: &str) -> Self {
+        let k = match kind.trim().to_ascii_lowercase().as_str() {
+            "direct" => "direct",
+            "blocked" => "blocked",
+            _ => "tunnel",
+        };
+        Self { kind: k.to_string() }
+    }
+
+    /// Fallback routes may only be tunnel or direct; blocked is coerced to tunnel.
+    pub fn as_final(&self) -> Self {
+        if self.kind == "direct" {
+            self.clone()
+        } else {
+            Self::tunnel()
+        }
+    }
+}
+
+impl Default for RouteMode {
+    fn default() -> Self {
+        Self::tunnel()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawRouteMode {
+    Str(String),
+    Obj {
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    Other(#[allow(dead_code)] serde_json::Value),
+}
+
+impl From<RawRouteMode> for RouteMode {
+    fn from(raw: RawRouteMode) -> Self {
+        match raw {
+            RawRouteMode::Str(s) => RouteMode::from_kind(&s),
+            RawRouteMode::Obj { kind } => RouteMode::from_kind(kind.as_deref().unwrap_or("")),
+            RawRouteMode::Other(_) => RouteMode::tunnel(),
+        }
+    }
+}
+
+fn deserialize_final_route<'de, D>(d: D) -> Result<RouteMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(RouteMode::deserialize(d)?.as_final())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,7 +203,8 @@ pub struct RuleGroup {
 }
 
 /// A ProfileGroup bundles an ordered list of profile-id references with a set
-/// of destination rules. `children_ids[0]` is the group's default profile.
+/// of destination rules. Connecting any one of its profiles applies the
+/// group's rules; groups are never connected as a whole.
 /// Profile objects themselves live in `profiles.json`; the group only holds
 /// references. One group is active at a time (see
 /// `GlobalSettings.active_group_id`).
@@ -161,8 +222,13 @@ pub struct ProfileGroup {
     pub legacy_children: Vec<Profile>,
     #[serde(default)]
     pub rules: std::collections::HashMap<String, RouteMode>,
+    /// Ordered: the first group with a matching domain wins (Clash semantics).
     #[serde(default)]
     pub rule_groups: Vec<RuleGroup>,
+    /// Fallback for traffic matched by neither `rules` nor `rule_groups`.
+    /// Only tunnel/direct; blocked is coerced to tunnel on read.
+    #[serde(default, rename = "finalRoute", deserialize_with = "deserialize_final_route")]
+    pub final_route: RouteMode,
     #[serde(default)]
     pub priorities: std::collections::HashMap<String, i32>,
     /// Accumulates every destination host/IP the relay has observed for this

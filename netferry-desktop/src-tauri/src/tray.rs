@@ -142,7 +142,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
                     let _ = sidecar::disconnect(app.clone(), state);
                 } else if let Ok(profiles) = profiles::load_profiles(app) {
                     if profiles.len() == 1 {
-                        let _ = sidecar::connect(app.clone(), state, profiles.into_iter().next().unwrap(), None);
+                        let _ = sidecar::connect(app.clone(), state, profiles.into_iter().next().unwrap());
                     }
                 }
             }
@@ -156,7 +156,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
                         all_profiles.into_iter().find(|p| p.id == profile_id)
                     {
                         let state = app.state::<AppState>();
-                        let _ = sidecar::connect(app.clone(), state, profile, None);
+                        let _ = sidecar::connect(app.clone(), state, profile);
                     }
                 }
             }

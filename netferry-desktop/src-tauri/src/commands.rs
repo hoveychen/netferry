@@ -50,17 +50,8 @@ pub fn connect_profile(
     app: AppHandle,
     state: State<'_, sidecar::AppState>,
     profile: Profile,
-    group: Option<ProfileGroup>,
-    children: Option<Vec<Profile>>,
 ) -> Result<ConnectionStatus, String> {
-    // Group mode requires both `group` and a non-empty `children` list — the
-    // children carry inline PEM keys that the temp group.json embeds. Solo
-    // mode passes `null` for both and keeps the legacy single-tunnel path.
-    let group_spec = match (group, children) {
-        (Some(g), Some(c)) if !c.is_empty() => Some((g, c)),
-        _ => None,
-    };
-    sidecar::connect(app, state, profile, group_spec)
+    sidecar::connect(app, state, profile)
 }
 
 #[tauri::command]

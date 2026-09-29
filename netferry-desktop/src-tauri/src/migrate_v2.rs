@@ -36,14 +36,7 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
     let legacy_priorities = priorities::load_priorities(app).unwrap_or_default();
     let settings_before = settings::load_settings(app).unwrap_or_default();
 
-    let default_profile_id = settings_before
-        .auto_connect_profile_id
-        .as_deref()
-        .filter(|id| profiles.iter().any(|p| p.id == *id))
-        .map(|s| s.to_string())
-        .or_else(|| profiles.first().map(|p| p.id.clone()));
-
-    let rules = translate_routes(&legacy_routes, default_profile_id.as_deref());
+    let rules = translate_routes(&legacy_routes);
     let children_ids: Vec<String> = profiles.iter().map(|p| p.id.clone()).collect();
 
     let group = ProfileGroup {
@@ -53,6 +46,7 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
         legacy_children: Vec::new(),
         rules,
         rule_groups: Vec::new(),
+        final_route: RouteMode::tunnel(),
         priorities: legacy_priorities,
         known_hosts: Vec::new(),
     };
@@ -74,37 +68,9 @@ pub fn run(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn translate_routes(
-    legacy: &HashMap<String, String>,
-    default_profile_id: Option<&str>,
-) -> HashMap<String, RouteMode> {
-    let mut out = HashMap::with_capacity(legacy.len());
-    for (host, mode) in legacy {
-        let route = match mode.as_str() {
-            "direct" => RouteMode {
-                kind: "direct".to_string(),
-                profile_id: None,
-            },
-            "blocked" => RouteMode {
-                kind: "blocked".to_string(),
-                profile_id: None,
-            },
-            // Legacy "tunnel" (or any unrecognised value) maps to the user's
-            // autoconnect profile (or first profile). If no profiles exist at
-            // migration time, collapse to "default" kind which P2 will resolve
-            // at runtime against the active group's children[0].
-            _ => match default_profile_id {
-                Some(pid) => RouteMode {
-                    kind: "tunnel".to_string(),
-                    profile_id: Some(pid.to_string()),
-                },
-                None => RouteMode {
-                    kind: "default".to_string(),
-                    profile_id: None,
-                },
-            },
-        };
-        out.insert(host.clone(), route);
-    }
-    out
+fn translate_routes(legacy: &HashMap<String, String>) -> HashMap<String, RouteMode> {
+    legacy
+        .iter()
+        .map(|(host, mode)| (host.clone(), RouteMode::from_kind(mode)))
+        .collect()
 }
