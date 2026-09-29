@@ -19,6 +19,13 @@
 //
 // A zero-length message signals a half-close (equivalent to TCP FIN from
 // that direction). DNS streams use the same framing for one query/response.
+//
+// A length of 0xFFFF (never a data frame, see BUF_SIZE) marks an error frame
+// sent by the server on a TCP stream, e.g. when dialing the destination fails:
+//
+//	[0xFFFF][uint16 BE length][error message]
+//
+// The client surfaces it as a *RemoteError from Read.
 package mux
 
 import (
@@ -80,8 +87,34 @@ func writeMsg(w io.Writer, payload []byte) error {
 	return err
 }
 
+// errFrameMarker is the length value that introduces an error frame.
+const errFrameMarker = 0xFFFF
+
+// maxErrMsg caps the message carried by an error frame.
+const maxErrMsg = 1024
+
+// RemoteError is an error reported by the server over a stream, e.g. the
+// destination could not be dialed.
+type RemoteError struct{ Msg string }
+
+func (e *RemoteError) Error() string { return "remote: " + e.Msg }
+
+// WriteErrorMsg writes an error frame carrying msg to w.
+func WriteErrorMsg(w io.Writer, msg string) error {
+	if len(msg) > maxErrMsg {
+		msg = msg[:maxErrMsg]
+	}
+	buf := make([]byte, 4+len(msg))
+	binary.BigEndian.PutUint16(buf[:2], errFrameMarker)
+	binary.BigEndian.PutUint16(buf[2:4], uint16(len(msg)))
+	copy(buf[4:], msg)
+	_, err := w.Write(buf)
+	return err
+}
+
 // readMsg reads one length-prefixed message from r.
-// Returns an empty slice for a half-close frame (length == 0).
+// Returns an empty slice for a half-close frame (length == 0), and a
+// *RemoteError for an error frame.
 func readMsg(r io.Reader) ([]byte, error) {
 	var hdr [2]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
@@ -90,6 +123,16 @@ func readMsg(r io.Reader) ([]byte, error) {
 	n := binary.BigEndian.Uint16(hdr[:])
 	if n == 0 {
 		return nil, nil // half-close signal
+	}
+	if n == errFrameMarker {
+		if _, err := io.ReadFull(r, hdr[:]); err != nil {
+			return nil, err
+		}
+		msg := make([]byte, binary.BigEndian.Uint16(hdr[:]))
+		if _, err := io.ReadFull(r, msg); err != nil {
+			return nil, err
+		}
+		return nil, &RemoteError{Msg: string(msg)}
 	}
 	buf := make([]byte, n)
 	if _, err := io.ReadFull(r, buf); err != nil {
