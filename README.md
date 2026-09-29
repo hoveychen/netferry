@@ -106,11 +106,13 @@ Root/sudo is required for all methods except `socks5`, which sets up a local SOC
 While a tunnel (CLI or desktop) is running, `netferry-tunnel conns` lists its active and recently closed connections — open time, duration, bytes, time to first byte, and the error a connection ended with:
 
 ```bash
-netferry-tunnel conns --host anthropic --since 10m   # one line per connection
-netferry-tunnel conns --errors --json                # raw JSON
+netferry-tunnel conns --by host --since 30m                 # one aggregate line per host
+netferry-tunnel conns --host anthropic --since 10m          # one line per connection
+netferry-tunnel conns --since 1h --sort first-byte --limit 20  # slowest to answer
+netferry-tunnel conns --errors --json                       # raw JSON
 ```
 
-The same data is served at `GET http://127.0.0.1:<stats-port>/connections?host=&since=&errors=&limit=`; the port is found in the port cache (`ports.json` under the user cache dir) or given with `--port`. Timing is per TCP connection — requests sharing one keep-alive / HTTP/2 connection are not split apart.
+Other filters: `--until`, `--route tunnel|direct|blocked`, `--min-dur`, `--min-bytes`. The same data is served at `GET http://127.0.0.1:<stats-port>/connections?host=&since=&until=&route=&min_dur=&min_bytes=&errors=&sort=&group=&limit=`; the port is found in the port cache (`ports.json` under the user cache dir) or given with `--port`. Timing is per TCP connection — requests sharing one keep-alive / HTTP/2 connection are not split apart.
 
 To let Claude Code use this when diagnosing network problems, install its skill (it records the binary's path, since the desktop app does not put `netferry-tunnel` on PATH):
 
