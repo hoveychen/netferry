@@ -5,6 +5,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   getAppVersion,
   getTunnelVersion,
+  claudeSkillInstalled,
+  installClaudeSkill,
   getHelperStatus,
   registerHelper,
   unregisterHelper,
@@ -35,12 +37,29 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
   const [tunnelVersion, setTunnelVersion] = useState("");
   const [helperStatus, setHelperStatus] = useState<HelperStatus | null>(null);
   const [helperWorking, setHelperWorking] = useState(false);
+  const [skillInstalled, setSkillInstalled] = useState<boolean | null>(null);
+  const [skillWorking, setSkillWorking] = useState(false);
+  const [skillError, setSkillError] = useState("");
 
   useEffect(() => {
     getAppVersion().then(setAppVersion).catch(() => {});
     getTunnelVersion().then(setTunnelVersion).catch(() => {});
     getHelperStatus().then(setHelperStatus).catch(() => setHelperStatus(null));
+    claudeSkillInstalled().then(setSkillInstalled).catch(() => setSkillInstalled(null));
   }, []);
+
+  const handleSkillInstall = async () => {
+    setSkillWorking(true);
+    setSkillError("");
+    try {
+      await installClaudeSkill();
+    } catch (e) {
+      setSkillError(String(e));
+    } finally {
+      setSkillInstalled(await claudeSkillInstalled().catch(() => null));
+      setSkillWorking(false);
+    }
+  };
 
   const refreshHelperStatus = async () => {
     try {
@@ -324,6 +343,30 @@ export function GlobalSettingsPage({ settings, profiles, onBack, onSave }: Props
               </div>
             </div>
           )}
+
+          <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
+            <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">
+              {t("settings.claudeSkill")}
+            </p>
+            <p className="mb-4 text-xs leading-relaxed text-t3">
+              {t("settings.claudeSkillDesc")}
+            </p>
+            <div className="mb-4 flex items-center gap-2 text-sm">
+              <span className="text-t2">{t("settings.helperStatus")}:</span>
+              <span className={`font-medium ${skillInstalled ? "text-success" : "text-t3"}`}>
+                {skillInstalled ? t("settings.claudeSkillInstalled") : t("settings.claudeSkillNotInstalled")}
+              </span>
+            </div>
+            <Button onClick={handleSkillInstall} disabled={skillWorking}>
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              {skillWorking
+                ? t("settings.helperWorking")
+                : skillInstalled
+                  ? t("settings.claudeSkillReinstall")
+                  : t("settings.helperInstall")}
+            </Button>
+            {skillError && <p className="mt-3 text-xs text-danger">{skillError}</p>}
+          </div>
 
           <div className="rounded-2xl border border-sep bg-ov-3 p-6 shadow-[inset_0_1px_0_var(--inset-highlight)]">
             <p className="mb-5 text-[11px] font-semibold uppercase tracking-widest text-t4">

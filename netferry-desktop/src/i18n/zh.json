@@ -395,7 +395,12 @@
     "helperOpenLoginItems": "打开登录项",
     "helperUninstallConfirmTitle": "卸载特权辅助服务？",
     "helperUninstallConfirmBody": "下次连接将回退到 sudo 密码提示。你可以随时在此重新安装。",
-    "helperWorking": "处理中…"
+    "helperWorking": "处理中…",
+    "claudeSkill": "Claude Code",
+    "claudeSkillDesc": "安装 Claude Code skill，让 Claude 在排查网络慢或请求失败时能查询隧道的连接历史（netferry-tunnel conns）。",
+    "claudeSkillInstalled": "已安装",
+    "claudeSkillNotInstalled": "未安装",
+    "claudeSkillReinstall": "重新安装"
   },
   "update": {
     "available": "发现新版本 (v{{version}})！",

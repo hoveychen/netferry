@@ -396,7 +396,12 @@
     "helperOpenLoginItems": "Open Login Items",
     "helperUninstallConfirmTitle": "Uninstall the privileged helper?",
     "helperUninstallConfirmBody": "The next connect will fall back to a sudo password prompt. You can reinstall here at any time.",
-    "helperWorking": "Working…"
+    "helperWorking": "Working…",
+    "claudeSkill": "Claude Code",
+    "claudeSkillDesc": "Install a Claude Code skill so Claude can query this tunnel's connection history (netferry-tunnel conns) when diagnosing slow or failing requests.",
+    "claudeSkillInstalled": "Installed",
+    "claudeSkillNotInstalled": "Not installed",
+    "claudeSkillReinstall": "Reinstall"
   },
   "update": {
     "available": "A new version (v{{version}}) is available!",

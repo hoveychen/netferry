@@ -147,6 +147,14 @@ export function getTunnelVersion() {
   return invoke<string>("get_tunnel_version");
 }
 
+export function claudeSkillInstalled() {
+  return invoke<boolean>("claude_skill_installed");
+}
+
+export function installClaudeSkill() {
+  return invoke<void>("install_claude_skill");
+}
+
 export function checkForUpdate() {
   return invoke<UpdateInfo>("check_for_update");
 }

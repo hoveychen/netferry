@@ -267,6 +267,33 @@ pub fn query_method_features() -> Result<HashMap<String, Vec<String>>, String> {
         .map_err(|e| format!("Failed to parse features JSON: {e}"))
 }
 
+/// Runs `netferry-tunnel install-claude-skill`, which writes the Claude Code
+/// skill (with the sidecar's own path) to ~/.claude/skills/netferry-tunnel/.
+pub fn install_claude_skill() -> Result<(), String> {
+    let binary = resolve_tunnel_exe();
+    let mut cmd = Command::new(&binary);
+    cmd.arg("install-claude-skill")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run tunnel binary: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tunnel install-claude-skill exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the stats server URL if available.
 pub fn get_stats_url(state: State<'_, AppState>) -> Option<String> {
     state.stats_port.lock().ok()?.map(|p| format!("http://127.0.0.1:{p}"))
