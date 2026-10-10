@@ -202,7 +202,7 @@ func connectPoolMember(
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial: %w", err)
 	}
-	stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, buildRTTCallback(counters, tc, false))
+	stop := startMemberKeepalive(sc, counters, tc, false, member, total)
 
 	var c *mux.MuxClient
 	if split {
@@ -299,6 +299,24 @@ func reconnectPoolMember(
 			log.Printf("mux pool member %d/%d: reconnected successfully", idx+1, total)
 			break
 		}
+	}
+}
+
+// startMemberKeepalive starts the SSH keepalive for a pool member's data-side
+// connection together with a memberWatch that recycles the connection once it
+// has degraded (see memberwatch.go). The returned stop releases both.
+func startMemberKeepalive(sc *ssh.Client, counters *stats.Counters, tc *stats.TunnelCounters, primary bool, member, total int) (stop func()) {
+	const interval = 30 * time.Second
+	w := newMemberWatch(member, total, tc, sc)
+	rttCb := buildRTTCallback(counters, tc, primary)
+	stopKeepalive := sshconn.StartSSHKeepalive(sc, interval, func(rtt time.Duration) {
+		rttCb(rtt)
+		w.ObserveRTT(rtt)
+	})
+	stopWatch := w.start(interval)
+	return func() {
+		stopWatch()
+		stopKeepalive()
 	}
 }
 
