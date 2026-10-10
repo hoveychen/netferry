@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -213,8 +212,7 @@ func connectBackend(
 	for i, sc := range sshClients {
 		tc := counters.RegisterTunnel(i + 1)
 		tunnelCounters[i] = tc
-		rttCb := buildRTTCallback(counters, tc, i == 0)
-		stop := sshconn.StartSSHKeepalive(sc, 30*time.Second, rttCb)
+		stop := startMemberKeepalive(sc, counters, tc, i == 0, i+1, n)
 
 		var c *mux.MuxClient
 		if cfg.splitConn {
