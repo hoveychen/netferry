@@ -214,3 +214,11 @@ html.tauri-host.os-windows [data-page-shell] > :first-child {
 .glow-pulse {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+/* See main.tsx: no transitions/animations while the window is hidden. */
+html.page-hidden *,
+html.page-hidden *::before,
+html.page-hidden *::after {
+  transition: none !important;
+  animation: none !important;
+}

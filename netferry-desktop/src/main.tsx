@@ -20,6 +20,19 @@ if (typeof navigator !== "undefined") {
   else if (/Macintosh|Mac OS X/i.test(navigator.userAgent)) cls.add("os-macos");
 }
 
+// While the window is hidden (closed to tray, minimised, fully occluded) WebKit
+// stops ticking the animation timeline, but the connection page keeps changing
+// styles every stats tick. Each change on an element with a CSS transition
+// (e.g. the per-tunnel load bars) then leaks memory in the WebContent process —
+// measured at roughly 10 MB/hour, which reached 3.4 GB after three weeks.
+// Turning transitions/animations off while hidden stops the growth.
+if (typeof document !== "undefined") {
+  const syncHidden = () =>
+    document.documentElement.classList.toggle("page-hidden", document.visibilityState === "hidden");
+  document.addEventListener("visibilitychange", syncHidden);
+  syncHidden();
+}
+
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
